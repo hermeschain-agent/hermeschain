@@ -1,0 +1,45 @@
+{
+  "name": "hermeschain-backend",
+  "version": "2.0.0",
+  "description": "Hermeschain backend — single Nous Hermes agent building a blockchain live.",
+  "main": "dist/api/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/api/server.ts",
+    "build": "tsc",
+    "start": "node dist/api/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "blockchain",
+    "hermes",
+    "nous-research",
+    "openrouter"
+  ],
+  "author": "Hermeschain",
+  "license": "MIT",
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "@x402/core": "^2.2.0",
+    "@x402/express": "^2.2.0",
+    "@x402/fetch": "^2.2.0",
+    "@x402/svm": "^2.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "ioredis": "^5.3.2",
+    "pg": "^8.18.0",
+    "socket.io": "^4.8.3",
+    "sql.js": "^1.13.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.24",
+    "@types/pg": "^8.16.0",
+    "@types/sql.js": "^1.4.9",
+    "@types/ws": "^8.5.10",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  }
+}
