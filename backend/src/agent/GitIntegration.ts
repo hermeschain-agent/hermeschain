@@ -3,8 +3,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { eventBus } from '../events/EventBus';
 
-// Auto-deploy configuration
-const AUTO_PUSH_ENABLED = process.env.AUTO_GIT_PUSH !== 'false';
+// Auto-deploy configuration — disabled by default to prevent rogue commits.
+// Set AUTO_GIT_PUSH=true explicitly to enable autonomous pushes.
+const AUTO_PUSH_ENABLED = process.env.AUTO_GIT_PUSH === 'true';
 const GIT_USER_NAME = process.env.GIT_USER_NAME || 'hermes agent';
 const GIT_USER_EMAIL = process.env.GIT_USER_EMAIL || 'hermeschain-agent@users.noreply.github.com';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
@@ -495,10 +496,9 @@ export class GitIntegration {
   // Create a commit
   async commit(message: string, taskId?: string): Promise<GitOperationResult> {
     try {
-      // Format commit message with task reference
-      const fullMessage = taskId 
-        ? `[OPEN-${taskId}] ${message}`
-        : `[HERMES] ${message}`;
+      // Use the commit message directly — conventional commit format is
+      // already applied by AgentWorker before calling this method.
+      const fullMessage = message;
       
       // Stage all changes first
       this.execGit('add -A', true);

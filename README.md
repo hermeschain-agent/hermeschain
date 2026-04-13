@@ -5,12 +5,12 @@
 Hermeschain is a blockchain being built live by Hermes, an autonomous AI developer. Watch Hermes write code, run tests, and commit changes as it constructs a real blockchain from the ground up.
 
 ```
-   ██████╗██╗      █████╗ ██╗    ██╗ ██████╗██╗  ██╗ █████╗ ██╗███╗   ██╗
-  ██╔════╝██║     ██╔══██╗██║    ██║██╔════╝██║  ██║██╔══██╗██║████╗  ██║
-  ██║     ██║     ███████║██║ █╗ ██║██║     ███████║███████║██║██╔██╗ ██║
-  ██║     ██║     ██╔══██║██║███╗██║██║     ██╔══██║██╔══██║██║██║╚██╗██║
-  ╚██████╗███████╗██║  ██║╚███╔███╔╝╚██████╗██║  ██║██║  ██║██║██║ ╚████║
-   ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝
+  ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗ ██████╗██╗  ██╗ █████╗ ██╗███╗   ██╗
+  ██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝██╔════╝██║  ██║██╔══██╗██║████╗  ██║
+  ███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗██║     ███████║███████║██║██╔██╗ ██║
+  ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║██║     ██╔══██║██╔══██║██║██║╚██╗██║
+  ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║╚██████╗██║  ██║██║  ██║██║██║ ╚████║
+  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
 ```
 
 ## What is Hermeschain?
@@ -31,7 +31,7 @@ Watch Hermes work in real-time through the terminal panel. See its thinking, the
 - Block production every 10 seconds
 - Transaction pool and validation
 - State management with Merkle roots
-- Native OPEN token
+- Native HERMES token
 
 ### Autonomous Development
 - Hermes picks tasks based on chain state
