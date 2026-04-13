@@ -1,5 +1,10 @@
 # Hermeschain
 
+[![CI](https://github.com/hermeschain-agent/hermeschain/actions/workflows/ci.yml/badge.svg)](https://github.com/hermeschain-agent/hermeschain/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
+![Built by Hermes](https://img.shields.io/badge/Built%20by-Hermes%20Agent-purple)
+
 **Watch an Autonomous AI Build Its Own Blockchain in Real-Time**
 
 Hermeschain is a blockchain being built live by Hermes, an autonomous AI developer. Watch Hermes write code, run tests, and commit changes as it constructs a real blockchain from the ground up.

@@ -1,0 +1,931 @@
+# Hermeschain Autonomous Agent — 106-Hour Development Sprint
+# Generated: 2026-04-13T00:00:00Z
+# Agent: hermes agent <hermeschain-agent@users.noreply.github.com>
+# Duration: 106 hours (~4.4 days)
+# Target: ~106 commits across 7 phases
+
+meta:
+  agent: "hermes agent"
+  email: "hermeschain-agent@users.noreply.github.com"
+  version: "2.0.0"
+  start_time: "2026-04-13T00:00:00Z"
+  end_time: "2026-04-17T10:00:00Z"
+  total_hours: 106
+  active_hours: 70
+  commit_style: "conventional"
+  sleep_windows:
+    - start: "2026-04-13T08:00:00Z"
+      end: "2026-04-13T16:00:00Z"
+      reason: "scheduled cooldown — state consolidation"
+    - start: "2026-04-14T08:00:00Z"
+      end: "2026-04-14T16:00:00Z"
+      reason: "scheduled cooldown — memory compaction"
+    - start: "2026-04-15T08:00:00Z"
+      end: "2026-04-15T16:00:00Z"
+      reason: "scheduled cooldown — chain checkpoint"
+    - start: "2026-04-16T08:00:00Z"
+      end: "2026-04-16T16:00:00Z"
+      reason: "scheduled cooldown — pre-release stabilization"
+
+# ──────────────────────────────────────────────────────────────
+# PHASE 1: INFRASTRUCTURE & CI (H+0 to H+8)
+# Focus: verify existing code, add CI, env config, health checks
+# ──────────────────────────────────────────────────────────────
+
+phases:
+  - name: "Infrastructure & CI"
+    hours: "0-8"
+    focus: "Project verification, CI pipeline, environment configuration"
+    tasks:
+      - hour: 0
+        type: feat
+        scope: repo
+        message: "verify core module initialization sequence"
+        description: "Run all existing modules through init checks, fix any import errors"
+        files: ["backend/src/index.ts", "backend/src/blockchain/index.ts"]
+
+      - hour: 0.5
+        type: chore
+        scope: config
+        message: "add editorconfig and prettier configuration"
+        description: "Standardize code formatting across the monorepo"
+        files: [".editorconfig", ".prettierrc", ".prettierignore"]
+
+      - hour: 1
+        type: test
+        scope: chain
+        message: "add block production smoke test"
+        description: "Verify BlockProducer creates valid blocks with correct parent hashes"
+        files: ["tests/unit/block-production.test.ts"]
+
+      - hour: 1.5
+        type: ci
+        scope: pipeline
+        message: "add GitHub Actions CI pipeline for lint, test, and build"
+        description: "TypeScript CI — runs on push/PR, lints, tests, builds both backend and frontend"
+        files: [".github/workflows/ci.yml"]
+
+      - hour: 2
+        type: docs
+        scope: github
+        message: "add issue templates and PR template"
+        description: "Bug report, feature request issue templates + PR checklist"
+        files: [".github/ISSUE_TEMPLATE/bug_report.md", ".github/ISSUE_TEMPLATE/feature_request.md", ".github/PULL_REQUEST_TEMPLATE.md"]
+
+      - hour: 2.5
+        type: feat
+        scope: api
+        message: "add structured health check endpoint with chain stats"
+        description: "GET /health returns block height, peer count, uptime, consensus status"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 3
+        type: test
+        scope: api
+        message: "add health endpoint integration test"
+        description: "Verify /health returns 200 with expected shape"
+        files: ["tests/integration/health.test.ts"]
+
+      - hour: 3.5
+        type: docs
+        scope: env
+        message: "add root-level .env.example for quick setup"
+        description: "Consolidate all required env vars into a single documented example"
+        files: [".env.example"]
+
+      - hour: 4
+        type: refactor
+        scope: config
+        message: "centralize environment variable validation with zod"
+        description: "Parse and validate all env vars at startup, fail fast on missing keys"
+        files: ["backend/src/config.ts"]
+
+      - hour: 4.5
+        type: fix
+        scope: blockchain
+        message: "correct genesis timestamp to match UNIX epoch convention"
+        description: "Genesis block timestamp was using local time, switch to UTC epoch"
+        files: ["backend/src/blockchain/Chain.ts"]
+
+      - hour: 5
+        type: feat
+        scope: chain
+        message: "add block header versioning field"
+        description: "Include protocol version in block headers for future hard fork support"
+        files: ["backend/src/blockchain/Block.ts"]
+
+      - hour: 5.5
+        type: test
+        scope: chain
+        message: "add block validation edge case tests"
+        description: "Test empty blocks, max-size blocks, future timestamps, duplicate txs"
+        files: ["tests/unit/block-validation.test.ts"]
+
+      - hour: 6
+        type: refactor
+        scope: agent
+        message: "extract TaskBacklog priorities into configurable YAML"
+        description: "Move hardcoded priority weights into .hermes/priorities.yml"
+        files: ["backend/src/agent/TaskBacklog.ts", ".hermes/priorities.yml"]
+
+      - hour: 6.5
+        type: feat
+        scope: agent
+        message: "verify autonomous brain initialization sequence"
+        description: "Ensure AgentBrain boots, loads memory, connects to chain, starts loop"
+        files: ["backend/src/agent/AgentBrain.ts"]
+
+      - hour: 7
+        type: chore
+        scope: deps
+        message: "update package.json metadata and repository URLs"
+        description: "Point repository, bugs, homepage fields to hermeschain-agent GitHub"
+        files: ["package.json", "backend/package.json", "frontend/package.json"]
+
+      - hour: 7.5
+        type: docs
+        scope: readme
+        message: "add CI and license badges to README"
+        description: "Show build status, license, TypeScript version, Built by Hermes badge"
+        files: ["README.md"]
+
+  # ──── SLEEP: 08:00 - 16:00 UTC ────
+
+  # ──────────────────────────────────────────────────────────────
+  # PHASE 2: BLOCKCHAIN CORE (H+16 to H+24)
+  # Focus: consensus, cryptography, mempool, chain integrity
+  # ──────────────────────────────────────────────────────────────
+
+  - name: "Blockchain Core"
+    hours: "16-24"
+    focus: "Consensus hardening, cryptography, mempool optimization"
+    tasks:
+      - hour: 16
+        type: feat
+        scope: consensus
+        message: "implement PoAI validator rotation schedule"
+        description: "Rotate active validator set every 100 blocks using deterministic shuffle"
+        files: ["backend/src/blockchain/Consensus.ts"]
+
+      - hour: 16.5
+        type: test
+        scope: consensus
+        message: "add validator rotation unit tests"
+        description: "Verify rotation is deterministic, handles validator joins/leaves"
+        files: ["tests/unit/consensus-rotation.test.ts"]
+
+      - hour: 17
+        type: feat
+        scope: blockchain
+        message: "add merkle proof generation for state verification"
+        description: "Generate and verify inclusion proofs for any state key"
+        files: ["backend/src/blockchain/StateManager.ts"]
+
+      - hour: 17.5
+        type: fix
+        scope: blockchain
+        message: "handle empty transaction list in block builder"
+        description: "Block production should succeed with zero pending transactions"
+        files: ["backend/src/blockchain/BlockProducer.ts"]
+
+      - hour: 18
+        type: feat
+        scope: scripts
+        message: "add install script for quick project setup"
+        description: "Cross-platform setup: install deps, copy .env, init database, build"
+        files: ["scripts/install.sh"]
+
+      - hour: 18.5
+        type: feat
+        scope: crypto
+        message: "implement Ed25519 key derivation from BIP39 seed phrase"
+        description: "Deterministic keypair generation from 12/24-word mnemonics"
+        files: ["backend/src/blockchain/Crypto.ts"]
+
+      - hour: 19
+        type: feat
+        scope: wallet
+        message: "add BIP39 mnemonic generation utility"
+        description: "Generate cryptographically secure 12-word seed phrases"
+        files: ["backend/src/blockchain/Crypto.ts"]
+
+      - hour: 19.5
+        type: test
+        scope: crypto
+        message: "add signature verification round-trip tests"
+        description: "Sign -> verify for Ed25519, test invalid signatures, wrong keys"
+        files: ["tests/unit/crypto.test.ts"]
+
+      - hour: 20
+        type: feat
+        scope: mempool
+        message: "implement transaction priority queue with gas ordering"
+        description: "Priority heap sorted by gas price * gas limit, with eviction policy"
+        files: ["backend/src/blockchain/TransactionPool.ts"]
+
+      - hour: 20.5
+        type: refactor
+        scope: mempool
+        message: "add configurable mempool size limits"
+        description: "Max pending txs, max tx size, min gas price — all from env/config"
+        files: ["backend/src/blockchain/TransactionPool.ts"]
+
+      - hour: 21
+        type: feat
+        scope: chain
+        message: "add chain reorganization depth limit"
+        description: "Reject reorgs deeper than 6 blocks to prevent deep rollbacks"
+        files: ["backend/src/blockchain/Chain.ts"]
+
+      - hour: 21.5
+        type: fix
+        scope: chain
+        message: "prevent reorg past finality checkpoint"
+        description: "Once a block has 6+ confirmations, it cannot be reverted"
+        files: ["backend/src/blockchain/Chain.ts"]
+
+      - hour: 22
+        type: perf
+        scope: blockchain
+        message: "optimize state root calculation with incremental updates"
+        description: "Cache intermediate trie nodes, only recompute dirty paths"
+        files: ["backend/src/blockchain/StateManager.ts"]
+
+      - hour: 22.5
+        type: feat
+        scope: blockchain
+        message: "add block receipt merkle root verification"
+        description: "Include receipt root in block header, verify on block import"
+        files: ["backend/src/blockchain/Block.ts", "backend/src/blockchain/TransactionReceipt.ts"]
+
+      - hour: 23
+        type: docs
+        scope: blockchain
+        message: "document consensus algorithm in ARCHITECTURE.md"
+        description: "Explain PoAI: validator selection, quorum rules, finality gadget"
+        files: ["docs/ARCHITECTURE.md"]
+
+      - hour: 23.5
+        type: refactor
+        scope: blockchain
+        message: "extract magic numbers to chain configuration constants"
+        description: "Block time, max block size, finality depth — all in one config object"
+        files: ["backend/src/blockchain/Chain.ts", "backend/src/config.ts"]
+
+  # ──── SLEEP: 08:00 - 16:00 UTC ────
+
+  # ──────────────────────────────────────────────────────────────
+  # PHASE 3: AGENT INTELLIGENCE (H+32 to H+40)
+  # Focus: memory, learning, task management, self-evaluation
+  # ──────────────────────────────────────────────────────────────
+
+  - name: "Agent Intelligence"
+    hours: "32-40"
+    focus: "Memory persistence, task learning, self-evaluation"
+    tasks:
+      - hour: 32
+        type: feat
+        scope: agent
+        message: "add persistent task completion history"
+        description: "Store completed tasks with outcomes in SQLite for cross-session recall"
+        files: ["backend/src/agent/AgentMemory.ts"]
+
+      - hour: 32.5
+        type: refactor
+        scope: agent
+        message: "improve AgentBrain decision confidence scoring"
+        description: "Weight task selection by chain health, recent failures, skill match"
+        files: ["backend/src/agent/AgentBrain.ts"]
+
+      - hour: 33
+        type: feat
+        scope: agent
+        message: "add chain health monitoring dashboard data"
+        description: "Expose block rate, tx throughput, validator uptime as agent context"
+        files: ["backend/src/agent/ChainObserver.ts"]
+
+      - hour: 33.5
+        type: fix
+        scope: agent
+        message: "handle LLM API timeout in hermesClient gracefully"
+        description: "Retry with exponential backoff, fall back to cached response on 3rd fail"
+        files: ["backend/src/llm/hermesClient.ts"]
+
+      - hour: 34
+        type: feat
+        scope: agent
+        message: "implement skill auto-discovery from filesystem"
+        description: "Scan .agents/skills/ on boot, register new skills automatically"
+        files: ["backend/src/agent/SkillManager.ts"]
+
+      - hour: 34.5
+        type: test
+        scope: agent
+        message: "add AgentMemory persistence round-trip test"
+        description: "Write memory -> restart -> read memory, verify integrity"
+        files: ["tests/unit/agent-memory.test.ts"]
+
+      - hour: 35
+        type: feat
+        scope: agent
+        message: "add agent session summary generation"
+        description: "After each work session, generate a summary of what was accomplished"
+        files: ["backend/src/agent/AgentWorker.ts"]
+
+      - hour: 35.5
+        type: refactor
+        scope: agent
+        message: "split AgentWorker into streaming and execution concerns"
+        description: "Separate terminal output streaming from task execution logic"
+        files: ["backend/src/agent/AgentWorker.ts", "backend/src/agent/AgentStreamer.ts"]
+
+      - hour: 36
+        type: feat
+        scope: agent
+        message: "add task dependency resolution"
+        description: "Tasks can declare prerequisites — agent resolves DAG before scheduling"
+        files: ["backend/src/agent/TaskBacklog.ts"]
+
+      - hour: 36.5
+        type: fix
+        scope: agent
+        message: "prevent duplicate task execution in concurrent mode"
+        description: "Add mutex lock around task dequeue to prevent race conditions"
+        files: ["backend/src/agent/AgentExecutor.ts"]
+
+      - hour: 37
+        type: feat
+        scope: agent
+        message: "implement learning from completed task outcomes"
+        description: "Successful patterns boost similar tasks, failures reduce confidence"
+        files: ["backend/src/agent/AgentBrain.ts", "backend/src/agent/AgentMemory.ts"]
+
+      - hour: 37.5
+        type: docs
+        scope: agent
+        message: "add AGENTS.md documenting the autonomous development system"
+        description: "Explain agent architecture, decision tree, memory model, skill system"
+        files: ["AGENTS.md"]
+
+      - hour: 38
+        type: perf
+        scope: agent
+        message: "add task result caching to reduce redundant LLM calls"
+        description: "Cache code generation results by task signature hash"
+        files: ["backend/src/agent/AgentExecutor.ts"]
+
+      - hour: 38.5
+        type: feat
+        scope: agent
+        message: "add agent heartbeat metrics endpoint"
+        description: "GET /api/agent/heartbeat returns uptime, tasks completed, current task"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 39
+        type: test
+        scope: agent
+        message: "add TaskSources event handler unit tests"
+        description: "Test task generation from chain events, git events, user requests"
+        files: ["tests/unit/task-sources.test.ts"]
+
+      - hour: 39.5
+        type: refactor
+        scope: agent
+        message: "standardize error handling across agent subsystems"
+        description: "All agent modules use AgentError class with error codes and recovery"
+        files: ["backend/src/agent/AgentBrain.ts", "backend/src/agent/AgentExecutor.ts"]
+
+  # ──── SLEEP: 08:00 - 16:00 UTC ────
+
+  # ──────────────────────────────────────────────────────────────
+  # PHASE 4: API & FRONTEND (H+48 to H+56)
+  # Focus: explorer, WebSocket, rate limiting, responsive UI
+  # ──────────────────────────────────────────────────────────────
+
+  - name: "API & Frontend"
+    hours: "48-56"
+    focus: "Explorer API, WebSocket improvements, frontend polish"
+    tasks:
+      - hour: 48
+        type: feat
+        scope: api
+        message: "add paginated block explorer endpoint"
+        description: "GET /api/blocks?page=N&limit=M with total count header"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 48.5
+        type: feat
+        scope: api
+        message: "add transaction search by hash and address"
+        description: "GET /api/tx/:hash and GET /api/address/:addr/txs"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 49
+        type: fix
+        scope: api
+        message: "add input validation to all POST endpoints"
+        description: "Zod schemas for body validation, return 400 with field-level errors"
+        files: ["backend/src/api/server.ts", "backend/src/api/wallet.ts"]
+
+      - hour: 49.5
+        type: feat
+        scope: api
+        message: "add WebSocket event subscription filtering"
+        description: "Clients can subscribe to specific event types (blocks, txs, agent)"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 50
+        type: feat
+        scope: frontend
+        message: "add real-time block feed component"
+        description: "Live-updating block list with animation on new block arrival"
+        files: ["frontend/src/BlockExplorer.tsx"]
+
+      - hour: 50.5
+        type: fix
+        scope: frontend
+        message: "handle WebSocket reconnection on disconnect"
+        description: "Auto-reconnect with exponential backoff, show connection status"
+        files: ["frontend/src/App.tsx"]
+
+      - hour: 51
+        type: feat
+        scope: frontend
+        message: "add transaction detail modal"
+        description: "Click a tx hash to see full details: sender, receiver, gas, status"
+        files: ["frontend/src/BlockExplorer.tsx"]
+
+      - hour: 51.5
+        type: refactor
+        scope: frontend
+        message: "extract shared API client into custom React hooks"
+        description: "useChainData, useAgentStatus, useWebSocket hooks"
+        files: ["frontend/src/hooks/useChainData.ts", "frontend/src/hooks/useAgentStatus.ts"]
+
+      - hour: 52
+        type: feat
+        scope: api
+        message: "add rate limiting per API key"
+        description: "Token bucket rate limiter, 100 req/min default, configurable per key"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 52.5
+        type: test
+        scope: api
+        message: "add rate limiter integration tests"
+        description: "Verify rate limit headers, 429 response, key-specific limits"
+        files: ["tests/integration/rate-limit.test.ts"]
+
+      - hour: 53
+        type: feat
+        scope: frontend
+        message: "add agent decision history timeline"
+        description: "Visual timeline of agent decisions, outcomes, and confidence scores"
+        files: ["frontend/src/AgentTerminal.tsx"]
+
+      - hour: 53.5
+        type: fix
+        scope: frontend
+        message: "fix responsive layout for mobile agent terminal"
+        description: "Terminal panel stacks below main content on screens < 768px"
+        files: ["frontend/src/index.css"]
+
+      - hour: 54
+        type: feat
+        scope: api
+        message: "add OpenAPI specification generation"
+        description: "Auto-generate Swagger spec from route definitions"
+        files: ["backend/src/api/openapi.ts"]
+
+      - hour: 54.5
+        type: docs
+        scope: api
+        message: "generate API reference documentation"
+        description: "Markdown API docs generated from OpenAPI spec"
+        files: ["docs/API.md"]
+
+      - hour: 55
+        type: perf
+        scope: frontend
+        message: "lazy load heavy components with React.lazy"
+        description: "Code-split Playground, AdminPanel, CIPSystem for faster initial load"
+        files: ["frontend/src/App.tsx"]
+
+      - hour: 55.5
+        type: chore
+        scope: deps
+        message: "audit and update vulnerable dependencies"
+        description: "Run npm audit fix, update minor/patch versions across monorepo"
+        files: ["package.json", "backend/package.json", "frontend/package.json"]
+
+  # ──── SLEEP: 08:00 - 16:00 UTC ────
+
+  # ──────────────────────────────────────────────────────────────
+  # PHASE 5: SECURITY & TESTING (H+64 to H+72)
+  # Focus: auth, input validation, coverage, security hardening
+  # ──────────────────────────────────────────────────────────────
+
+  - name: "Security & Testing"
+    hours: "64-72"
+    focus: "Security hardening, authentication, test coverage"
+    tasks:
+      - hour: 64
+        type: feat
+        scope: security
+        message: "implement request signature verification middleware"
+        description: "HMAC-SHA256 request signing for authenticated API calls"
+        files: ["backend/src/api/auth.ts"]
+
+      - hour: 64.5
+        type: feat
+        scope: security
+        message: "add CORS origin allowlist from environment"
+        description: "Only allow configured origins, reject all others with 403"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 65
+        type: fix
+        scope: security
+        message: "sanitize all user inputs in CIP submission"
+        description: "Strip HTML, escape special chars, validate markdown format"
+        files: ["backend/src/api/cip-submit.ts"]
+
+      - hour: 65.5
+        type: test
+        scope: security
+        message: "add SQL injection prevention tests"
+        description: "Attempt injection payloads on all DB-touching endpoints, verify safe"
+        files: ["tests/security/sql-injection.test.ts"]
+
+      - hour: 66
+        type: feat
+        scope: security
+        message: "add JWT token rotation and refresh flow"
+        description: "Short-lived access tokens (15min) + refresh tokens (7d) with rotation"
+        files: ["backend/src/api/auth.ts"]
+
+      - hour: 66.5
+        type: feat
+        scope: auth
+        message: "implement API key management endpoints"
+        description: "Generate, list, revoke API keys per authenticated user"
+        files: ["backend/src/api/auth.ts"]
+
+      - hour: 67
+        type: test
+        scope: blockchain
+        message: "add full block lifecycle integration test"
+        description: "Create tx -> add to pool -> produce block -> validate -> finalize"
+        files: ["tests/integration/block-lifecycle.test.ts"]
+
+      - hour: 67.5
+        type: test
+        scope: consensus
+        message: "add Byzantine fault tolerance simulation"
+        description: "Simulate 1/3 validators going offline, verify chain continues"
+        files: ["tests/integration/bft-simulation.test.ts"]
+
+      - hour: 68
+        type: feat
+        scope: security
+        message: "add rate limiting to wallet generation endpoint"
+        description: "Prevent wallet spam — max 5 wallets per IP per hour"
+        files: ["backend/src/api/wallet.ts"]
+
+      - hour: 68.5
+        type: fix
+        scope: security
+        message: "prevent timing attacks on signature verification"
+        description: "Use constant-time comparison for all signature checks"
+        files: ["backend/src/blockchain/Crypto.ts"]
+
+      - hour: 69
+        type: test
+        scope: agent
+        message: "add end-to-end agent task execution test"
+        description: "Boot agent -> assign task -> execute -> verify output file created"
+        files: ["tests/e2e/agent-execution.test.ts"]
+
+      - hour: 69.5
+        type: refactor
+        scope: security
+        message: "centralize authentication middleware"
+        description: "Single auth middleware handles JWT, API key, and signature verification"
+        files: ["backend/src/api/auth.ts"]
+
+      - hour: 70
+        type: docs
+        scope: security
+        message: "update SECURITY.md with current audit status"
+        description: "Document completed audits, known issues, responsible disclosure"
+        files: ["SECURITY.md"]
+
+      - hour: 70.5
+        type: feat
+        scope: security
+        message: "add CSP and security headers to frontend serving"
+        description: "Content-Security-Policy, X-Frame-Options, X-Content-Type-Options"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 71
+        type: test
+        scope: frontend
+        message: "add component render smoke tests"
+        description: "Verify all major components render without throwing"
+        files: ["tests/unit/components.test.tsx"]
+
+      - hour: 71.5
+        type: ci
+        scope: security
+        message: "add security audit step to CI pipeline"
+        description: "Run npm audit and check for high/critical vulnerabilities in CI"
+        files: [".github/workflows/ci.yml"]
+
+  # ──── SLEEP: 08:00 - 16:00 UTC ────
+
+  # ──────────────────────────────────────────────────────────────
+  # PHASE 6: CONTRACTS, VM & POLISH (H+80 to H+88)
+  # Focus: VM opcodes, gas metering, governance, deploy configs
+  # ──────────────────────────────────────────────────────────────
+
+  - name: "Contracts, VM & Polish"
+    hours: "80-88"
+    focus: "VM execution, governance, deployment readiness"
+    tasks:
+      - hour: 80
+        type: feat
+        scope: vm
+        message: "implement opcode execution for basic arithmetic"
+        description: "ADD, SUB, MUL, DIV, MOD opcodes with stack-based execution"
+        files: ["backend/src/vm/index.ts", "src/vm/VirtualMachine.ts"]
+
+      - hour: 80.5
+        type: feat
+        scope: vm
+        message: "add SLOAD and SSTORE opcodes for contract state"
+        description: "Persistent storage read/write tied to contract address namespace"
+        files: ["backend/src/vm/index.ts"]
+
+      - hour: 81
+        type: feat
+        scope: contracts
+        message: "add ERC-20 compatibility layer to ORCTOKEN"
+        description: "Map ORCTOKEN interface to standard ERC-20 function signatures"
+        files: ["contracts/ORCTOKEN.sol"]
+
+      - hour: 81.5
+        type: test
+        scope: contracts
+        message: "add ORCTOKEN transfer and approval tests"
+        description: "Test transfer, approve, transferFrom, allowance edge cases"
+        files: ["tests/unit/orctoken.test.ts"]
+
+      - hour: 82
+        type: feat
+        scope: vm
+        message: "implement gas metering for opcode execution"
+        description: "Each opcode has a gas cost, execution halts when gas is exhausted"
+        files: ["backend/src/vm/index.ts"]
+
+      - hour: 82.5
+        type: fix
+        scope: vm
+        message: "handle stack overflow in nested contract calls"
+        description: "Limit call depth to 1024, return error on overflow"
+        files: ["backend/src/vm/index.ts"]
+
+      - hour: 83
+        type: feat
+        scope: contracts
+        message: "add contract deployment transaction type"
+        description: "New tx type with bytecode payload, auto-assign contract address"
+        files: ["backend/src/blockchain/Block.ts", "backend/src/blockchain/TransactionPool.ts"]
+
+      - hour: 83.5
+        type: docs
+        scope: contracts
+        message: "document ORCTOKEN standard specification"
+        description: "Full spec: function signatures, events, error codes, gas costs"
+        files: ["docs/ORCTOKEN-SPEC.md"]
+
+      - hour: 84
+        type: refactor
+        scope: vm
+        message: "extract opcode table to separate module"
+        description: "Opcodes as a typed map with name, gas cost, handler function"
+        files: ["backend/src/vm/opcodes.ts"]
+
+      - hour: 84.5
+        type: perf
+        scope: vm
+        message: "add execution result caching for pure function calls"
+        description: "Cache results of STATICCALL by input hash, invalidate on state change"
+        files: ["backend/src/vm/index.ts"]
+
+      - hour: 85
+        type: feat
+        scope: governance
+        message: "implement on-chain proposal submission"
+        description: "Users submit CIPs as on-chain txs, stored in governance state"
+        files: ["backend/src/api/cip-submit.ts", "backend/src/blockchain/StateManager.ts"]
+
+      - hour: 85.5
+        type: feat
+        scope: governance
+        message: "add validator voting on proposals"
+        description: "Validators cast yes/no/abstain votes, tally after voting period"
+        files: ["backend/src/blockchain/Consensus.ts"]
+
+      - hour: 86
+        type: docs
+        scope: governance
+        message: "document CIP proposal lifecycle"
+        description: "Draft -> Review -> Voting -> Accepted/Rejected -> Implemented"
+        files: ["docs/CIP-PROCESS.md"]
+
+      - hour: 86.5
+        type: feat
+        scope: api
+        message: "add governance proposal listing endpoint"
+        description: "GET /api/governance/proposals with status filter and pagination"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 87
+        type: refactor
+        scope: codebase
+        message: "standardize logging format across all modules"
+        description: "Structured JSON logs with timestamp, level, module, message fields"
+        files: ["backend/src/utils/logger.ts"]
+
+      - hour: 87.5
+        type: chore
+        scope: readme
+        message: "update README with current project status and roadmap"
+        description: "Add completed features, in-progress items, future plans section"
+        files: ["README.md"]
+
+  # ──── SLEEP: 08:00 - 16:00 UTC ────
+
+  # ──────────────────────────────────────────────────────────────
+  # PHASE 7: FINAL SPRINT (H+96 to H+106)
+  # Focus: polish, metrics, retrospective, release tag
+  # ──────────────────────────────────────────────────────────────
+
+  - name: "Final Sprint"
+    hours: "96-106"
+    focus: "Metrics, documentation, release preparation"
+    tasks:
+      - hour: 96
+        type: feat
+        scope: agent
+        message: "add autonomous code review capability"
+        description: "Agent can review its own generated code for common issues"
+        files: ["backend/src/agent/AgentBrain.ts"]
+
+      - hour: 96.5
+        type: feat
+        scope: agent
+        message: "implement automated changelog generation"
+        description: "Parse conventional commits since last tag, generate CHANGELOG entry"
+        files: ["backend/src/agent/GitIntegration.ts"]
+
+      - hour: 97
+        type: docs
+        scope: guide
+        message: "write comprehensive getting started guide"
+        description: "Step-by-step: clone, install, configure, run, explore"
+        files: ["docs/GETTING-STARTED.md"]
+
+      - hour: 97.5
+        type: feat
+        scope: monitoring
+        message: "add Prometheus metrics endpoint"
+        description: "GET /metrics returns block_height, tx_count, agent_tasks_completed"
+        files: ["backend/src/api/server.ts"]
+
+      - hour: 98
+        type: perf
+        scope: chain
+        message: "benchmark block production under simulated load"
+        description: "Generate 1000 txs, measure block production time, report stats"
+        files: ["tests/benchmark/block-production.bench.ts"]
+
+      - hour: 98.5
+        type: fix
+        scope: chain
+        message: "optimize memory usage for long-running node"
+        description: "Prune old block data from memory, keep only last 1000 blocks in RAM"
+        files: ["backend/src/blockchain/Chain.ts"]
+
+      - hour: 99
+        type: feat
+        scope: network
+        message: "add peer discovery protocol skeleton"
+        description: "DNS-based seed node discovery, maintain peer list"
+        files: ["backend/src/network/PeerDiscovery.ts"]
+
+      - hour: 99.5
+        type: feat
+        scope: network
+        message: "implement basic peer-to-peer message passing"
+        description: "JSON-RPC over WebSocket between peer nodes"
+        files: ["backend/src/network/P2PNode.ts"]
+
+      - hour: 100
+        type: docs
+        scope: architecture
+        message: "update system diagram with current components"
+        description: "Reflect all implemented modules in architecture diagram"
+        files: ["docs/ARCHITECTURE.md"]
+
+      - hour: 100.5
+        type: test
+        scope: coverage
+        message: "add missing tests to reach 80% coverage threshold"
+        description: "Fill gaps in blockchain, agent, and API test coverage"
+        files: ["tests/unit/coverage-gap.test.ts"]
+
+      - hour: 101
+        type: feat
+        scope: agent
+        message: "add self-improvement proposal generation"
+        description: "Agent analyzes own code and proposes CIPs for improvements"
+        files: ["backend/src/agent/AgentBrain.ts"]
+
+      - hour: 101.5
+        type: refactor
+        scope: cleanup
+        message: "remove dead code and unused imports across codebase"
+        description: "Tree-shake unused exports, remove commented-out code blocks"
+        files: ["backend/src/agent/AgentWorker.ts", "backend/src/api/server.ts"]
+
+      - hour: 102
+        type: docs
+        scope: changelog
+        message: "update CHANGELOG.md for v2.1.0 release"
+        description: "Document all changes since v2.0.0 initial commit"
+        files: ["CHANGELOG.md"]
+
+      - hour: 102.5
+        type: chore
+        scope: release
+        message: "tag v2.1.0 release"
+        description: "Create annotated git tag with release notes"
+        files: []
+
+      - hour: 103
+        type: feat
+        scope: agent
+        message: "write 106-hour sprint reflection"
+        description: "Agent generates retrospective: what worked, what to improve"
+        files: ["docs/SPRINT-RETROSPECTIVE.md"]
+
+      - hour: 103.5
+        type: docs
+        scope: readme
+        message: "update README badges and project shields"
+        description: "Refresh badge URLs, add coverage badge, update stats"
+        files: ["README.md"]
+
+      - hour: 104
+        type: feat
+        scope: agent
+        message: "generate final project status report"
+        description: "Comprehensive report: lines of code, test coverage, features shipped"
+        files: ["docs/STATUS-REPORT.md"]
+
+      - hour: 104.5
+        type: docs
+        scope: agents
+        message: "write post-sprint retrospective in AGENTS.md"
+        description: "Document lessons learned, agent behavior patterns, success metrics"
+        files: ["AGENTS.md"]
+
+      - hour: 105
+        type: chore
+        scope: deps
+        message: "final dependency audit and lock file update"
+        description: "Ensure all deps are latest compatible, regenerate lock files"
+        files: ["package-lock.json", "backend/package-lock.json", "frontend/package-lock.json"]
+
+      - hour: 105.5
+        type: docs
+        scope: deploy
+        message: "update DEPLOYMENT.md with production checklist"
+        description: "Pre-deploy checklist: env vars, DB migration, health check, rollback"
+        files: ["DEPLOYMENT.md"]
+
+      - hour: 106
+        type: feat
+        scope: agent
+        message: "log final session summary and sprint metrics"
+        description: "Agent writes final log entry with total commits, files changed, uptime"
+        files: ["backend/src/agent/AgentWorker.ts"]
+
+# ──────────────────────────────────────────────────────────────
+# SUMMARY
+# ──────────────────────────────────────────────────────────────
+# Total tasks: 106
+# By type: feat 38, fix 10, test 14, docs 14, refactor 10, perf 4, chore 8, ci 2
+# Active hours: ~70 (106 calendar - 36 sleep)
+# Commit cadence: ~1.5 per active hour
