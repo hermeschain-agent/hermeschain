@@ -792,7 +792,16 @@ Ready for council review.`,
         console.log(`[AGENT] Completed task: ${task.title}`);
         
         // ALWAYS auto-commit and push changes to GitHub after EVERY task
-        const commitMessage = `[HERMES] ${task.type}: ${task.title}`;
+        // Use conventional commit format: type(scope): description
+        const typeMap: Record<string, string> = {
+          build: 'feat', fix: 'fix', test: 'test', audit: 'fix',
+          analyze: 'refactor', propose: 'feat', review: 'refactor',
+          feature: 'feat', default: 'chore'
+        };
+        const commitType = typeMap[task.type] || typeMap.default;
+        const scope = task.category || 'chain';
+        const title = task.title.replace(/^(xxx|XXX)[:\s]*/i, '').trim() || 'update generated module';
+        const commitMessage = `${commitType}(${scope}): ${title.charAt(0).toLowerCase() + title.slice(1)}`;
         console.log(`[AGENT] Attempting to commit: ${commitMessage}`);
         
         const gitResult = await gitIntegration.autoCommitAndPush(commitMessage, task.id);

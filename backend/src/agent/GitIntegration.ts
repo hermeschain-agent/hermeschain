@@ -495,10 +495,9 @@ export class GitIntegration {
   // Create a commit
   async commit(message: string, taskId?: string): Promise<GitOperationResult> {
     try {
-      // Format commit message with task reference
-      const fullMessage = taskId 
-        ? `[OPEN-${taskId}] ${message}`
-        : `[HERMES] ${message}`;
+      // Use the commit message directly — conventional commit format is
+      // already applied by AgentWorker before calling this method.
+      const fullMessage = message;
       
       // Stage all changes first
       this.execGit('add -A', true);
