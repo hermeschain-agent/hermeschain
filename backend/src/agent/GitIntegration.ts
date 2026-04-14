@@ -158,60 +158,28 @@ export class GitIntegration {
     }
   }
 
-  // Auto-commit and push changes - SAFE MODE: only commits to hermes-generated/
+  // Auto-commit and push all agent changes
   async autoCommitAndPush(message: string, taskId?: string): Promise<GitOperationResult> {
-    console.log('[GIT] autoCommitAndPush called (SAFE MODE):', message);
-    
-    // SAFE DIRECTORIES - agent can ONLY commit files in these paths
-    const SAFE_PATHS = [
-      'backend/src/hermes-generated',
-      'hermes-generated',
-      'src/hermes-generated'
-    ];
+    console.log('[GIT] autoCommitAndPush called:', message);
 
     try {
       // Get list of changed files
       const statusOutput = this.execGit('status --porcelain', true);
       const changedFiles = statusOutput.split('\n').filter(Boolean);
-      
+
       if (changedFiles.length === 0) {
         console.log('[GIT] No changes to commit');
         return { success: true, output: 'No changes to commit' };
       }
-      
-      // Filter to only safe files (in hermes-generated directories)
-      const safeFiles: string[] = [];
-      const blockedFiles: string[] = [];
-      
-      for (const line of changedFiles) {
-        const file = line.substring(3).trim(); // Remove status prefix
-        const isSafe = SAFE_PATHS.some(safePath => file.startsWith(safePath) || file.includes('/' + safePath));
-        
-        if (isSafe) {
-          safeFiles.push(file);
-        } else {
-          blockedFiles.push(file);
-        }
-      }
-      
-      if (blockedFiles.length > 0) {
-        console.log(`[GIT] BLOCKED ${blockedFiles.length} files outside safe paths:`, blockedFiles.slice(0, 5));
-      }
-      
-      if (safeFiles.length === 0) {
-        console.log('[GIT] No safe files to commit (all changes are outside hermes-generated/)');
-        return { success: true, output: 'No safe files to commit' };
-      }
-      
-      console.log(`[GIT] Staging ${safeFiles.length} safe files...`);
-      
-      // Stage ONLY safe files (never use git add -A)
-      for (const file of safeFiles) {
-        try {
-          this.execGit(`add "${file}"`, true);
-        } catch (e) {
-          console.log(`[GIT] Could not stage ${file}`);
-        }
+
+      console.log(`[GIT] Staging ${changedFiles.length} changed files...`);
+
+      // Stage all changes — on Railway this is a dedicated container
+      // so all changes are from the agent.
+      try {
+        this.execGit('add -A', true);
+      } catch (e: any) {
+        console.error('[GIT] Failed to stage files:', e.message);
       }
 
       // Use the commit message directly — conventional format applied by AgentWorker.
