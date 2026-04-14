@@ -235,11 +235,18 @@ a:hover { text-decoration-color: var(--cream); }
 
 .app-header .logo-text {
   font-family: var(--font-display);
-  font-size: var(--fs-lg);
+  font-size: var(--fs-md);
   font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   color: var(--fg-muted);
+  line-height: 0.95;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.app-header .logo-text > span {
+  display: block;
 }
 
 .app-header .header-right {

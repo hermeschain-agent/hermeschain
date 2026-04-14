@@ -1605,7 +1605,7 @@ export default function App() {
           <div className="logo-mark">
             <Logo />
           </div>
-          <span className="logo-text">HERMESCHAIN</span>
+          <span className="logo-text"><span>HERMES</span><span>CHAIN</span></span>
         </div>
 
         <div className="header-right">
