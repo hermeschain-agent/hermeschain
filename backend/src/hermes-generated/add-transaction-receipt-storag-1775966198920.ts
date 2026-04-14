@@ -30,3 +30,4 @@ export class AddTransactionReceiptStorageAndIndexing {
 }
 
 export default AddTransactionReceiptStorageAndIndexing;
+// registered in hermes task queue
