@@ -1,5 +1,6 @@
 import * as dotenv from 'dotenv';
 import { EventEmitter } from 'events';
+import * as path from 'path';
 import { TaskGenerator, Task } from './TaskGenerator';
 import { agentMemory } from './AgentMemory';
 import { chainObserver } from './ChainObserver';
@@ -383,6 +384,17 @@ People are watching you work. Show them autonomous agent development in action.`
           const preview = toolResult.content.substring(0, 500);
           resultDisplay = `Read ${toolResult.path} (${toolResult.content.length} chars):\n\`\`\`\n${preview}${toolResult.content.length > 500 ? '\n...' : ''}\n\`\`\``;
         } else if (toolName === 'write_file') {
+          if (
+            toolResult.success &&
+            typeof toolInput.path === 'string' &&
+            typeof toolInput.content === 'string'
+          ) {
+            fullOutput += await this.streamCodePreview(
+              toolInput.path,
+              toolInput.content
+            );
+          }
+
           resultDisplay = toolResult.success
             ? `Wrote to ${toolResult.path}`
             : `Failed: ${toolResult.error}`;
@@ -531,6 +543,65 @@ export const generated_${timestamp} = {
       .join('');
   }
 
+  private inferCodeLanguage(filePath: string): string {
+    switch (path.extname(filePath).toLowerCase()) {
+      case '.ts':
+      case '.tsx':
+        return 'typescript';
+      case '.js':
+      case '.jsx':
+        return 'javascript';
+      case '.json':
+        return 'json';
+      case '.css':
+        return 'css';
+      case '.md':
+        return 'markdown';
+      case '.sh':
+        return 'bash';
+      case '.html':
+        return 'html';
+      default:
+        return 'text';
+    }
+  }
+
+  private async streamCodePreview(
+    filePath: string,
+    content: string,
+    options?: { maxLines?: number }
+  ): Promise<string> {
+    const language = this.inferCodeLanguage(filePath);
+    const allLines = content.replace(/\r\n/g, '\n').split('\n');
+    const previewLines = allLines.slice(0, options?.maxLines ?? 40);
+    const previewChunks: string[] = [];
+
+    const pushChunk = async (chunk: string, waitMs: number) => {
+      previewChunks.push(chunk);
+      this.state.currentOutput += chunk;
+      this.broadcast('text', chunk);
+      await this.delay(waitMs);
+    };
+
+    await pushChunk(`\n$ cat ${filePath}\n`, 40);
+    await pushChunk(`[FILE] ${filePath}\n`, 24);
+    await pushChunk(`\`\`\`${language}\n`, 18);
+
+    for (const line of previewLines) {
+      await pushChunk(`${line}\n`, 5);
+    }
+
+    if (previewLines.length < allLines.length) {
+      await pushChunk(
+        `... truncated ${allLines.length - previewLines.length} more lines ...\n`,
+        12
+      );
+    }
+
+    await pushChunk('```\n', 18);
+    return previewChunks.join('');
+  }
+
   // Simulate streaming for demo/no API key scenarios
   // This now ACTUALLY writes files so commits can happen
   private async simulateStream(task: Task): Promise<string> {
@@ -555,11 +626,13 @@ export const generated_${timestamp} = {
 
 Looking at the current implementation, I'm adding new functionality.
 
-I've created \`${filePath}\` with the following implementation:
+[FILE] ${filePath}
 
 \`\`\`typescript
 ${fileContent.slice(0, 500)}...
 \`\`\`
+
+$ save_status ok
 
 This implementation handles the core requirements and can be extended further.`,
 
@@ -799,7 +872,10 @@ Ready for council review.`,
           feature: 'feat', default: 'chore'
         };
         const commitType = typeMap[task.type] || typeMap.default;
-        const scope = task.category || 'chain';
+        const scope =
+          (typeof task.context?.category === 'string' && task.context.category) ||
+          task.type.split('_')[0] ||
+          'chain';
         const title = task.title.replace(/^(xxx|XXX)[:\s]*/i, '').trim() || 'update generated module';
         const commitMessage = `${commitType}(${scope}): ${title.charAt(0).toLowerCase() + title.slice(1)}`;
         console.log(`[AGENT] Attempting to commit: ${commitMessage}`);
