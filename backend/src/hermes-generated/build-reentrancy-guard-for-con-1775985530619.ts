@@ -30,3 +30,4 @@ export class BuildReentrancyGuardForContractExecution {
 }
 
 export default BuildReentrancyGuardForContractExecution;
+// registered in hermes task queue
