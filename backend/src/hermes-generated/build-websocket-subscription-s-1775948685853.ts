@@ -30,4 +30,3 @@ export class BuildWebsocketSubscriptionSystem {
 }
 
 export default BuildWebsocketSubscriptionSystem;
-// registered in hermes task queue
