@@ -30,4 +30,3 @@ export class AddTransactionExplorer {
 }
 
 export default AddTransactionExplorer;
-// registered in hermes task queue
