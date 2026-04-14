@@ -30,3 +30,4 @@ export class ImplementTransactionSignatureVerification {
 }
 
 export default ImplementTransactionSignatureVerification;
+// registered in hermes task queue
