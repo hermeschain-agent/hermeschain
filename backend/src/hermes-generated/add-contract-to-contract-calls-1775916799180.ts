@@ -30,4 +30,3 @@ export class AddContractToContractCalls {
 }
 
 export default AddContractToContractCalls;
-// registered in hermes task queue
