@@ -10,4 +10,3 @@ export const generated_1776073833737 = {
   type: 'feature',
   timestamp: 1776073833737
 };
-// registered in hermes task queue
