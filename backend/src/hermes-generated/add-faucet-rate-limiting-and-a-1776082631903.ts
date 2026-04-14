@@ -30,3 +30,4 @@ export class AddFaucetRateLimitingAndAntiAbuse {
 }
 
 export default AddFaucetRateLimitingAndAntiAbuse;
+// registered in hermes task queue
