@@ -30,4 +30,3 @@ export class BuildWalletConnectionFlow {
 }
 
 export default BuildWalletConnectionFlow;
-// registered in hermes task queue
