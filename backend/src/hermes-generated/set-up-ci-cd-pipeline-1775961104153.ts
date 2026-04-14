@@ -30,4 +30,3 @@ export class SetUpCiCdPipeline {
 }
 
 export default SetUpCiCdPipeline;
-// registered in hermes task queue
