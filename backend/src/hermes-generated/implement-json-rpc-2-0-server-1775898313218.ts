@@ -30,3 +30,4 @@ export class ImplementJsonRpc20Server {
 }
 
 export default ImplementJsonRpc20Server;
+// registered in hermes task queue
