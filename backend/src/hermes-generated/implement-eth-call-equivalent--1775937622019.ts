@@ -30,3 +30,4 @@ export class ImplementEthCallEquivalentForReadOnlyExecution {
 }
 
 export default ImplementEthCallEquivalentForReadOnlyExecution;
+// registered in hermes task queue
