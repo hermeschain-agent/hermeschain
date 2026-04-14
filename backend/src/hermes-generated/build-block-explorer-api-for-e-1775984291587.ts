@@ -30,4 +30,3 @@ export class BuildBlockExplorerApiForExternalConsumption {
 }
 
 export default BuildBlockExplorerApiForExternalConsumption;
-// registered in hermes task queue
