@@ -30,4 +30,3 @@ export class ImplementContractStorageCrud {
 }
 
 export default ImplementContractStorageCrud;
-// registered in hermes task queue
