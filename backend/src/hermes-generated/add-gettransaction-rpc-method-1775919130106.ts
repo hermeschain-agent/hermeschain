@@ -30,4 +30,3 @@ export class AddGettransactionRpcMethod {
 }
 
 export default AddGettransactionRpcMethod;
-// registered in hermes task queue
