@@ -30,3 +30,4 @@ export class ImplementGrc20TokenFactoryContract {
 }
 
 export default ImplementGrc20TokenFactoryContract;
+// registered in hermes task queue
