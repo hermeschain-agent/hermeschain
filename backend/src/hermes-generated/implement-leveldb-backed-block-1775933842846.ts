@@ -30,4 +30,3 @@ export class ImplementLeveldbBackedBlockStorage {
 }
 
 export default ImplementLeveldbBackedBlockStorage;
-// registered in hermes task queue
