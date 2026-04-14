@@ -30,3 +30,4 @@ export class AddGetsignaturesforaddressRpc {
 }
 
 export default AddGetsignaturesforaddressRpc;
+// registered in hermes task queue
