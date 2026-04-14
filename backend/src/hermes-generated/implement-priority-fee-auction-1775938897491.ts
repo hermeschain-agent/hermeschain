@@ -30,3 +30,4 @@ export class ImplementPriorityFeeAuctionMechanism {
 }
 
 export default ImplementPriorityFeeAuctionMechanism;
+// registered in hermes task queue
