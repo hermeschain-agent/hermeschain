@@ -30,4 +30,3 @@ export class BuildTransactionGossipProtocol {
 }
 
 export default BuildTransactionGossipProtocol;
-// registered in hermes task queue
