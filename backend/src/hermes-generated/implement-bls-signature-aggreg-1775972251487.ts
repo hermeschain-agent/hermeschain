@@ -30,4 +30,3 @@ export class ImplementBlsSignatureAggregation {
 }
 
 export default ImplementBlsSignatureAggregation;
-// registered in hermes task queue
