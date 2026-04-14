@@ -30,4 +30,3 @@ export class AddWalletBalanceAndTransactionHistory {
 }
 
 export default AddWalletBalanceAndTransactionHistory;
-// registered in hermes task queue
