@@ -6,6 +6,7 @@ import BlockExplorer from './BlockExplorer';
 import HermesDock from './HermesDock';
 import RitualActions from './RitualActions';
 import Wallet from './Wallet';
+import { API_BASE } from './api';
 import useHermesDockState, {
   RitualKind,
   RitualResponse,
@@ -105,8 +106,6 @@ interface LogEntry {
 type LogFilter = 'all' | 'task_start' | 'task_complete' | 'tool_use' | 'git_commit' | 'error';
 type RouteState = 'loading' | 'empty' | 'ready' | 'error';
 
-const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:4000' : '';
-const GENESIS_TIMESTAMP = 1769731200000;
 const VISIBLE_TABS = [
   'terminal',
   'hermes',
@@ -212,7 +211,6 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [dockSheetOpen, setDockSheetOpen] = useState(false);
-  const [agentPanelOpen, setAgentPanelOpen] = useState(true);
   const [agentPanelWidth, setAgentPanelWidth] = useState(420);
   const [uptime, setUptime] = useState('0h 0m');
   const [networkAgents, setNetworkAgents] = useState<NetworkAgent[]>([]);
@@ -287,7 +285,14 @@ export default function App() {
 
   useEffect(() => {
     const updateUptime = () => {
-      const elapsed = Date.now() - GENESIS_TIMESTAMP;
+      if (liveState.chainAgeMs === null || liveState.lastUpdatedAt === null) {
+        setUptime('Syncing');
+        return;
+      }
+
+      const elapsed =
+        liveState.chainAgeMs +
+        Math.max(0, Date.now() - liveState.lastUpdatedAt);
       const hours = Math.floor(elapsed / 3600000);
       const minutes = Math.floor((elapsed / 60000) % 60);
       setUptime(`${hours}h ${minutes}m`);
@@ -296,7 +301,7 @@ export default function App() {
     updateUptime();
     const interval = window.setInterval(updateUptime, 1000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [liveState.chainAgeMs, liveState.lastUpdatedAt]);
 
   useEffect(() => {
     const path = location.pathname.slice(1) || 'terminal';
@@ -1633,16 +1638,6 @@ export default function App() {
             <GitHubIcon />
           </a>
 
-          {!isMobile ? (
-            <button
-              className={`agent-toggle ${agentPanelOpen ? 'open' : ''}`}
-              onClick={() => setAgentPanelOpen((prev) => !prev)}
-            >
-              Agent
-              {agentPanelOpen ? <div className="live-dot on" /> : null}
-            </button>
-          ) : null}
-
           {isMobile ? (
             <>
               <button className="agent-toggle" onClick={() => setDockSheetOpen(true)}>
@@ -1721,7 +1716,7 @@ export default function App() {
           </main>
         </div>
 
-        {!isMobile && agentPanelOpen ? (
+        {!isMobile ? (
           <aside className="agent-panel" style={{ width: agentPanelWidth }}>
             <div
               className="resize-handle"

@@ -1,27 +1,31 @@
 import { execSync } from 'child_process';
-import * as fs from 'fs';
 import * as path from 'path';
 import { Task } from './TaskGenerator';
 import { eventBus } from '../events/EventBus';
 import { db } from '../database/db';
-import { getNextBacklogTask, markBacklogTaskComplete, BacklogTask, getBacklogProgress } from './TaskBacklog';
+import { TASK_BACKLOG, BacklogTask } from './TaskBacklog';
+import { AgentConfig } from './config';
+import {
+  EvidenceItem,
+  ExecutionScope,
+  SourceTaskRecord,
+  TaskSelection,
+  VerificationPlan,
+} from './types';
+import { agentTaskStore } from './AgentTaskStore';
 
-// Task source types
-export type TaskSourceType = 
-  | 'chain_event'      // From blockchain events (consensus failures, etc.)
-  | 'code_error'       // From linter/test errors
-  | 'github_issue'     // From GitHub issues
-  | 'cip_proposal'     // From CIP submissions
-  | 'todo_comment'     // From TODO comments in code
-  | 'dependency'       // From outdated dependencies
-  | 'performance'      // From performance issues
-  | 'security'         // From security scans
-  | 'scheduled';       // Scheduled maintenance tasks
+export type TaskSourceType =
+  | 'backlog'
+  | 'chain_event'
+  | 'code_error'
+  | 'github_issue'
+  | 'cip_proposal'
+  | 'todo_comment'
+  | 'dependency'
+  | 'runtime_error';
 
-// Task priority levels
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
 
-// Source task (before conversion to agent Task)
 export interface SourceTask {
   id: string;
   source: TaskSourceType;
@@ -30,261 +34,552 @@ export interface SourceTask {
   priority: TaskPriority;
   context: Record<string, any>;
   createdAt: Date;
-  expiresAt?: Date;
 }
 
-// Chain event that can generate a task
-interface ChainEvent {
-  type: 'consensus_failure' | 'block_error' | 'transaction_error' | 'high_gas';
-  message: string;
-  data: any;
-  timestamp: number;
+const TERMINAL_STATUSES = new Set(['succeeded', 'discarded']);
+
+function priorityValue(priority: TaskPriority): number {
+  return {
+    critical: 1,
+    high: 0.85,
+    medium: 0.6,
+    low: 0.3,
+  }[priority];
 }
 
-// Code issue that can generate a task
-interface CodeIssue {
-  type: 'lint_error' | 'test_failure' | 'type_error' | 'build_error';
-  file: string;
-  line?: number;
-  message: string;
+function normalizeScope(pathValue: string): ExecutionScope {
+  return {
+    kind: pathValue.endsWith('/') ? 'path_prefix' : 'file',
+    path: pathValue,
+  };
+}
+
+function dedupeScopes(scopes: ExecutionScope[]): ExecutionScope[] {
+  const seen = new Set<string>();
+  return scopes.filter((scope) => {
+    const key = `${scope.kind}:${scope.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeTags(tags: string[]): string[] {
+  return Array.from(
+    new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))
+  );
 }
 
 export class TaskSources {
-  private projectRoot: string;
-  private pendingTasks: Map<string, SourceTask> = new Map();
-  private processedIds: Set<string> = new Set();
+  private config: AgentConfig | null = null;
+  private projectRoot = process.cwd();
+  private initialized = false;
+  private backlogSynced = false;
+  private listenerDisposers: Array<() => void> = [];
 
-  constructor(projectRoot?: string) {
-    this.projectRoot = projectRoot || path.resolve(__dirname, '../../../../');
+  configure(config: AgentConfig): void {
+    this.config = config;
+    if (config.repoRoot) {
+      this.projectRoot = config.repoRoot;
+    }
+  }
+
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    await agentTaskStore.initialize();
     this.setupEventListeners();
+    this.initialized = true;
   }
 
-  // Listen for chain events
+  dispose(): void {
+    for (const dispose of this.listenerDisposers) {
+      dispose();
+    }
+    this.listenerDisposers = [];
+    this.initialized = false;
+  }
+
+  private on(event: string, listener: (...args: any[]) => void): void {
+    eventBus.on(event, listener);
+    this.listenerDisposers.push(() => eventBus.off(event, listener));
+  }
+
   private setupEventListeners(): void {
-    // Listen for consensus failures
-    eventBus.on('consensus_failed', (data: any) => {
-      this.addChainEventTask({
-        type: 'consensus_failure',
-        message: 'Consensus failed for block',
-        data,
-        timestamp: Date.now()
+    this.on('consensus_failed', (data: any) => {
+      void this.enqueueSourceTask({
+        id: `consensus-${data?.block?.header?.height || data?.timestamp || Date.now()}`,
+        source: 'chain_event',
+        title: 'Investigate consensus failure',
+        description: `Consensus failed while producing a block.\n\n${JSON.stringify(data, null, 2)}`,
+        priority: 'critical',
+        context: {
+          event: data,
+          evidence: [
+            {
+              kind: 'event',
+              label: 'consensus_failed',
+              detail: data?.reason || 'Consensus failure emitted by block production.',
+            },
+          ],
+          scopes: ['backend/src/blockchain/'],
+          objectiveTags: ['consensus', 'chain', 'security'],
+        },
+        createdAt: new Date(),
       });
     });
 
-    // Listen for transaction errors
-    eventBus.on('transaction_error', (data: any) => {
-      this.addChainEventTask({
-        type: 'transaction_error',
-        message: 'Transaction processing error',
-        data,
-        timestamp: Date.now()
+    this.on('ci_failure', (data: any) => {
+      const scopes = this.extractScopesFromCiFailure(data);
+      const evidence = [
+        {
+          kind: 'ci',
+          label: `ci_failure:${data?.type || 'unknown'}`,
+          detail: JSON.stringify(data).slice(0, 600),
+        },
+      ];
+      void this.enqueueSourceTask({
+        id: `ci-${data?.type || 'unknown'}`,
+        source: 'code_error',
+        title: `Repair ${data?.type || 'build'} failure`,
+        description: `Automated checks failed and need attention.\n\n${JSON.stringify(data, null, 2)}`,
+        priority: data?.type === 'build' ? 'critical' : 'high',
+        context: {
+          event: data,
+          scopes,
+          objectiveTags: ['tooling', 'quality'],
+          evidence,
+        },
+        createdAt: new Date(),
       });
     });
 
-    // Listen for state changes that might indicate issues
-    eventBus.on('state_change', (data: any) => {
-      if (data.type === 'error') {
-        this.addChainEventTask({
-          type: 'block_error',
-          message: 'State update error',
-          data,
-          timestamp: Date.now()
-        });
-      }
+    this.on('new_log', (entry: any) => {
+      if (entry?.type !== 'error') return;
+      void this.enqueueSourceTask({
+        id: `runtime-${entry.id}`,
+        source: 'runtime_error',
+        title: `Investigate runtime error${entry.taskTitle ? ` in ${entry.taskTitle}` : ''}`,
+        description: entry.content || 'Runtime error emitted to agent logs.',
+        priority: 'high',
+        context: {
+          scopes: ['backend/src/'],
+          objectiveTags: ['runtime', 'quality'],
+          evidence: [
+            {
+              kind: 'log',
+              label: 'runtime_error',
+              detail: entry.content || 'Runtime error from logs.',
+            },
+          ],
+        },
+        createdAt: new Date(entry.timestamp || Date.now()),
+      });
+    });
+
+    this.on('block_produced', (payload: any) => {
+      const blockTime = Number(payload?.blockTime || 0);
+      if (!Number.isFinite(blockTime) || blockTime <= 15000) return;
+
+      void this.enqueueSourceTask({
+        id: `block-time-${payload?.block?.header?.height || Date.now()}`,
+        source: 'chain_event',
+        title: 'Investigate slow block production',
+        description: `Block production exceeded the expected target.\n\nObserved block time: ${blockTime}ms`,
+        priority: blockTime > 30000 ? 'high' : 'medium',
+        context: {
+          scopes: ['backend/src/blockchain/'],
+          objectiveTags: ['performance', 'chain'],
+          evidence: [
+            {
+              kind: 'metric',
+              label: 'block_time',
+              detail: `${blockTime}ms observed during block production`,
+            },
+          ],
+        },
+        createdAt: new Date(),
+      });
     });
   }
 
-  // Add task from chain event
-  private addChainEventTask(event: ChainEvent): void {
-    const id = `chain-${event.type}-${event.timestamp}`;
-    
-    if (this.processedIds.has(id)) return;
-    
-    const task: SourceTask = {
-      id,
-      source: 'chain_event',
-      title: `Fix: ${event.type.replace(/_/g, ' ')}`,
-      description: `${event.message}\n\nEvent data:\n${JSON.stringify(event.data, null, 2)}`,
-      priority: event.type === 'consensus_failure' ? 'critical' : 'high',
-      context: { event },
-      createdAt: new Date()
+  private extractScopesFromCiFailure(data: any): string[] {
+    const scopes = new Set<string>();
+    const hintedTargets = new Set<'backend' | 'frontend'>();
+
+    const addFile = (value?: string) => {
+      if (!value || typeof value !== 'string') return;
+      const normalized = value.replace(/^\.\//, '');
+      if (!normalized) return;
+      scopes.add(normalized);
     };
 
-    this.pendingTasks.set(id, task);
-    console.log(`[TASKS] New chain event task: ${task.title}`);
+    const scanTextForPaths = (value?: string) => {
+      if (!value || typeof value !== 'string') return;
+
+      if (/\[backend\]/i.test(value)) hintedTargets.add('backend');
+      if (/\[frontend\]/i.test(value)) hintedTargets.add('frontend');
+
+      const explicitPaths = value.match(
+        /\b(?:backend|frontend)\/(?:src|tests?)\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+\b/g
+      );
+      for (const match of explicitPaths || []) {
+        addFile(match);
+      }
+
+      const scopedSrcPaths = value.match(/\bsrc\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+\b/g);
+      for (const match of scopedSrcPaths || []) {
+        if (/\[backend\]/i.test(value)) addFile(`backend/${match}`);
+        if (/\[frontend\]/i.test(value)) addFile(`frontend/${match}`);
+      }
+    };
+
+    for (const failure of data?.failures || []) {
+      addFile(failure?.file);
+      scanTextForPaths(failure?.message);
+      scanTextForPaths(failure?.stack);
+    }
+
+    for (const issue of data?.issues || []) {
+      addFile(issue?.file);
+      scanTextForPaths(issue?.message);
+    }
+
+    for (const error of data?.errors || []) {
+      scanTextForPaths(error);
+    }
+
+    if (scopes.size === 0 && (data?.type === 'build' || data?.type === 'lint')) {
+      if (hintedTargets.has('backend') && !hintedTargets.has('frontend')) {
+        scopes.add('backend/src/');
+      } else if (hintedTargets.has('frontend') && !hintedTargets.has('backend')) {
+        scopes.add('frontend/src/');
+      } else {
+        for (const changedFile of this.getRecentChangedFiles()) {
+          if (
+            changedFile.startsWith('backend/') ||
+            changedFile.startsWith('frontend/')
+          ) {
+            scopes.add(changedFile);
+          }
+        }
+
+        if (scopes.size === 0) {
+          scopes.add('backend/src/');
+        }
+      }
+    }
+
+    return Array.from(scopes);
   }
 
-  // Scan for TODO comments in code
-  async scanTodoComments(): Promise<SourceTask[]> {
-    const tasks: SourceTask[] = [];
-    
+  private getRecentChangedFiles(): string[] {
+    const commands = [
+      'git diff --name-only HEAD~1 HEAD 2>/dev/null || true',
+      'git diff --name-only HEAD 2>/dev/null || true',
+    ];
+
+    for (const command of commands) {
+      try {
+        const output = execSync(command, {
+          cwd: this.projectRoot,
+          encoding: 'utf-8',
+          timeout: 10000,
+        });
+        const files = output
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean);
+
+        if (files.length > 0) {
+          return files;
+        }
+      } catch {
+        // Ignore git-diff failures and fall through to the conservative fallback.
+      }
+    }
+
+    return [];
+  }
+
+  private getRetryDelayMs(task: SourceTaskRecord): number {
+    if (task.status !== 'failed') return 0;
+
+    const failureCount = Math.max(1, task.runCount);
+    const baseDelayMs = 30000;
+    const cappedExponent = Math.min(failureCount - 1, 5);
+    return Math.min(15 * 60 * 1000, baseDelayMs * 2 ** cappedExponent);
+  }
+
+  private buildVerificationPlan(taskType: string, editScopes: ExecutionScope[]): VerificationPlan {
+    const touchesBackend = editScopes.some((scope) => scope.path.startsWith('backend/'));
+    const touchesFrontend = editScopes.some((scope) => scope.path.startsWith('frontend/'));
+    const steps = [];
+
+    if (touchesBackend) {
+      steps.push({
+        id: 'backend-build',
+        type: 'command' as const,
+        label: 'Build backend',
+        command: 'npm run build',
+        cwd: 'backend' as const,
+        required: true,
+      });
+    }
+
+    if (touchesFrontend) {
+      steps.push({
+        id: 'frontend-build',
+        type: 'command' as const,
+        label: 'Build frontend',
+        command: 'npm run build',
+        cwd: 'frontend' as const,
+        required: true,
+      });
+    }
+
+    if (taskType === 'audit' || taskType === 'analyze' || taskType === 'docs') {
+      return {
+        type: 'artifact',
+        description: 'Produce a documented artifact inside the approved scope.',
+        requireChangedFiles: true,
+        steps,
+      };
+    }
+
+    return {
+      type: 'code',
+      description: 'Make a scoped code change and pass the targeted verification steps.',
+      requireChangedFiles: true,
+      steps,
+    };
+  }
+
+  private backlogCreatedAt(backlog: BacklogTask): Date {
+    return new Date(Date.UTC(2026, 0, 1, 0, 0, backlog.sequence));
+  }
+
+  private buildBacklogVerificationPlan(backlog: BacklogTask): VerificationPlan {
+    return {
+      type:
+        backlog.type === 'docs' || backlog.type === 'audit' || backlog.type === 'analyze'
+          ? 'artifact'
+          : 'code',
+      description: backlog.expectedOutcome,
+      requireChangedFiles: true,
+      steps: [
+        {
+          id: `${backlog.id}:verify`,
+          type: 'command',
+          label: backlog.verification.label,
+          command: backlog.verification.command,
+          cwd: backlog.verification.cwd,
+          required: true,
+        },
+      ],
+    };
+  }
+
+  private async syncBacklogTasks(): Promise<void> {
+    if (this.backlogSynced) return;
+
+    for (const backlog of TASK_BACKLOG) {
+      const existing = agentTaskStore.getSourceTask(backlog.id);
+      if (existing && TERMINAL_STATUSES.has(existing.status)) {
+        continue;
+      }
+
+      await this.enqueueSourceTask({
+        id: backlog.id,
+        source: 'backlog',
+        title: backlog.title,
+        description: backlog.description,
+        priority:
+          backlog.priority >= 9
+            ? 'high'
+            : backlog.priority >= 7
+              ? 'medium'
+              : 'low',
+        context: {
+          phaseId: backlog.phaseId,
+          phaseTitle: backlog.phaseTitle,
+          phaseOrder: backlog.phaseOrder,
+          workstreamId: backlog.workstreamId,
+          workstreamTitle: backlog.workstreamTitle,
+          backlogSequence: backlog.sequence,
+          tags: backlog.tags,
+          taskType: backlog.type,
+          estimatedMinutes: backlog.estimatedMinutes,
+          commitWindowMinutes: backlog.commitWindowMinutes,
+          scopes: backlog.allowedScopes,
+          objectiveTags: backlog.objectiveTags,
+          expectedOutcome: backlog.expectedOutcome,
+          verificationPlan: this.buildBacklogVerificationPlan(backlog),
+          evidence: [
+            {
+              kind: 'backlog',
+              label: `${backlog.phaseTitle} / ${backlog.workstreamTitle}`,
+              detail: `Backlog item ${backlog.sequence}/${TASK_BACKLOG.length} with tags: ${backlog.tags.join(', ')}`,
+            },
+            {
+              kind: 'backlog',
+              label: 'expected_outcome',
+              detail: backlog.expectedOutcome,
+            },
+          ],
+        },
+        createdAt: existing?.createdAt || this.backlogCreatedAt(backlog),
+      });
+    }
+
+    this.backlogSynced = true;
+  }
+
+  private async enqueueSourceTask(task: SourceTask): Promise<SourceTaskRecord> {
+    await agentTaskStore.initialize();
+
+    const existing = agentTaskStore.getSourceTask(task.id);
+    const status = existing && TERMINAL_STATUSES.has(existing.status) ? existing.status : existing?.status || 'queued';
+
+    const rawScopes: string[] = task.context.scopes || [];
+    const editScopes = dedupeScopes(rawScopes.map(normalizeScope));
+    const objectiveTags = dedupeTags(task.context.objectiveTags || []);
+    const evidence: EvidenceItem[] = task.context.evidence || [];
+    const verificationPlan =
+      task.context.verificationPlan || this.buildVerificationPlan(task.context.taskType || task.source, editScopes);
+
+    return agentTaskStore.upsertSourceTask({
+      id: task.id,
+      source: task.source,
+      title: task.title,
+      description: task.description,
+      priority: priorityValue(task.priority),
+      status,
+      taskType: task.context.taskType || this.mapTaskType(task),
+      objectiveTags,
+      evidence,
+      editScopes,
+      verificationPlan,
+      metadata: task.context,
+      lastError: existing?.lastError || null,
+      blockedReason:
+        editScopes.length === 0
+          ? existing?.blockedReason || 'No safe edit scopes are defined for this task.'
+          : existing?.blockedReason || null,
+      runCount: existing?.runCount || 0,
+      createdAt: existing?.createdAt || task.createdAt,
+    });
+  }
+
+  private mapTaskType(task: SourceTask): string {
+    if (task.source === 'code_error') return 'fix';
+    if (task.source === 'dependency') return 'build';
+    if (task.source === 'todo_comment') return 'build';
+    if (task.source === 'cip_proposal') return 'feature';
+    if (task.source === 'github_issue') return 'feature';
+    if (task.source === 'runtime_error') return 'fix';
+    if (task.source === 'backlog') return 'build';
+    return 'audit';
+  }
+
+  async scanTodoComments(): Promise<void> {
     try {
       const output = execSync(
-        'grep -rn "TODO\\|FIXME" --include="*.ts" --include="*.tsx" . 2>/dev/null | head -20',
+        'rg -n "TODO|FIXME" backend/src frontend/src README.md ' +
+          "-g '*.ts' -g '*.tsx' -g '*.js' -g '*.jsx' -g '*.md' " +
+          "-g '!backend/src/hermes-generated/**' " +
+          "-g '!**/node_modules/**' " +
+          "-g '!**/dist/**' 2>/dev/null | head -20",
         { cwd: this.projectRoot, encoding: 'utf-8', timeout: 10000 }
       );
 
       const lines = output.split('\n').filter(Boolean);
-      
       for (const line of lines) {
-        const match = line.match(/^\.\/(.+?):(\d+):(.*)$/);
-        if (match) {
-          const [, file, lineNum, content] = match;
-          const id = `todo-${file}-${lineNum}`;
-          
-          if (this.processedIds.has(id)) continue;
-          
-          // Extract the TODO type and message
-          const todoMatch = content.match(/(TODO|FIXME):?\s*(.+)/i);
-          if (todoMatch) {
-            const [, type, message] = todoMatch;
-            
-            const priority: TaskPriority =
-              type === 'FIXME' ? 'high' : 'low';
+        const match = line.match(/^(.+?):(\d+):(.*)$/);
+        if (!match) continue;
 
-            // Skip junk — messages must be at least 10 chars and not gibberish
-            if (message.trim().length < 10) continue;
+        const [, file, lineNum, content] = match;
+        const todoMatch = content.match(/(TODO|FIXME):?\s*(.+)/i);
+        if (!todoMatch) continue;
 
-            tasks.push({
-              id,
-              source: 'todo_comment',
-              title: `${type}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
-              description: `Found ${type} comment in ${file}:${lineNum}\n\n${content.trim()}`,
-              priority,
-              context: { file, line: parseInt(lineNum), type, message },
-              createdAt: new Date()
-            });
-          }
-        }
-      }
-    } catch {
-      // grep returns non-zero if no matches
-    }
-    
-    return tasks;
-  }
+        const [, marker, message] = todoMatch;
+        if (message.trim().length < 10) continue;
 
-  // Scan for linter errors
-  async scanLintErrors(): Promise<SourceTask[]> {
-    const tasks: SourceTask[] = [];
-    
-    try {
-      // Run ESLint and capture errors
-      const output = execSync(
-        'npm run lint 2>&1 || true',
-        { cwd: this.projectRoot, encoding: 'utf-8', timeout: 60000 }
-      );
-
-      // Parse ESLint output
-      const errorLines = output.split('\n').filter(line => 
-        line.includes('error') || line.includes('warning')
-      );
-
-      if (errorLines.length > 0) {
-        const id = `lint-${Date.now()}`;
-        
-        tasks.push({
-          id,
-          source: 'code_error',
-          title: `Fix ${errorLines.length} linter issues`,
-          description: `Found linter errors:\n\n${errorLines.slice(0, 10).join('\n')}${errorLines.length > 10 ? '\n...' : ''}`,
-          priority: 'medium',
-          context: { errorCount: errorLines.length, errors: errorLines },
-          createdAt: new Date()
+        await this.enqueueSourceTask({
+          id: `todo-${file}-${lineNum}`,
+          source: 'todo_comment',
+          title: `${marker.toUpperCase()}: ${message.slice(0, 80)}`,
+          description: `Open ${marker.toUpperCase()} in ${file}:${lineNum}\n\n${content.trim()}`,
+          priority: marker.toUpperCase() === 'FIXME' ? 'high' : 'low',
+          context: {
+            file,
+            line: Number(lineNum),
+            scopes: [file],
+            objectiveTags: ['tooling'],
+            evidence: [
+              {
+                kind: 'file',
+                label: `${marker.toUpperCase()} comment`,
+                detail: content.trim(),
+                filePath: file,
+                line: Number(lineNum),
+              },
+            ],
+          },
+          createdAt: new Date(),
         });
       }
     } catch {
-      // Lint command might not exist
+      // No TODOs found or ripgrep unavailable.
     }
-    
-    return tasks;
   }
 
-  // Scan for test failures
-  async scanTestFailures(): Promise<SourceTask[]> {
-    const tasks: SourceTask[] = [];
-    
-    try {
-      // Run tests and capture failures
-      const output = execSync(
-        'npm test 2>&1 || true',
-        { cwd: this.projectRoot, encoding: 'utf-8', timeout: 120000 }
-      );
+  async scanDependencies(): Promise<void> {
+    const packageRoots = [
+      this.config?.projectPaths.backend,
+      this.config?.projectPaths.frontend,
+    ].filter(Boolean) as string[];
 
-      // Check for failures
-      if (output.includes('FAIL') || output.includes('failed')) {
-        const id = `test-${Date.now()}`;
-        
-        // Extract failure info
-        const failLines = output.split('\n').filter(line => 
-          line.includes('FAIL') || line.includes('✕') || line.includes('Error:')
+    for (const packageRoot of packageRoots) {
+      const scopeLabel = path.relative(this.projectRoot, packageRoot) || '.';
+      try {
+        const output = execSync(
+          'npm outdated --json 2>/dev/null || echo "{}"',
+          { cwd: packageRoot, encoding: 'utf-8', timeout: 10000 }
         );
 
-        tasks.push({
-          id,
-          source: 'code_error',
-          title: 'Fix failing tests',
-          description: `Test failures detected:\n\n${failLines.slice(0, 10).join('\n')}`,
-          priority: 'high',
-          context: { output: output.substring(0, 2000) },
-          createdAt: new Date()
+        const outdated = JSON.parse(output || '{}');
+        const packages = Object.keys(outdated || {});
+        if (packages.length === 0) continue;
+
+        await this.enqueueSourceTask({
+          id: `deps-${scopeLabel.replace(/[\\/]/g, '-')}`,
+          source: 'dependency',
+          title: `Review outdated dependencies in ${scopeLabel}`,
+          description: packages
+            .slice(0, 10)
+            .map((pkg) => `${pkg}: ${outdated[pkg].current} -> ${outdated[pkg].latest}`)
+            .join('\n'),
+          priority: 'low',
+          context: {
+            scopes: [path.join(scopeLabel, 'package.json')],
+            objectiveTags: ['tooling', 'maintenance'],
+            evidence: [
+              {
+                kind: 'metric',
+                label: 'npm_outdated',
+                detail: `${packages.length} outdated packages detected in ${scopeLabel}`,
+              },
+            ],
+          },
+          createdAt: new Date(),
         });
+      } catch {
+        // npm outdated may fail if scripts or lockfiles are missing.
       }
-    } catch {
-      // Tests might not exist
     }
-    
-    return tasks;
   }
 
-  // Scan for outdated dependencies
-  async scanDependencies(): Promise<SourceTask[]> {
-    const tasks: SourceTask[] = [];
-    
-    try {
-      const output = execSync(
-        'npm outdated --json 2>/dev/null || true',
-        { cwd: this.projectRoot, encoding: 'utf-8', timeout: 30000 }
-      );
-
-      if (output.trim()) {
-        const outdated = JSON.parse(output);
-        const packages = Object.keys(outdated);
-
-        if (packages.length > 0) {
-          const id = `deps-${Date.now()}`;
-          
-          // Check for major updates (potentially breaking)
-          const majorUpdates = packages.filter(pkg => {
-            const dep = outdated[pkg];
-            return dep.current && dep.latest && 
-              dep.current.split('.')[0] !== dep.latest.split('.')[0];
-          });
-
-          tasks.push({
-            id,
-            source: 'dependency',
-            title: `Update ${packages.length} outdated dependencies`,
-            description: `Found ${packages.length} outdated packages:\n\n${packages.slice(0, 10).map(pkg => 
-              `${pkg}: ${outdated[pkg].current} → ${outdated[pkg].latest}`
-            ).join('\n')}${majorUpdates.length > 0 ? `\n\n⚠️ ${majorUpdates.length} major updates (potential breaking changes)` : ''}`,
-            priority: majorUpdates.length > 0 ? 'medium' : 'low',
-            context: { outdated, majorUpdates },
-            createdAt: new Date()
-          });
-        }
-      }
-    } catch {
-      // npm outdated might fail
-    }
-    
-    return tasks;
-  }
-
-  // Check GitHub issues (requires gh CLI)
-  async scanGitHubIssues(): Promise<SourceTask[]> {
-    const tasks: SourceTask[] = [];
-    
+  async scanGitHubIssues(): Promise<void> {
     try {
       const output = execSync(
         'gh issue list --state open --limit 10 --json number,title,body,labels 2>/dev/null || echo "[]"',
@@ -292,268 +587,158 @@ export class TaskSources {
       );
 
       const issues = JSON.parse(output);
-      
       for (const issue of issues) {
-        const id = `issue-${issue.number}`;
-        
-        if (this.processedIds.has(id)) continue;
+        const labels = issue.labels?.map((label: any) => String(label.name).toLowerCase()) || [];
+        const priority: TaskPriority = labels.includes('critical') || labels.includes('urgent')
+          ? 'critical'
+          : labels.includes('bug') || labels.includes('high')
+            ? 'high'
+            : 'medium';
 
-        // Determine priority from labels
-        let priority: TaskPriority = 'medium';
-        const labels = issue.labels?.map((l: any) => l.name.toLowerCase()) || [];
-        
-        if (labels.includes('critical') || labels.includes('urgent')) {
-          priority = 'critical';
-        } else if (labels.includes('bug') || labels.includes('high')) {
-          priority = 'high';
-        } else if (labels.includes('enhancement') || labels.includes('feature')) {
-          priority = 'medium';
-        } else if (labels.includes('low') || labels.includes('nice-to-have')) {
-          priority = 'low';
-        }
-
-        tasks.push({
-          id,
+        await this.enqueueSourceTask({
+          id: `issue-${issue.number}`,
           source: 'github_issue',
-          title: `#${issue.number}: ${issue.title}`,
-          description: issue.body || 'No description provided',
+          title: `GitHub issue #${issue.number}: ${issue.title}`,
+          description: issue.body || 'No issue description provided.',
           priority,
-          context: { issueNumber: issue.number, labels },
-          createdAt: new Date()
+          context: {
+            issueNumber: issue.number,
+            labels,
+            scopes: [],
+            objectiveTags: ['feature'],
+            evidence: [
+              {
+                kind: 'event',
+                label: 'github_issue',
+                detail: `Open issue #${issue.number} with labels: ${labels.join(', ') || 'none'}`,
+              },
+            ],
+          },
+          createdAt: new Date(),
         });
       }
     } catch {
-      // gh CLI might not be available
+      // gh CLI not available.
     }
-    
-    return tasks;
   }
 
-  // Check CIP proposals from database
-  async scanCipProposals(): Promise<SourceTask[]> {
-    const tasks: SourceTask[] = [];
-    
+  async scanCipProposals(): Promise<void> {
     try {
       const result = await db.query(`
-        SELECT * FROM cips 
+        SELECT * FROM cips
         WHERE status = 'pending' OR status = 'approved'
         ORDER BY created_at DESC
         LIMIT 10
       `);
 
-      for (const cip of result.rows) {
-        const id = `cip-${cip.id}`;
-        
-        if (this.processedIds.has(id)) continue;
-
-        tasks.push({
-          id,
+      for (const cip of result.rows || []) {
+        await this.enqueueSourceTask({
+          id: `cip-${cip.id}`,
           source: 'cip_proposal',
           title: `Implement CIP-${cip.id}: ${cip.title}`,
-          description: cip.description || 'Implement the approved CIP proposal',
+          description: cip.description || 'No CIP description provided.',
           priority: cip.status === 'approved' ? 'high' : 'medium',
-          context: { cipId: cip.id, status: cip.status },
-          createdAt: new Date(cip.created_at)
+          context: {
+            cipId: cip.id,
+            status: cip.status,
+            scopes: [],
+            objectiveTags: ['governance', 'feature'],
+            evidence: [
+              {
+                kind: 'event',
+                label: 'cip_proposal',
+                detail: `CIP-${cip.id} is ${cip.status}.`,
+              },
+            ],
+          },
+          createdAt: new Date(cip.created_at),
         });
       }
     } catch {
-      // Database might not have CIPs table
+      // Database may not have CIPs table.
     }
-    
-    return tasks;
   }
 
-  // Collect all tasks from all sources
-  async collectAllTasks(): Promise<SourceTask[]> {
-    console.log('[TASKS] Scanning all task sources...');
-    
-    const [
-      todoTasks,
-      // lintTasks,      // Commented out for performance - run manually
-      // testTasks,      // Commented out for performance - run manually
-      depsTasks,
-      issueTasks,
-      cipTasks
-    ] = await Promise.all([
+  async collectAllTasks(): Promise<SourceTaskRecord[]> {
+    await this.initialize();
+    await Promise.all([
+      this.syncBacklogTasks(),
       this.scanTodoComments(),
-      // this.scanLintErrors(),
-      // this.scanTestFailures(),
       this.scanDependencies(),
       this.scanGitHubIssues(),
-      this.scanCipProposals()
+      this.scanCipProposals(),
     ]);
 
-    // Add to pending tasks
-    const allTasks = [
-      ...Array.from(this.pendingTasks.values()),
-      ...todoTasks,
-      // ...lintTasks,
-      // ...testTasks,
-      ...depsTasks,
-      ...issueTasks,
-      ...cipTasks
-    ];
-
-    console.log(`[TASKS] Found ${allTasks.length} tasks from all sources`);
-    return allTasks;
+    return agentTaskStore
+      .listSourceTasks(300)
+      .filter((task) => !TERMINAL_STATUSES.has(task.status));
   }
 
-  // Get next highest priority task
-  async getNextTask(): Promise<Task | null> {
-    const allTasks = await this.collectAllTasks();
-    
-    // If we have critical/urgent tasks from real sources, use those first
-    if (allTasks.length > 0) {
-      // Sort by priority
-      const priorityOrder: Record<TaskPriority, number> = {
-        'critical': 0,
-        'high': 1,
-        'medium': 2,
-        'low': 3
-      };
+  async getNextTask(): Promise<TaskSelection | null> {
+    const tasks = await this.collectAllTasks();
+    const now = Date.now();
+    const backlogSequence = (task: SourceTaskRecord): number => {
+      const sequence = (task.metadata as any)?.backlogSequence;
+      return typeof sequence === 'number' ? sequence : Number.MAX_SAFE_INTEGER;
+    };
+    const candidates = tasks
+      .filter((task) => {
+        if (task.status === 'queued') return true;
+        if (task.status !== 'failed') return false;
 
-      allTasks.sort((a, b) => 
-        priorityOrder[a.priority] - priorityOrder[b.priority]
+        const retryDelayMs = this.getRetryDelayMs(task);
+        return now - task.updatedAt.getTime() >= retryDelayMs;
+      })
+      .sort(
+        (a, b) =>
+          b.priority - a.priority ||
+          backlogSequence(a) - backlogSequence(b) ||
+          a.createdAt.getTime() - b.createdAt.getTime()
       );
 
-      // Only use real sources for critical/high priority
-      const topTask = allTasks[0];
-      if (topTask.priority === 'critical' || topTask.priority === 'high') {
-        this.processedIds.add(topTask.id);
-        return this.convertToAgentTask(topTask);
+    for (const sourceTask of candidates) {
+      if (sourceTask.editScopes.length === 0) {
+        await agentTaskStore.updateSourceTaskStatus(sourceTask.id, 'blocked', {
+          blockedReason: 'No safe edit scopes are defined for this task.',
+        });
+        continue;
       }
-    }
-    
-    // Fall back to the massive task backlog
-    const backlogTask = getNextBacklogTask();
-    if (backlogTask) {
-      const progress = getBacklogProgress();
-      console.log(`[TASKS] Using backlog task ${backlogTask.id} (${progress.completed}/${progress.total} complete)`);
-      return this.convertBacklogTask(backlogTask);
+
+      return {
+        sourceTask,
+        task: {
+          id: sourceTask.id,
+          title: sourceTask.title,
+          type: sourceTask.taskType,
+          agent: 'HERMES',
+          priority: sourceTask.priority,
+          prompt: '',
+          context: {
+            source: sourceTask.source,
+            metadata: sourceTask.metadata,
+          },
+        } as Task,
+        objectiveTags: sourceTask.objectiveTags,
+        evidence: sourceTask.evidence,
+        editScopes: sourceTask.editScopes,
+        verificationPlan: sourceTask.verificationPlan,
+      };
     }
 
-    // Use any remaining tasks from other sources
-    if (allTasks.length > 0) {
-      const sourceTask = allTasks[0];
-      this.processedIds.add(sourceTask.id);
-      return this.convertToAgentTask(sourceTask);
-    }
-    
     return null;
   }
 
-  // Convert backlog task to agent task
-  private convertBacklogTask(backlog: BacklogTask): Task {
-    const prompt = `## Task: ${backlog.title}
-
-${backlog.description}
-
-### Requirements:
-- This is a ${backlog.type} task for Hermeschain
-- Priority: ${backlog.priority}/10
-- Tags: ${backlog.tags.join(', ')}
-
-### Instructions:
-1. Think through the implementation carefully
-2. Write clean, well-documented code
-3. Follow existing patterns in the codebase
-4. Test your changes if applicable
-5. Explain your approach as you work
-
-Remember: You are Hermes, the autonomous agent building Hermeschain. Show your work and reasoning.`;
-
-    // Mark as started
-    markBacklogTaskComplete(backlog.id);
-
-    return {
-      id: backlog.id,
-      type: backlog.type as any,
-      title: backlog.title,
-      agent: 'OPEN',
-      prompt,
-      context: {
-        source: 'backlog',
-        priority: backlog.priority,
-        estimatedMinutes: backlog.estimatedMinutes,
-        tags: backlog.tags
-      }
-    };
+  async requeueTask(taskId: string): Promise<SourceTaskRecord | null> {
+    return agentTaskStore.requeueSourceTask(taskId);
   }
 
-  // Convert source task to agent task
-  private convertToAgentTask(source: SourceTask): Task {
-    // Build prompt based on source type
-    let prompt = '';
-    
-    switch (source.source) {
-      case 'chain_event':
-        prompt = `A blockchain event requires attention: ${source.title}\n\n${source.description}\n\nInvestigate the issue and implement a fix if needed.`;
-        break;
-      
-      case 'code_error':
-        prompt = `There are code errors that need fixing: ${source.title}\n\n${source.description}\n\nFix the errors and ensure the code passes all checks.`;
-        break;
-      
-      case 'github_issue':
-        prompt = `Implement GitHub issue ${source.title}\n\n${source.description}\n\nImplement the requested feature or fix.`;
-        break;
-      
-      case 'cip_proposal':
-        prompt = `Implement the following Hermeschain Improvement Proposal: ${source.title}\n\n${source.description}\n\nImplement the proposal following best practices.`;
-        break;
-      
-      case 'todo_comment':
-        prompt = `Address the following TODO in the codebase: ${source.title}\n\n${source.description}\n\nImplement the TODO or remove it if no longer needed.`;
-        break;
-      
-      case 'dependency':
-        prompt = `Update dependencies: ${source.title}\n\n${source.description}\n\nUpdate the dependencies carefully, testing for breaking changes.`;
-        break;
-      
-      default:
-        prompt = `${source.title}\n\n${source.description}`;
-    }
-
-    // Determine task type
-    let type: 'build' | 'audit' | 'analyze' | 'propose' | 'document' | 'test' | 'fix' = 'build';
-    
-    if (source.source === 'code_error' || source.title.toLowerCase().includes('fix')) {
-      type = 'fix';
-    } else if (source.source === 'chain_event') {
-      type = 'audit';
-    } else if (source.source === 'dependency') {
-      type = 'build';
-    }
-
-    return {
-      id: source.id,
-      type,
-      title: source.title,
-      prompt,
-      agent: 'OPEN',
-      priority: priorityOrder[source.priority]
-    };
+  async discardTask(taskId: string, reason: string): Promise<SourceTaskRecord | null> {
+    return agentTaskStore.discardSourceTask(taskId, reason);
   }
 
-  // Mark task as completed
-  markCompleted(taskId: string): void {
-    this.pendingTasks.delete(taskId);
-    this.processedIds.add(taskId);
-  }
-
-  // Get pending task count
   getPendingCount(): number {
-    return this.pendingTasks.size;
+    return agentTaskStore.getQueuedTasks(500).length;
   }
 }
 
-// Priority order mapping
-const priorityOrder: Record<TaskPriority, number> = {
-  'critical': 1.0,
-  'high': 0.8,
-  'medium': 0.5,
-  'low': 0.3
-};
-
-// Export singleton
 export const taskSources = new TaskSources();

@@ -1,6 +1,24 @@
 import { useEffect, useState } from 'react';
 
 export type ConnectionState = 'live' | 'polling' | 'offline';
+export type AgentMode = 'disabled' | 'demo' | 'real';
+export type TaskRunStatus =
+  | 'idle'
+  | 'queued'
+  | 'selected'
+  | 'analyzing'
+  | 'executing'
+  | 'verifying'
+  | 'succeeded'
+  | 'failed'
+  | 'blocked'
+  | 'discarded';
+export type VerificationStatus =
+  | 'pending'
+  | 'running'
+  | 'passed'
+  | 'failed'
+  | 'not_applicable';
 export type RitualKind =
   | 'explain_last_block'
   | 'summarize_today'
@@ -48,36 +66,72 @@ export interface HermesLatestCommit {
   date: string;
 }
 
+export interface HermesTaskRunSummary {
+  id: string;
+  sourceTaskId: string;
+  title: string;
+  type: string;
+  mode: AgentMode;
+  status: TaskRunStatus;
+  verificationStatus: VerificationStatus;
+  changedFiles: string[];
+  failureReason: string | null;
+  blockedReason: string | null;
+  completedAt?: string | null;
+}
+
 export interface HermesDockState {
   connectionState: ConnectionState;
+  mode: AgentMode;
+  streamMode: AgentMode;
+  runStatus: TaskRunStatus;
+  verificationStatus: VerificationStatus;
+  blockedReason: string | null;
+  lastFailure: string | null;
+  repoRootHealth: 'ready' | 'missing';
+  agentEnabled: boolean;
+  startupIssues: string[];
   viewerCount: number;
   isWorking: boolean;
   currentTask: HermesCurrentTask | null;
   activeTool: string | null;
   recentActivity: HermesActivityItem[];
+  recentRuns: HermesTaskRunSummary[];
   latestBlock: HermesLatestBlock | null;
   latestCommit: HermesLatestCommit | null;
   chainStats: {
     blockHeight: number;
     transactionCount: number;
   };
+  chainAgeMs: number | null;
   lastUpdatedAt: number | null;
   error: string | null;
 }
 
 const INITIAL_STATE: HermesDockState = {
   connectionState: 'offline',
+  mode: 'disabled',
+  streamMode: 'disabled',
+  runStatus: 'idle',
+  verificationStatus: 'pending',
+  blockedReason: null,
+  lastFailure: null,
+  repoRootHealth: 'missing',
+  agentEnabled: false,
+  startupIssues: [],
   viewerCount: 0,
   isWorking: false,
   currentTask: null,
   activeTool: null,
   recentActivity: [],
+  recentRuns: [],
   latestBlock: null,
   latestCommit: null,
   chainStats: {
     blockHeight: 0,
     transactionCount: 0,
   },
+  chainAgeMs: null,
   lastUpdatedAt: null,
   error: null,
 };
@@ -85,8 +139,13 @@ const INITIAL_STATE: HermesDockState = {
 function getActivityLabel(type: string): string {
   const labels: Record<string, string> = {
     task_start: 'Task',
-    task_complete: 'Complete',
+    analysis_start: 'Analysis',
     tool_use: 'Tool',
+    tool_result: 'Result',
+    verification_start: 'Verify',
+    verification_result: 'Verified',
+    task_complete: 'Complete',
+    task_blocked: 'Blocked',
     git_commit: 'Commit',
     error: 'Error',
     output: 'Output',
@@ -112,6 +171,62 @@ function toActivityItem(entry: any): HermesActivityItem {
 function extractToolName(content: string): string | null {
   const match = content.match(/Using tool:\s*(.+)$/i);
   return match?.[1]?.trim() || null;
+}
+
+function applyStatusPayload(
+  payload: any,
+  previous: HermesDockState
+): HermesDockState {
+  return {
+    ...previous,
+    mode: payload?.mode || previous.mode,
+    streamMode: payload?.streamMode || payload?.mode || previous.streamMode,
+    runStatus: payload?.runStatus || previous.runStatus,
+    verificationStatus:
+      payload?.verificationStatus || previous.verificationStatus,
+    blockedReason:
+      payload?.blockedReason === undefined
+        ? previous.blockedReason
+        : payload.blockedReason,
+    lastFailure:
+      payload?.lastFailure === undefined
+        ? previous.lastFailure
+        : payload.lastFailure,
+    repoRootHealth: payload?.repoRootHealth || previous.repoRootHealth,
+    agentEnabled:
+      typeof payload?.agentEnabled === 'boolean'
+        ? payload.agentEnabled
+        : previous.agentEnabled,
+    startupIssues: Array.isArray(payload?.startupIssues)
+      ? payload.startupIssues
+      : previous.startupIssues,
+    viewerCount:
+      typeof payload?.viewerCount === 'number'
+        ? payload.viewerCount
+        : previous.viewerCount,
+    isWorking:
+      typeof payload?.isWorking === 'boolean'
+        ? payload.isWorking
+        : previous.isWorking,
+    currentTask: payload?.currentTask || null,
+    recentRuns: Array.isArray(payload?.recentRuns)
+      ? payload.recentRuns
+      : previous.recentRuns,
+    chainStats: {
+      blockHeight:
+        payload?.blockHeight ?? previous.chainStats.blockHeight,
+      transactionCount:
+        payload?.storedTransactionCount ??
+        payload?.transactionCount ??
+        previous.chainStats.transactionCount,
+    },
+    chainAgeMs:
+      typeof payload?.chainAgeMs === 'number'
+        ? payload.chainAgeMs
+        : previous.chainAgeMs,
+    lastUpdatedAt: Date.now(),
+    error: null,
+  };
 }
 
 export function useHermesDockState(apiBase: string): HermesDockState {
@@ -165,12 +280,12 @@ export function useHermesDockState(apiBase: string): HermesDockState {
         fetch(`${apiBase}/api/agent/status`),
         fetch(`${apiBase}/api/chain/latest`),
         fetch(`${apiBase}/api/git/status`),
+        fetch(`${apiBase}/api/status`),
         includeLogs ? fetch(`${apiBase}/api/logs/recent?limit=3`) : Promise.resolve(null),
       ] as const;
 
-      const [statusResult, blockResult, gitResult, logsResult] = await Promise.allSettled(
-        requests
-      );
+      const [statusResult, blockResult, gitResult, systemResult, logsResult] =
+        await Promise.allSettled(requests);
 
       let successCount = 0;
 
@@ -181,19 +296,7 @@ export function useHermesDockState(apiBase: string): HermesDockState {
       ) {
         const data = await statusResult.value.json();
         successCount += 1;
-        setState((prev) => ({
-          ...prev,
-          viewerCount: data.viewerCount || 0,
-          isWorking: Boolean(data.isWorking),
-          currentTask: data.currentTask || null,
-          chainStats: {
-            blockHeight: data.blockHeight || 0,
-            transactionCount:
-              data.storedTransactionCount ?? data.transactionCount ?? 0,
-          },
-          lastUpdatedAt: Date.now(),
-          error: null,
-        }));
+        setState((prev) => applyStatusPayload(data, prev));
       }
 
       if (
@@ -216,6 +319,35 @@ export function useHermesDockState(apiBase: string): HermesDockState {
         setState((prev) => ({
           ...prev,
           latestCommit: data.recentCommits?.[0] || null,
+          lastUpdatedAt: Date.now(),
+        }));
+      }
+
+      if (
+        systemResult.status === 'fulfilled' &&
+        systemResult.value &&
+        systemResult.value.ok
+      ) {
+        const data = await systemResult.value.json();
+        successCount += 1;
+        setState((prev) => ({
+          ...prev,
+          chainAgeMs:
+            typeof data?.uptime === 'number'
+              ? data.uptime
+              : typeof data?.genesisTime === 'number'
+                ? Date.now() - data.genesisTime
+                : prev.chainAgeMs,
+          chainStats: {
+            blockHeight:
+              typeof data?.chainLength === 'number'
+                ? data.chainLength
+                : prev.chainStats.blockHeight,
+            transactionCount:
+              data?.storedTransactions ??
+              data?.totalTransactions ??
+              prev.chainStats.transactionCount,
+          },
           lastUpdatedAt: Date.now(),
         }));
       }
@@ -244,7 +376,10 @@ export function useHermesDockState(apiBase: string): HermesDockState {
       if (successCount === 0) {
         setState((prev) => ({
           ...prev,
-          error: 'Hermes live feeds are temporarily unavailable.',
+          error:
+            prev.mode === 'disabled'
+              ? prev.startupIssues[0] || 'Hermes is disabled.'
+              : 'Hermes live feeds are temporarily unavailable.',
           connectionState: pollingInterval !== null ? 'polling' : 'offline',
         }));
       } else if (!liveConnections.agent && !liveConnections.logs) {
@@ -282,20 +417,36 @@ export function useHermesDockState(apiBase: string): HermesDockState {
 
           switch (payload.type) {
             case 'init':
-              setState((prev) => ({
-                ...prev,
-                viewerCount: payload.data?.viewerCount || 0,
-                isWorking: Boolean(payload.data?.isWorking),
-                currentTask: payload.data?.currentTask || null,
-                lastUpdatedAt: Date.now(),
-                error: null,
-              }));
+              setState((prev) => applyStatusPayload(payload.data, prev));
+              break;
+            case 'status':
+              setState((prev) =>
+                applyStatusPayload(
+                  {
+                    ...payload.data,
+                    isWorking:
+                      payload.data?.status === 'idle'
+                        ? false
+                        : prev.isWorking,
+                  },
+                  prev
+                )
+              );
               break;
             case 'task_start':
               setState((prev) => ({
-                ...prev,
+                ...applyStatusPayload(payload.data, prev),
                 isWorking: true,
                 currentTask: payload.data?.task || prev.currentTask,
+                runStatus: payload.data?.runStatus || 'selected',
+                blockedReason: null,
+                lastFailure: null,
+              }));
+              break;
+            case 'analysis_start':
+              setState((prev) => ({
+                ...prev,
+                runStatus: 'analyzing',
                 lastUpdatedAt: Date.now(),
               }));
               break;
@@ -303,13 +454,38 @@ export function useHermesDockState(apiBase: string): HermesDockState {
               setState((prev) => ({
                 ...prev,
                 activeTool: payload.data?.tool || prev.activeTool,
+                runStatus: 'executing',
                 lastUpdatedAt: Date.now(),
               }));
               break;
-            case 'tool_complete':
+            case 'tool_result':
               setState((prev) => ({
                 ...prev,
-                activeTool: payload.data?.result?.error ? prev.activeTool : null,
+                activeTool: null,
+                lastFailure:
+                  payload.data?.result?.error || prev.lastFailure,
+                lastUpdatedAt: Date.now(),
+              }));
+              break;
+            case 'verification_start':
+              setState((prev) => ({
+                ...prev,
+                runStatus: 'verifying',
+                verificationStatus: 'running',
+                lastUpdatedAt: Date.now(),
+              }));
+              break;
+            case 'verification_result':
+              setState((prev) => ({
+                ...prev,
+                verificationStatus:
+                  payload.data?.success === false
+                    ? 'failed'
+                    : prev.verificationStatus === 'running'
+                      ? 'running'
+                      : prev.verificationStatus,
+                lastFailure:
+                  payload.data?.failureReason || prev.lastFailure,
                 lastUpdatedAt: Date.now(),
               }));
               break;
@@ -318,6 +494,32 @@ export function useHermesDockState(apiBase: string): HermesDockState {
                 ...prev,
                 isWorking: false,
                 currentTask: null,
+                activeTool: null,
+                runStatus: 'idle',
+                verificationStatus:
+                  payload.data?.verificationStatus || 'passed',
+                blockedReason: null,
+                lastUpdatedAt: Date.now(),
+              }));
+              break;
+            case 'task_blocked':
+              setState((prev) => ({
+                ...prev,
+                isWorking: false,
+                runStatus: 'blocked',
+                blockedReason: payload.data?.reason || 'Task blocked',
+                verificationStatus: 'failed',
+                activeTool: null,
+                lastUpdatedAt: Date.now(),
+              }));
+              break;
+            case 'error':
+              setState((prev) => ({
+                ...prev,
+                isWorking: false,
+                runStatus: 'failed',
+                verificationStatus: 'failed',
+                lastFailure: payload.data?.message || 'Agent error',
                 activeTool: null,
                 lastUpdatedAt: Date.now(),
               }));
@@ -383,8 +585,7 @@ export function useHermesDockState(apiBase: string): HermesDockState {
             const item = toActivityItem(payload.entry);
             setState((prev) => ({
               ...prev,
-              recentActivity: [item, ...prev.recentActivity]
-                .slice(0, 3),
+              recentActivity: [item, ...prev.recentActivity].slice(0, 3),
               activeTool:
                 item.type === 'tool_use'
                   ? extractToolName(item.content) || prev.activeTool

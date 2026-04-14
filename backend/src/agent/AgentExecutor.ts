@@ -4,6 +4,8 @@ import * as path from 'path';
 import { eventBus } from '../events/EventBus';
 import { gitIntegration } from './GitIntegration';
 import { browserAutomation, BROWSER_TOOLS } from './BrowserAutomation';
+import { AgentConfig, getWriteScopes } from './config';
+import { ExecutionScope } from './types';
 
 // Execution result
 export interface ExecutionResult {
@@ -78,6 +80,10 @@ export const AGENT_TOOLS = [
         timeout: {
           type: 'number',
           description: 'Timeout in milliseconds (default: 30000)'
+        },
+        cwd: {
+          type: 'string',
+          description: 'Optional working directory: repo, backend, frontend, or relative path'
         }
       },
       required: ['command']
@@ -148,47 +154,6 @@ export const AGENT_TOOLS = [
     }
   },
   {
-    name: 'git_branch',
-    description: 'Create a new feature branch for this task',
-    input_schema: {
-      type: 'object',
-      properties: {
-        name: {
-          type: 'string',
-          description: 'Branch name (will be prefixed with open/)'
-        }
-      },
-      required: ['name']
-    }
-  },
-  {
-    name: 'git_push',
-    description: 'Push current branch to remote',
-    input_schema: {
-      type: 'object',
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: 'create_pr',
-    description: 'Create a pull request for the current branch',
-    input_schema: {
-      type: 'object',
-      properties: {
-        title: {
-          type: 'string',
-          description: 'PR title'
-        },
-        body: {
-          type: 'string',
-          description: 'PR description'
-        }
-      },
-      required: ['title', 'body']
-    }
-  },
-  {
     name: 'explain',
     description: 'Explain what you\'re thinking or about to do. This is streamed to the frontend terminal.',
     input_schema: {
@@ -249,36 +214,31 @@ const BLOCKED_PATHS = [
   '.git/hooks'
 ];
 
-// ONLY these directories are allowed for agent writes
-// This prevents the agent from deleting deployment configs
-const ALLOWED_WRITE_DIRS = [
-  'backend/src/hermes-generated',
-  'hermes-generated',
-  'src/hermes-generated'
-];
-
 export class AgentExecutor {
   private projectRoot: string;
   private maxOutputLength: number = 10000;
   private commandTimeout: number = 30000;
+  private config: AgentConfig | null = null;
+  private currentWriteScopes: ExecutionScope[] = [];
 
   constructor(projectRoot?: string) {
-    // Default to /app in production (Docker/Railway), or project root in development
-    if (projectRoot) {
-      this.projectRoot = projectRoot;
-    } else if (process.env.PROJECT_ROOT) {
-      this.projectRoot = process.env.PROJECT_ROOT;
-    } else if (fs.existsSync('/app/backend')) {
-      // Production container
-      this.projectRoot = '/app';
-    } else {
-      // Development - go up from backend/src/agent or backend/dist/agent
-      this.projectRoot = path.resolve(__dirname, '../../../');
-      if (!fs.existsSync(path.join(this.projectRoot, 'backend'))) {
-        this.projectRoot = path.resolve(__dirname, '../../../../');
-      }
-    }
+    this.projectRoot = projectRoot || process.cwd();
     console.log(`[EXECUTOR] Initialized with project root: ${this.projectRoot}`);
+  }
+
+  configure(config: AgentConfig): void {
+    this.config = config;
+    if (config.repoRoot) {
+      this.projectRoot = config.repoRoot;
+    }
+  }
+
+  setExecutionScopes(scopes: ExecutionScope[]): void {
+    this.currentWriteScopes = scopes;
+  }
+
+  clearExecutionScopes(): void {
+    this.currentWriteScopes = [];
   }
 
   // Validate path is safe for reading
@@ -302,26 +262,49 @@ export class AgentExecutor {
     return true;
   }
 
-  // Validate path is safe for WRITING - much more restrictive
+  private normalizeToRelative(filePath: string): string {
+    const absolute = path.isAbsolute(filePath) ? filePath : path.join(this.projectRoot, filePath);
+    return path.relative(this.projectRoot, absolute).replace(/\\/g, '/');
+  }
+
+  private isWithinScope(relativePath: string, scope: ExecutionScope): boolean {
+    if (scope.kind === 'file') {
+      return relativePath === scope.path.replace(/\\/g, '/');
+    }
+    return relativePath.startsWith(scope.path.replace(/\\/g, '/'));
+  }
+
+  // Validate path is safe for WRITING - scoped per task
   private isWritePathSafe(filePath: string): boolean {
-    const normalizedPath = path.normalize(filePath);
-    
-    // First check basic safety
     if (!this.isPathSafe(filePath)) {
       return false;
     }
-    
-    // ONLY allow writes to approved directories
-    const isAllowed = ALLOWED_WRITE_DIRS.some(dir => 
-      normalizedPath.startsWith(dir) || normalizedPath.includes('/' + dir)
-    );
-    
-    if (!isAllowed) {
-      console.log(`[EXECUTOR] BLOCKED write to non-approved path: ${filePath}`);
-      console.log(`[EXECUTOR] Agent can only write to: ${ALLOWED_WRITE_DIRS.join(', ')}`);
+
+    if (!this.config || this.config.effectiveMode !== 'real') {
+      console.log(`[EXECUTOR] BLOCKED write outside real mode: ${filePath}`);
       return false;
     }
-    
+
+    const relativePath = this.normalizeToRelative(filePath);
+    const repoWriteScopes = getWriteScopes(this.config);
+    const withinRepoAllowlist = repoWriteScopes.some((scopePrefix) =>
+      relativePath.startsWith(scopePrefix.replace(/\\/g, '/'))
+    );
+
+    if (!withinRepoAllowlist) {
+      console.log(`[EXECUTOR] BLOCKED write outside repo allowlist: ${relativePath}`);
+      return false;
+    }
+
+    const isScoped = this.currentWriteScopes.some((scope) =>
+      this.isWithinScope(relativePath, scope)
+    );
+
+    if (!isScoped) {
+      console.log(`[EXECUTOR] BLOCKED write outside task scope: ${relativePath}`);
+      return false;
+    }
+
     return true;
   }
 
@@ -412,10 +395,14 @@ export class AgentExecutor {
     
     // Use strict write path validation
     if (!this.isWritePathSafe(filePath)) {
+      const allowedScopes =
+        this.currentWriteScopes.length > 0
+          ? this.currentWriteScopes.map((scope) => scope.path)
+          : getWriteScopes(this.config);
       return {
         success: false,
         path: filePath,
-        error: `Write not allowed. Agent can only write to: ${ALLOWED_WRITE_DIRS.join(', ')}`
+        error: `Write not allowed. Allowed scopes: ${allowedScopes.join(', ') || 'none'}`
       };
     }
 
@@ -448,7 +435,18 @@ export class AgentExecutor {
   }
 
   // Run a shell command
-  async runCommand(command: string, timeout?: number): Promise<ExecutionResult> {
+  private resolveCommandCwd(cwd?: string): string {
+    if (!cwd || cwd === 'repo') return this.projectRoot;
+    if (cwd === 'backend' && this.config?.projectPaths.backend) {
+      return this.config.projectPaths.backend;
+    }
+    if (cwd === 'frontend' && this.config?.projectPaths.frontend) {
+      return this.config.projectPaths.frontend;
+    }
+    return path.isAbsolute(cwd) ? cwd : path.join(this.projectRoot, cwd);
+  }
+
+  async runCommand(command: string, timeout?: number, cwd?: string): Promise<ExecutionResult> {
     if (!this.isCommandSafe(command)) {
       return {
         success: false,
@@ -463,7 +461,7 @@ export class AgentExecutor {
 
     return new Promise((resolve) => {
       const child = spawn('sh', ['-c', command], {
-        cwd: this.projectRoot,
+        cwd: this.resolveCommandCwd(cwd),
         timeout: execTimeout,
         env: {
           ...process.env,
@@ -651,13 +649,10 @@ export class AgentExecutor {
 
   // Create git commit - DISABLED to prevent file deletions
   async gitCommit(message: string, files?: string[]): Promise<GitResult> {
-    // Git operations are disabled for the agent to prevent accidental file deletions
-    console.log('[EXECUTOR] Git commit DISABLED for agent safety');
-    return {
-      success: false,
-      output: '',
-      error: 'Git operations disabled for agent. Changes are logged but not committed.'
-    };
+    return gitIntegration.autoCommitAndPush(message, undefined, {
+      scopes: this.currentWriteScopes,
+      files,
+    });
   }
 
   // Execute a tool call from Claude
@@ -678,7 +673,7 @@ export class AgentExecutor {
         break;
       
       case 'run_command':
-        result = await this.runCommand(args.command, args.timeout);
+        result = await this.runCommand(args.command, args.timeout, args.cwd);
         break;
       
       case 'list_files':
@@ -694,20 +689,7 @@ export class AgentExecutor {
         break;
       
       case 'git_commit':
-        // Re-enabled with SAFE MODE - only commits to hermes-generated/
-        console.log(`[EXECUTOR] Git commit (SAFE MODE) - only hermes-generated/ files`);
-        result = await gitIntegration.autoCommitAndPush(args.message, args.taskId);
-        break;
-      
-      case 'git_branch':
-      case 'git_push':
-      case 'create_pr':
-        // These remain disabled - too risky
-        console.log(`[EXECUTOR] Git operation ${toolName} DISABLED for safety`);
-        result = { 
-          success: false, 
-          error: 'This git operation is disabled. Only git_commit is allowed (to hermes-generated/ only).' 
-        };
+        result = await this.gitCommit(args.message, args.files);
         break;
       
       case 'explain':

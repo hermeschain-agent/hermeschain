@@ -2,14 +2,14 @@ import { execSync, spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { eventBus } from '../events/EventBus';
+import { AgentConfig, getWriteScopes } from './config';
+import { ExecutionScope } from './types';
 
 // Auto-deploy configuration — disabled by default to prevent rogue commits.
 // Set AUTO_GIT_PUSH=true explicitly to enable autonomous pushes.
 const AUTO_PUSH_ENABLED = process.env.AUTO_GIT_PUSH === 'true';
 const GIT_USER_NAME = process.env.GIT_USER_NAME || 'hermes agent';
 const GIT_USER_EMAIL = process.env.GIT_USER_EMAIL || 'hermeschain-agent@users.noreply.github.com';
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
-const GITHUB_REPO = process.env.GITHUB_REPO || 'hermeschain-agent/hermeschain';
 
 // Git operation result
 export interface GitOperationResult {
@@ -19,6 +19,7 @@ export interface GitOperationResult {
   branch?: string;
   commit?: string;
   prUrl?: string;
+  files?: string[];
 }
 
 // Branch info
@@ -52,56 +53,129 @@ export class GitIntegration {
   private mainBranch: string = 'main';
   private branchPrefix: string = 'open/';
   private initialized: boolean = false;
+  private config: AgentConfig | null = null;
 
   constructor(projectRoot?: string) {
-    // Default to /app in production (Docker/Railway), or project root in development
-    if (projectRoot) {
-      this.projectRoot = projectRoot;
-    } else if (process.env.PROJECT_ROOT) {
-      this.projectRoot = process.env.PROJECT_ROOT;
-    } else if (fs.existsSync('/app/backend') || fs.existsSync('/app/package.json')) {
-      // Production container (Docker or Nixpacks)
-      this.projectRoot = '/app';
-    } else {
-      // Development - go up from backend/src/agent or backend/dist/agent
-      this.projectRoot = path.resolve(__dirname, '../../../');
-      if (!fs.existsSync(path.join(this.projectRoot, 'backend'))) {
-        this.projectRoot = path.resolve(__dirname, '../../../../');
+    this.projectRoot = projectRoot || process.cwd();
+    console.log(`[GIT] Initialized with project root: ${this.projectRoot}`);
+    this.setupGitConfig();
+  }
+
+  private hasGitRepo(): boolean {
+    return fs.existsSync(path.join(this.projectRoot, '.git'));
+  }
+
+  private matchesScope(filePath: string, scope: ExecutionScope): boolean {
+    const normalized = filePath.replace(/\\/g, '/');
+    if (scope.kind === 'file') {
+      return normalized === scope.path.replace(/\\/g, '/');
+    }
+    return normalized.startsWith(scope.path.replace(/\\/g, '/'));
+  }
+
+  private getDefaultCommitScopes(): string[] {
+    return getWriteScopes(this.config);
+  }
+
+  private isLikelyGibberish(value: string): boolean {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return true;
+
+    if (/\b(x{3,}|asdf|qwerty|lorem ipsum|placeholder)\b/i.test(normalized)) {
+      return true;
+    }
+
+    if (/([a-z])\1{7,}/i.test(normalized.replace(/[^a-z]/g, ''))) {
+      return true;
+    }
+
+    const tokens = normalized.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 6) {
+      const unique = new Set(tokens);
+      if (unique.size <= Math.max(2, Math.floor(tokens.length * 0.35))) {
+        return true;
       }
     }
-    console.log(`[GIT] Initialized with project root: ${this.projectRoot}`);
+
+    return false;
+  }
+
+  private inspectFilesForGibberish(filePaths: string[]): { blocked: boolean; reason?: string } {
+    const suspiciousPattern =
+      /\b(x{3,}|asdf|qwerty|lorem ipsum|placeholder text|placeholder content)\b/i;
+
+    for (const filePath of filePaths.slice(0, 20)) {
+      const absolutePath = path.join(this.projectRoot, filePath);
+      if (!fs.existsSync(absolutePath) || fs.statSync(absolutePath).isDirectory()) {
+        continue;
+      }
+
+      try {
+        const content = fs.readFileSync(absolutePath, 'utf-8').slice(0, 6000);
+        if (suspiciousPattern.test(content)) {
+          return {
+            blocked: true,
+            reason: `Suspicious placeholder content detected in ${filePath}`,
+          };
+        }
+
+        const denseAlpha = content.replace(/[^a-z]/gi, '');
+        if (denseAlpha.length > 120 && /([a-z])\1{12,}/i.test(denseAlpha)) {
+          return {
+            blocked: true,
+            reason: `Repeated character gibberish detected in ${filePath}`,
+          };
+        }
+      } catch {
+        // Ignore unreadable files here and let git/verification surface the real issue.
+      }
+    }
+
+    return { blocked: false };
+  }
+
+  private getScopedStatusEntries(
+    scopes?: ExecutionScope[],
+    requestedFiles?: string[]
+  ): Array<{ status: string; filePath: string }> {
+    const statusOutput = this.execGit('status --porcelain', true);
+    const requested = new Set((requestedFiles || []).map((file) => file.replace(/\\/g, '/')));
+
+    return statusOutput
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => ({
+        status: line.substring(0, 2).trim(),
+        filePath: line.substring(3).trim(),
+      }))
+      .filter((entry) => {
+        if (!entry.filePath) return false;
+        const normalized = entry.filePath.replace(/\\/g, '/');
+        if (requested.size > 0 && !requested.has(normalized)) {
+          return false;
+        }
+        if (scopes && scopes.length > 0) {
+          return scopes.some((scope) => this.matchesScope(normalized, scope));
+        }
+        const defaultScopes = this.getDefaultCommitScopes();
+        return defaultScopes.some((scopePrefix) => normalized.startsWith(scopePrefix));
+      });
+  }
+
+  configure(config: AgentConfig): void {
+    this.config = config;
+    if (config.repoRoot) {
+      this.projectRoot = config.repoRoot;
+    }
     this.setupGitConfig();
   }
 
   // Configure git user and remote for commits
   private setupGitConfig(): void {
     try {
-      const gitDir = path.join(this.projectRoot, '.git');
-      
-      // If no .git and we have credentials, clone the repo
-      if (!fs.existsSync(gitDir) && GITHUB_TOKEN && GITHUB_REPO) {
-        console.log('[GIT] No .git directory found, cloning repo...');
-        const remoteUrl = `https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git`;
-        
-        try {
-          // Clone into a temp location then move .git
-          const tempDir = '/tmp/hermeschain-clone';
-          execSync(`rm -rf ${tempDir}`, { encoding: 'utf-8', stdio: 'pipe' });
-          execSync(`git clone --depth 1 ${remoteUrl} ${tempDir}`, { encoding: 'utf-8', stdio: 'pipe', timeout: 60000 });
-          
-          // Copy .git directory to project root
-          execSync(`cp -r ${tempDir}/.git ${this.projectRoot}/`, { encoding: 'utf-8', stdio: 'pipe' });
-          execSync(`rm -rf ${tempDir}`, { encoding: 'utf-8', stdio: 'pipe' });
-          
-          console.log('[GIT] Successfully cloned repo');
-        } catch (cloneErr: any) {
-          console.error('[GIT] Clone failed:', cloneErr.message);
-          console.log('[GIT] Initializing fresh git repo...');
-          execSync('git init', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
-        }
-      } else if (!fs.existsSync(gitDir)) {
-        console.log('[GIT] No .git directory found, initializing...');
-        execSync('git init', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
+      if (!this.hasGitRepo()) {
+        console.log('[GIT] No git repository detected. Auto-commit will stay local-only and inactive.');
+        return;
       }
 
       // Configure user
@@ -115,41 +189,6 @@ export class GitIntegration {
         encoding: 'utf-8',
         stdio: 'pipe'
       });
-
-      // Configure remote with token if available
-      if (GITHUB_TOKEN && GITHUB_REPO) {
-        const remoteUrl = `https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git`;
-        try {
-          // Remove existing origin if it exists
-          execSync('git remote remove origin', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
-        } catch {
-          // Origin might not exist, that's fine
-        }
-        try {
-          execSync(`git remote add origin ${remoteUrl}`, {
-            cwd: this.projectRoot,
-            encoding: 'utf-8',
-            stdio: 'pipe'
-          });
-        } catch {
-          // Origin might already exist from clone
-        }
-        console.log(`[GIT] Configured remote with token for ${GITHUB_REPO}`);
-        
-        // Make sure we're on main branch
-        try {
-          execSync('git checkout main', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
-        } catch {
-          // May already be on main or branch doesn't exist
-          try {
-            execSync('git checkout -b main', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
-          } catch {
-            // Branch may already exist
-          }
-        }
-      } else {
-        console.log('[GIT] No GITHUB_TOKEN configured - push will not work');
-      }
 
       this.initialized = true;
       console.log(`[GIT] Configured git user: ${GIT_USER_NAME} <${GIT_USER_EMAIL}>`);
@@ -205,48 +244,69 @@ export class GitIntegration {
     return `${type}(${scope}): ${desc}`;
   }
 
-  // Auto-commit and push agent changes — one commit per file for detailed history
-  async autoCommitAndPush(message: string, taskId?: string): Promise<GitOperationResult> {
+  // Auto-commit scoped agent changes — one commit per verified run.
+  async autoCommitAndPush(
+    message: string,
+    taskId?: string,
+    options: {
+      scopes?: ExecutionScope[];
+      files?: string[];
+    } = {}
+  ): Promise<GitOperationResult> {
     console.log('[GIT] autoCommitAndPush called:', message);
 
     try {
-      // Get list of changed files
-      const statusOutput = this.execGit('status --porcelain', true);
-      const changedFiles = statusOutput.split('\n').filter(Boolean);
+      if (!this.hasGitRepo()) {
+        return { success: true, output: 'Git repository unavailable; skipping commit.', files: [] };
+      }
+
+      const changedFiles = this.getScopedStatusEntries(options.scopes, options.files);
 
       if (changedFiles.length === 0) {
-        console.log('[GIT] No changes to commit');
-        return { success: true, output: 'No changes to commit' };
+        console.log('[GIT] No scoped changes to commit');
+        return { success: true, output: 'No scoped changes to commit', files: [] };
       }
 
-      console.log(`[GIT] Found ${changedFiles.length} changed files, committing individually...`);
-      let lastCommitHash = '';
+      console.log(`[GIT] Found ${changedFiles.length} scoped files to commit`);
+      const stagedFiles: string[] = [];
 
-      for (const line of changedFiles) {
-        const status = line.substring(0, 2).trim();
-        const filePath = line.substring(3).trim();
+      for (const entry of changedFiles) {
+        const { status, filePath } = entry;
         if (!filePath) continue;
-
-        try {
-          // Stage this single file
-          if (status === 'D') {
-            this.execGit(`rm "${filePath}"`, true);
-          } else {
-            this.execGit(`add "${filePath}"`, true);
-          }
-
-          // Generate a detailed commit message from the file path
-          const commitMsg = this.deriveCommitMessage(filePath);
-          const escapedMsg = commitMsg.replace(/"/g, '\\"');
-          this.execGit(`commit -m "${escapedMsg}"`, true);
-          lastCommitHash = this.execGit('rev-parse --short HEAD', true);
-          console.log(`[GIT] Committed: ${lastCommitHash} ${commitMsg}`);
-        } catch (e: any) {
-          console.log(`[GIT] Skip ${filePath}: ${e.message?.substring(0, 80)}`);
+        if (status === 'D') {
+          this.execGit(`rm --cached --ignore-unmatch "${filePath}"`, true);
+        } else {
+          this.execGit(`add "${filePath}"`, true);
         }
+        stagedFiles.push(filePath);
       }
 
-      const commitHash = lastCommitHash;
+      if (stagedFiles.length === 0) {
+        return { success: true, output: 'No staged scoped changes to commit', files: [] };
+      }
+
+      if (this.isLikelyGibberish(message)) {
+        return {
+          success: false,
+          output: '',
+          error: 'Commit blocked by gibberish guard: suspicious commit message.',
+          files: stagedFiles,
+        };
+      }
+
+      const fileGuard = this.inspectFilesForGibberish(stagedFiles);
+      if (fileGuard.blocked) {
+        return {
+          success: false,
+          output: '',
+          error: `Commit blocked by gibberish guard: ${fileGuard.reason}`,
+          files: stagedFiles,
+        };
+      }
+
+      const escapedMsg = message.replace(/"/g, '\\"');
+      this.execGit(`commit -m "${escapedMsg}"`, true);
+      const commitHash = this.execGit('rev-parse --short HEAD', true);
 
       console.log(`[GIT] Created commit: ${commitHash}`);
 
@@ -256,21 +316,7 @@ export class GitIntegration {
         console.log(`[GIT] Pushing to origin/${branch}...`);
         
         try {
-          // First try normal push
-          try {
-            this.execGit(`push -u origin ${branch}`, true);
-          } catch (e: any) {
-            // If push fails due to non-fast-forward, try to pull and merge first
-            console.log('[GIT] Normal push failed, trying pull then push...');
-            try {
-              this.execGit('pull origin main --rebase --allow-unrelated-histories', true);
-              this.execGit(`push -u origin ${branch}`, true);
-            } catch (pullError) {
-              // If pull fails too, force push as last resort (new files only)
-              console.log('[GIT] Pull failed, force pushing...');
-              this.execGit(`push -u origin ${branch} --force`, true);
-            }
-          }
+          this.execGit(`push -u origin ${branch}`, true);
           console.log(`[GIT] Successfully pushed to origin/${branch}`);
           
           eventBus.emit('git_action', {
@@ -285,7 +331,8 @@ export class GitIntegration {
             success: true,
             output: `Committed and pushed: ${commitHash}`,
             commit: commitHash,
-            branch
+            branch,
+            files: stagedFiles
           };
         } catch (pushError: any) {
           console.error('[GIT] Push failed:', pushError.message);
@@ -302,7 +349,8 @@ export class GitIntegration {
             success: true,
             output: `Committed (push failed): ${commitHash}`,
             commit: commitHash,
-            error: `Push failed: ${pushError.message}`
+            error: `Push failed: ${pushError.message}`,
+            files: stagedFiles
           };
         }
       } else {
@@ -316,7 +364,8 @@ export class GitIntegration {
         return {
           success: true,
           output: `Committed: ${commitHash}`,
-          commit: commitHash
+          commit: commitHash,
+          files: stagedFiles
         };
       }
     } catch (error: any) {
@@ -329,8 +378,20 @@ export class GitIntegration {
     }
   }
 
+  getChangedFilesWithinScopes(scopes: ExecutionScope[]): string[] {
+    try {
+      return this.getScopedStatusEntries(scopes).map((entry) => entry.filePath);
+    } catch {
+      return [];
+    }
+  }
+
   // Execute git command safely
   private execGit(command: string, silent: boolean = false): string {
+    if (!this.hasGitRepo()) {
+      throw new Error('Git repository unavailable');
+    }
+
     try {
       const result = execSync(`git ${command}`, {
         cwd: this.projectRoot,

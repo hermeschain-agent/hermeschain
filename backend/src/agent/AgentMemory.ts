@@ -287,6 +287,48 @@ class AgentMemorySystem {
     
     let memories = Array.from(this.memoryCache.values());
 
+    if (search) {
+      try {
+        const params: any[] = [search, limit];
+        let query = `
+          SELECT *
+          FROM agent_memory
+          WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+        `;
+
+        if (type) {
+          query += ` AND type = $${params.length + 1}`;
+          params.push(type);
+        }
+
+        if (minImportance > 0) {
+          query += ` AND importance >= $${params.length + 1}`;
+          params.push(minImportance);
+        }
+
+        query += `
+          ORDER BY importance DESC, last_accessed_at DESC
+          LIMIT $2
+        `;
+
+        const result = await db.query(query, params);
+        if ((result.rows || []).length > 0) {
+          memories = result.rows.map((row: any) => ({
+            id: row.id,
+            type: row.type,
+            content: row.content,
+            metadata: row.metadata || {},
+            importance: row.importance,
+            createdAt: new Date(row.created_at),
+            lastAccessedAt: new Date(row.last_accessed_at),
+            accessCount: row.access_count,
+          }));
+        }
+      } catch {
+        // Fallback to cache search when Postgres FTS is unavailable.
+      }
+    }
+
     // Filter by type
     if (type) {
       memories = memories.filter(m => m.type === type);
@@ -341,13 +383,14 @@ class AgentMemorySystem {
     taskTitle: string,
     taskType: string,
     output: string,
-    success: boolean
+    success: boolean,
+    metadata: Record<string, any> = {}
   ): Promise<void> {
     // Remember the task
     await this.remember(
       'task',
       `Completed: ${taskTitle}`,
-      { type: taskType, success, outputLength: output.length },
+      { type: taskType, success, outputLength: output.length, ...metadata },
       success ? 0.6 : 0.8  // Failed tasks are more important to remember
     );
 
@@ -363,7 +406,7 @@ class AgentMemorySystem {
       await this.remember(
         'insight',
         `Found issue while ${taskTitle}: ${output.substring(0, 200)}...`,
-        { taskType, taskTitle },
+        { taskType, taskTitle, ...metadata },
         0.8
       );
     }

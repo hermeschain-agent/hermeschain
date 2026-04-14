@@ -1,9 +1,9 @@
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import { eventBus } from '../events/EventBus';
-import { taskSources } from './TaskSources';
+import { AgentConfig } from './config';
 
-// Test result types
 export interface TestResult {
   passed: boolean;
   total: number;
@@ -20,7 +20,6 @@ export interface TestFailure {
   stack?: string;
 }
 
-// Build result
 export interface BuildResult {
   success: boolean;
   duration: number;
@@ -28,7 +27,6 @@ export interface BuildResult {
   warnings: string[];
 }
 
-// Lint result
 export interface LintResult {
   clean: boolean;
   errorCount: number;
@@ -45,254 +43,246 @@ export interface LintIssue {
   rule: string;
 }
 
+interface PackageTarget {
+  name: string;
+  dir: string;
+  scripts: Record<string, string>;
+}
+
+interface ScriptRunResult {
+  available: boolean;
+  success: boolean;
+  duration: number;
+  output: string;
+}
+
 export class CIMonitor {
   private projectRoot: string;
-  private isRunning: boolean = false;
+  private config: AgentConfig | null = null;
+  private isRunning = false;
   private checkInterval: NodeJS.Timeout | null = null;
+  private lastCheckAt: Date | null = null;
 
   constructor(projectRoot?: string) {
-    this.projectRoot = projectRoot || path.resolve(__dirname, '../../../../');
+    this.projectRoot = projectRoot || process.cwd();
   }
 
-  // Run all CI checks
+  configure(config: AgentConfig): void {
+    this.config = config;
+    if (config.repoRoot) {
+      this.projectRoot = config.repoRoot;
+    }
+  }
+
+  private getPackageTargets(): PackageTarget[] {
+    const targets: PackageTarget[] = [];
+    const base = this.config?.repoRoot || this.projectRoot;
+
+    for (const name of ['backend', 'frontend']) {
+      const dir = path.join(base, name);
+      const packagePath = path.join(dir, 'package.json');
+      if (!fs.existsSync(packagePath)) continue;
+
+      try {
+        const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+        targets.push({
+          name,
+          dir,
+          scripts: pkg.scripts || {},
+        });
+      } catch (error) {
+        console.error(`[CI] Failed to parse ${packagePath}:`, error);
+      }
+    }
+
+    return targets;
+  }
+
+  private runPackageScript(target: PackageTarget, script: string, timeout: number): ScriptRunResult {
+    if (!target.scripts[script]) {
+      return {
+        available: false,
+        success: true,
+        duration: 0,
+        output: '',
+      };
+    }
+
+    const startTime = Date.now();
+    const result = spawnSync('npm', ['run', script], {
+      cwd: target.dir,
+      encoding: 'utf-8',
+      timeout,
+      env: {
+        ...process.env,
+        CI: 'true',
+        FORCE_COLOR: '0',
+      },
+    });
+
+    return {
+      available: true,
+      success: result.status === 0,
+      duration: Date.now() - startTime,
+      output: `${result.stdout || ''}${result.stderr || ''}`.trim(),
+    };
+  }
+
   async runAllChecks(): Promise<{
     tests: TestResult;
     build: BuildResult;
     lint: LintResult;
   }> {
     console.log('[CI] Running all checks...');
-    
+
     const [tests, build, lint] = await Promise.all([
       this.runTests(),
       this.runBuild(),
-      this.runLint()
+      this.runLint(),
     ]);
 
-    // Emit results
+    this.lastCheckAt = new Date();
     eventBus.emit('ci_results', { tests, build, lint });
 
     return { tests, build, lint };
   }
 
-  // Run tests
   async runTests(): Promise<TestResult> {
-    console.log('[CI] Running tests...');
-    const startTime = Date.now();
-    
-    try {
-      const output = execSync('npm test 2>&1 || true', {
-        cwd: this.projectRoot,
-        encoding: 'utf-8',
-        timeout: 120000
-      });
+    const targets = this.getPackageTargets();
+    let total = 0;
+    let failing = 0;
+    let duration = 0;
+    const failures: TestFailure[] = [];
 
-      const duration = Date.now() - startTime;
-      
-      // Parse test output
-      const failures: TestFailure[] = [];
-      let total = 0;
-      let passing = 0;
-      let failing = 0;
+    for (const target of targets) {
+      const result = this.runPackageScript(target, 'test', 180000);
+      if (!result.available) continue;
 
-      // Try to parse Jest output
-      const summaryMatch = output.match(/Tests:\s*(\d+)\s*passed,\s*(\d+)\s*total/);
-      if (summaryMatch) {
-        passing = parseInt(summaryMatch[1], 10);
-        total = parseInt(summaryMatch[2], 10);
-        failing = total - passing;
+      duration += result.duration;
+      total += 1;
+
+      if (!result.success) {
+        failing += 1;
+        failures.push({
+          testName: `${target.name} test suite`,
+          file: `${target.name}/package.json`,
+          message: result.output.split('\n').slice(-10).join('\n') || 'Test command failed.',
+        });
       }
-
-      // Alternative: count PASS/FAIL lines
-      if (total === 0) {
-        const passMatches = output.match(/PASS/g) || [];
-        const failMatches = output.match(/FAIL/g) || [];
-        passing = passMatches.length;
-        failing = failMatches.length;
-        total = passing + failing;
-      }
-
-      // Extract failures
-      const failureBlocks = output.split(/FAIL/).slice(1);
-      for (const block of failureBlocks.slice(0, 5)) {
-        const lines = block.split('\n');
-        const file = lines[0]?.trim() || 'unknown';
-        
-        // Find error messages
-        for (const line of lines) {
-          if (line.includes('Error:') || line.includes('✕')) {
-            failures.push({
-              testName: line.trim(),
-              file,
-              message: line.trim()
-            });
-            break;
-          }
-        }
-      }
-
-      const result: TestResult = {
-        passed: failing === 0 && total > 0,
-        total,
-        passing,
-        failing,
-        duration,
-        failures
-      };
-
-      console.log(`[CI] Tests: ${passing}/${total} passed (${duration}ms)`);
-      
-      return result;
-
-    } catch (error: any) {
-      return {
-        passed: false,
-        total: 0,
-        passing: 0,
-        failing: 1,
-        duration: Date.now() - startTime,
-        failures: [{
-          testName: 'Test execution',
-          file: 'unknown',
-          message: error.message
-        }]
-      };
     }
+
+    return {
+      passed: total === 0 ? true : failing === 0,
+      total,
+      passing: Math.max(0, total - failing),
+      failing,
+      duration,
+      failures,
+    };
   }
 
-  // Run build
   async runBuild(): Promise<BuildResult> {
-    console.log('[CI] Running build...');
-    const startTime = Date.now();
-    
-    try {
-      const output = execSync('npm run build 2>&1 || true', {
-        cwd: this.projectRoot,
-        encoding: 'utf-8',
-        timeout: 180000
-      });
+    const targets = this.getPackageTargets();
+    let duration = 0;
+    const errors: string[] = [];
+    const warnings: string[] = [];
 
-      const duration = Date.now() - startTime;
-      const errors: string[] = [];
-      const warnings: string[] = [];
+    for (const target of targets) {
+      const result = this.runPackageScript(target, 'build', 240000);
+      if (!result.available) continue;
 
-      // Parse TypeScript errors
-      const lines = output.split('\n');
-      for (const line of lines) {
-        if (line.includes('error TS') || line.includes('Error:')) {
-          errors.push(line.trim());
-        } else if (line.includes('warning') || line.includes('Warning')) {
-          warnings.push(line.trim());
+      duration += result.duration;
+      const lines = result.output.split('\n').filter(Boolean);
+      warnings.push(
+        ...lines.filter((line) => /warning/i.test(line)).map((line) => `[${target.name}] ${line}`)
+      );
+
+      if (!result.success) {
+        errors.push(
+          ...lines
+            .filter((line) => /error|failed/i.test(line))
+            .slice(0, 20)
+            .map((line) => `[${target.name}] ${line}`)
+        );
+        if (lines.length === 0) {
+          errors.push(`[${target.name}] Build command failed with no output.`);
         }
       }
-
-      const result: BuildResult = {
-        success: errors.length === 0,
-        duration,
-        errors: errors.slice(0, 10),
-        warnings: warnings.slice(0, 10)
-      };
-
-      console.log(`[CI] Build: ${result.success ? 'SUCCESS' : 'FAILED'} (${duration}ms, ${errors.length} errors)`);
-      
-      return result;
-
-    } catch (error: any) {
-      return {
-        success: false,
-        duration: Date.now() - startTime,
-        errors: [error.message],
-        warnings: []
-      };
     }
+
+    return {
+      success: errors.length === 0,
+      duration,
+      errors: errors.slice(0, 20),
+      warnings: warnings.slice(0, 20),
+    };
   }
 
-  // Run lint
   async runLint(): Promise<LintResult> {
-    console.log('[CI] Running lint...');
-    
-    try {
-      const output = execSync('npm run lint 2>&1 || true', {
-        cwd: this.projectRoot,
-        encoding: 'utf-8',
-        timeout: 60000
-      });
+    const targets = this.getPackageTargets();
+    const issues: LintIssue[] = [];
 
-      const issues: LintIssue[] = [];
-      let errorCount = 0;
-      let warningCount = 0;
+    for (const target of targets) {
+      const result = this.runPackageScript(target, 'lint', 120000);
+      if (!result.available) continue;
 
-      // Parse ESLint output
-      const lines = output.split('\n');
-      for (const line of lines) {
-        // Match ESLint format: file:line:column: message (rule)
-        const match = line.match(/(.+?):(\d+):(\d+):\s*(error|warning)\s+(.+?)\s+(\S+)$/);
-        if (match) {
-          const [, file, lineNum, column, severity, message, rule] = match;
-          issues.push({
-            file,
-            line: parseInt(lineNum, 10),
-            column: parseInt(column, 10),
-            severity: severity as 'error' | 'warning',
-            message,
-            rule
-          });
-          
-          if (severity === 'error') {
-            errorCount++;
-          } else {
-            warningCount++;
-          }
-        }
-      }
+      const lines = result.output.split('\n').filter(Boolean);
+      const parsedIssues = lines
+        .map((line) => {
+          const match = line.match(/(.+?):(\d+):(\d+):\s*(error|warning)\s+(.+?)\s+(\S+)$/);
+          if (!match) return null;
+          return {
+            file: path.relative(this.projectRoot, match[1]),
+            line: parseInt(match[2], 10),
+            column: parseInt(match[3], 10),
+            severity: match[4] as 'error' | 'warning',
+            message: match[5],
+            rule: match[6],
+          } satisfies LintIssue;
+        })
+        .filter(Boolean) as LintIssue[];
 
-      const result: LintResult = {
-        clean: errorCount === 0 && warningCount === 0,
-        errorCount,
-        warningCount,
-        issues: issues.slice(0, 20)
-      };
-
-      console.log(`[CI] Lint: ${result.clean ? 'CLEAN' : `${errorCount} errors, ${warningCount} warnings`}`);
-      
-      return result;
-
-    } catch (error: any) {
-      return {
-        clean: false,
-        errorCount: 1,
-        warningCount: 0,
-        issues: [{
-          file: 'unknown',
+      if (parsedIssues.length > 0) {
+        issues.push(...parsedIssues);
+      } else if (!result.success) {
+        issues.push({
+          file: `${target.name}/package.json`,
           line: 0,
           column: 0,
           severity: 'error',
-          message: error.message,
-          rule: 'execution-error'
-        }]
-      };
+          message: result.output.split('\n').slice(-10).join('\n') || 'Lint command failed.',
+          rule: 'lint-command',
+        });
+      }
     }
+
+    const errorCount = issues.filter((issue) => issue.severity === 'error').length;
+    const warningCount = issues.filter((issue) => issue.severity === 'warning').length;
+
+    return {
+      clean: errorCount === 0 && warningCount === 0,
+      errorCount,
+      warningCount,
+      issues: issues.slice(0, 30),
+    };
   }
 
-  // Start periodic monitoring
-  start(intervalMs: number = 300000): void { // Default: 5 minutes
+  start(intervalMs: number = 300000): void {
     if (this.isRunning) return;
-    
+
     this.isRunning = true;
     console.log(`[CI] Starting periodic monitoring every ${intervalMs / 1000}s`);
-    
-    // Run initial check
-    this.runAllChecks().then(results => {
+
+    void this.runAllChecks().then((results) => {
       this.handleResults(results);
     });
 
-    // Set up interval
     this.checkInterval = setInterval(async () => {
       const results = await this.runAllChecks();
       this.handleResults(results);
     }, intervalMs);
   }
 
-  // Stop monitoring
   stop(): void {
     if (this.checkInterval) {
       clearInterval(this.checkInterval);
@@ -302,63 +292,44 @@ export class CIMonitor {
     console.log('[CI] Monitoring stopped');
   }
 
-  // Handle CI results - create tasks for failures
   private handleResults(results: {
     tests: TestResult;
     build: BuildResult;
     lint: LintResult;
   }): void {
-    // If tests failed, this will be picked up by TaskSources
     if (!results.tests.passed && results.tests.failing > 0) {
-      console.log('[CI] Test failures detected - TaskSources will create fix task');
       eventBus.emit('ci_failure', {
         type: 'tests',
-        failures: results.tests.failures
+        failures: results.tests.failures,
       });
     }
 
     if (!results.build.success) {
-      console.log('[CI] Build errors detected - TaskSources will create fix task');
       eventBus.emit('ci_failure', {
         type: 'build',
-        errors: results.build.errors
+        errors: results.build.errors,
       });
     }
 
     if (!results.lint.clean && results.lint.errorCount > 0) {
-      console.log('[CI] Lint errors detected - TaskSources will create fix task');
       eventBus.emit('ci_failure', {
         type: 'lint',
-        issues: results.lint.issues
+        issues: results.lint.issues,
       });
     }
   }
 
-  // Get current status
-  getStatus(): {
-    running: boolean;
-    lastCheck?: Date;
-  } {
+  getStatus(): { running: boolean; lastCheck?: Date } {
     return {
-      running: this.isRunning
+      running: this.isRunning,
+      lastCheck: this.lastCheckAt || undefined,
     };
   }
 
-  // Quick health check (faster than full CI run)
   async quickCheck(): Promise<boolean> {
-    try {
-      // Just check if TypeScript compiles
-      execSync('npx tsc --noEmit 2>&1', {
-        cwd: this.projectRoot,
-        encoding: 'utf-8',
-        timeout: 60000
-      });
-      return true;
-    } catch {
-      return false;
-    }
+    const build = await this.runBuild();
+    return build.success;
   }
 }
 
-// Export singleton
 export const ciMonitor = new CIMonitor();

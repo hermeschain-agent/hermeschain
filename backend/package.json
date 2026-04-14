@@ -5,9 +5,9 @@
   "main": "dist/api/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/api/server.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
     "start": "node dist/api/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run build && node --test tests/*.test.js"
   },
   "keywords": [
     "blockchain",

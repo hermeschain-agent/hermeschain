@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { eventBus } from '../events/EventBus';
+import { AgentConfig } from './config';
 
 // Skill definition
 export interface Skill {
@@ -211,14 +212,26 @@ export class SkillManager {
   private skills: Map<string, Skill> = new Map();
   private skillsDir: string;
   private projectRoot: string;
+  private initialized = false;
+  private config: AgentConfig | null = null;
+  private triggerDisposers: Array<() => void> = [];
 
   constructor(projectRoot?: string) {
-    this.projectRoot = projectRoot || path.resolve(__dirname, '../../../../');
-    this.skillsDir = path.join(this.projectRoot, 'skills');
+    this.projectRoot = projectRoot || process.cwd();
+    this.skillsDir = path.join(this.projectRoot, '.agents', 'skills');
+  }
+
+  configure(config: AgentConfig): void {
+    this.config = config;
+    if (config.repoRoot) {
+      this.projectRoot = config.repoRoot;
+      this.skillsDir = path.join(this.projectRoot, '.agents', 'skills');
+    }
   }
 
   // Initialize skill manager
   async initialize(): Promise<void> {
+    if (this.initialized) return;
     console.log('[SKILLS] Initializing skill manager...');
     
     // Load built-in skills
@@ -234,14 +247,20 @@ export class SkillManager {
     this.setupTriggers();
 
     console.log(`[SKILLS] Total skills loaded: ${this.skills.size}`);
+    this.initialized = true;
   }
 
   // Load custom skills from skills directory
   private async loadCustomSkills(): Promise<void> {
     if (!fs.existsSync(this.skillsDir)) {
-      fs.mkdirSync(this.skillsDir, { recursive: true });
-      console.log(`[SKILLS] Created skills directory: ${this.skillsDir}`);
-      return;
+      const legacyDir = path.join(this.projectRoot, 'skills');
+      if (fs.existsSync(legacyDir)) {
+        this.skillsDir = legacyDir;
+      } else {
+        fs.mkdirSync(this.skillsDir, { recursive: true });
+        console.log(`[SKILLS] Created skills directory: ${this.skillsDir}`);
+        return;
+      }
     }
 
     const entries = fs.readdirSync(this.skillsDir, { withFileTypes: true });
@@ -338,14 +357,21 @@ export class SkillManager {
 
   // Set up event triggers
   private setupTriggers(): void {
+    for (const dispose of this.triggerDisposers) {
+      dispose();
+    }
+    this.triggerDisposers = [];
+
     for (const skill of this.skills.values()) {
       if (!skill.enabled || !skill.triggers) continue;
 
       for (const trigger of skill.triggers) {
         if (trigger.type === 'event') {
-          eventBus.on(trigger.value, (data: any) => {
+          const listener = (data: any) => {
             this.executeTrigger(skill, trigger, data);
-          });
+          };
+          eventBus.on(trigger.value, listener);
+          this.triggerDisposers.push(() => eventBus.off(trigger.value, listener));
         }
         // Schedule and keyword triggers would need additional implementation
       }

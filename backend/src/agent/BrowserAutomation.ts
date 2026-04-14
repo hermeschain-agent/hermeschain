@@ -2,6 +2,7 @@ import { execSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { eventBus } from '../events/EventBus';
+import { AgentConfig } from './config';
 
 // Browser action result
 export interface BrowserResult {
@@ -127,14 +128,26 @@ export class BrowserAutomation {
   private projectRoot: string;
   private screenshotDir: string;
   private userAgent: string = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  private config: AgentConfig | null = null;
 
   constructor(projectRoot?: string) {
-    this.projectRoot = projectRoot || path.resolve(__dirname, '../../../../');
+    this.projectRoot = projectRoot || process.cwd();
     this.screenshotDir = path.join(this.projectRoot, 'screenshots');
     
     // Ensure screenshot directory exists
     if (!fs.existsSync(this.screenshotDir)) {
       fs.mkdirSync(this.screenshotDir, { recursive: true });
+    }
+  }
+
+  configure(config: AgentConfig): void {
+    this.config = config;
+    if (config.repoRoot) {
+      this.projectRoot = config.repoRoot;
+      this.screenshotDir = path.join(this.projectRoot, 'screenshots');
+      if (!fs.existsSync(this.screenshotDir)) {
+        fs.mkdirSync(this.screenshotDir, { recursive: true });
+      }
     }
   }
 

@@ -531,8 +531,19 @@ Live context:
   app.use('/api/auth', authRouter);
   console.log('[AUTH] Authentication system ready');
 
-  // ========== SKILLS SYSTEM ==========
-  const { skillManager } = await import('../agent/SkillManager');
+  // ========== SKILLS + AGENT CONFIG ==========
+  const {
+    createAgentConfig,
+    configureAgentSubsystems,
+    skillManager,
+    agentWorker,
+    agentEvents,
+    agentMemory,
+    agentTaskStore,
+    taskSources,
+  } = await import('../agent');
+  const agentConfig = createAgentConfig(process.cwd());
+  configureAgentSubsystems(agentConfig);
   await skillManager.initialize();
   
   // Skills API endpoints
@@ -568,10 +579,66 @@ Live context:
   // ========== END PLAYGROUND SYSTEM ==========
 
   // ========== AUTONOMOUS AGENT WORKER SYSTEM ==========
-  const { agentWorker, agentEvents, agentMemory } = await import('../agent');
-  
   // Track connected SSE clients
   let agentViewerCount = 0;
+
+  const buildAgentStatusPayload = () => {
+    const state = agentWorker.getState();
+    const currentRun = agentTaskStore.getCurrentRun();
+    const recentRuns = agentTaskStore.getRecentRuns(20);
+    const recentSuccessfulRuns = recentRuns.filter((run) => run.status === 'succeeded').slice(0, 5);
+
+    return {
+      mode: state.mode,
+      streamMode: state.mode,
+      isWorking: state.isWorking,
+      runStatus: state.runStatus,
+      verificationStatus: state.verificationStatus,
+      blockedReason: state.blockedReason,
+      lastFailure: state.lastFailure,
+      repoRoot: state.repoRoot,
+      repoRootHealth: state.repoRootHealth,
+      canWriteScopes: state.canWriteScopes,
+      currentTask: state.currentTask ? {
+        id: state.currentTask.id,
+        title: state.currentTask.title,
+        type: state.currentTask.type,
+        agent: state.currentTask.agent,
+      } : null,
+      currentOutput: state.currentOutput,
+      currentDecision: state.currentDecision,
+      completedTaskCount: recentSuccessfulRuns.length,
+      recentTasks: recentSuccessfulRuns.map((run) => ({
+        title: run.title,
+        agent: run.agent,
+        completedAt: run.completedAt || run.updatedAt,
+      })),
+      recentRuns: recentRuns.map((run) => ({
+        id: run.id,
+        sourceTaskId: run.sourceTaskId,
+        title: run.title,
+        type: run.taskType,
+        mode: run.mode,
+        status: run.status,
+        verificationStatus: run.verificationStatus,
+        changedFiles: run.changedFiles,
+        failureReason: run.failureReason,
+        blockedReason: run.blockedReason,
+        startedAt: run.startedAt,
+        completedAt: run.completedAt,
+      })),
+      currentRunId: currentRun?.id || null,
+      viewerCount: agentViewerCount,
+      agentEnabled: agentConfig.effectiveMode !== 'disabled',
+      startupIssues: agentConfig.startupIssues,
+      genesisTimestamp: chain.getGenesisTime(),
+      chainAgeMs: Date.now() - chain.getGenesisTime(),
+      lastBlockTimestamp: chain.getLatestBlock()?.header.timestamp || null,
+      blockHeight: chain.getChainLength(),
+      transactionCount: chain.getStoredTransactionCount(),
+      storedTransactionCount: chain.getStoredTransactionCount(),
+    };
+  };
   
   // SSE endpoint for live agent work streaming
   app.get('/api/agent/stream', (req, res) => {
@@ -585,29 +652,11 @@ Live context:
     agentViewerCount++;
     console.log(`[AGENT] New viewer connected (total: ${agentViewerCount})`);
     
-    // Send current state to new connection
-    const state = agentWorker.getState();
-    // Get persisted tasks from memory (survives restarts)
-    const persistedTasks = agentMemory.getCompletedTasks(5);
+    const payload = buildAgentStatusPayload();
     
     res.write(`data: ${JSON.stringify({
       type: 'init',
-      data: {
-        isWorking: state.isWorking,
-        currentTask: state.currentTask ? {
-          id: state.currentTask.id,
-          title: state.currentTask.title,
-          type: state.currentTask.type,
-          agent: state.currentTask.agent,
-        } : null,
-        currentOutput: state.currentOutput,
-        completedTasks: persistedTasks.map(t => ({
-          title: t.title,
-          agent: t.agent,
-          completedAt: t.completedAt,
-        })),
-        viewerCount: agentViewerCount,
-      },
+      data: payload,
       timestamp: Date.now()
     })}\n\n`);
     
@@ -642,49 +691,63 @@ Live context:
   
   // Get agent status
   app.get('/api/agent/status', (req, res) => {
-    const state = agentWorker.getState();
-    // Get persisted completed tasks from memory
-    const persistedTasks = agentMemory.getCompletedTasks(10);
-    
+    res.json(buildAgentStatusPayload());
+  });
+
+  // Get persisted task runs (plus legacy completed-task alias)
+  app.get('/api/agent/history', (req, res) => {
+    const limit = parseInt(req.query.limit as string) || 20;
+    const runs = agentTaskStore.getRecentRuns(limit);
+    const successfulRuns = runs.filter((run) => run.status === 'succeeded');
+
     res.json({
-      isWorking: state.isWorking,
-      currentTask: state.currentTask ? {
-        id: state.currentTask.id,
-        title: state.currentTask.title,
-        type: state.currentTask.type,
-        agent: state.currentTask.agent,
-      } : null,
-      completedTaskCount: persistedTasks.length,
-      recentTasks: persistedTasks.slice(0, 5).map(t => ({
-        title: t.title,
-        agent: t.agent,
-        completedAt: t.completedAt,
+      runs: runs.map((run) => ({
+        id: run.id,
+        sourceTaskId: run.sourceTaskId,
+        source: agentTaskStore.getSourceTask(run.sourceTaskId)?.source || 'unknown',
+        title: run.title,
+        type: run.taskType,
+        agent: run.agent,
+        mode: run.mode,
+        status: run.status,
+        verificationStatus: run.verificationStatus,
+        changedFiles: run.changedFiles,
+        failureReason: run.failureReason,
+        blockedReason: run.blockedReason,
+        output: run.output.substring(0, 1000),
+        startedAt: run.startedAt,
+        completedAt: run.completedAt,
       })),
-      viewerCount: agentViewerCount,
-      // Chain stats
-      blockHeight: chain.getChainLength(),
-      transactionCount: chain.getTotalTransactions(),
-      storedTransactionCount: chain.getStoredTransactionCount(),
+      tasks: successfulRuns.map((run) => ({
+        id: run.id,
+        taskId: run.sourceTaskId,
+        title: run.title,
+        type: run.taskType,
+        agent: run.agent,
+        output: run.output.substring(0, 500),
+        completedAt: run.completedAt,
+      })),
+      total: runs.length
     });
   });
 
-  // Get persisted completed tasks
-  app.get('/api/agent/history', (req, res) => {
-    const limit = parseInt(req.query.limit as string) || 20;
-    const tasks = agentMemory.getCompletedTasks(limit);
-    
-    res.json({
-      tasks: tasks.map(t => ({
-        id: t.id,
-        taskId: t.taskId,
-        title: t.title,
-        type: t.taskType,
-        agent: t.agent,
-        output: t.output.substring(0, 500), // Truncate output
-        completedAt: t.completedAt,
-      })),
-      total: tasks.length
-    });
+  app.post('/api/agent/tasks/:id/requeue', async (req, res) => {
+    const task = await taskSources.requeueTask(req.params.id);
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    res.json({ success: true, task });
+  });
+
+  app.post('/api/agent/tasks/:id/discard', async (req, res) => {
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
+      ? req.body.reason.trim()
+      : 'Discarded by operator';
+    const task = await taskSources.discardTask(req.params.id, reason);
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    res.json({ success: true, task });
   });
 
   // ==================== CHAIN EXPLORER API ====================
@@ -861,29 +924,62 @@ Live context:
 
   // Task backlog status
   app.get('/api/tasks/backlog', async (req, res) => {
-    const { TASK_BACKLOG, getBacklogProgress, getTotalEstimatedTime, getTasksByPriority } = await import('../agent/TaskBacklog');
-    const progress = getBacklogProgress();
+    const {
+      TASK_BACKLOG,
+      BACKLOG_PHASES,
+      COMMIT_WINDOW_MINUTES,
+      getRuntimeCommitWindowMinutes,
+      TARGET_COMMIT_HOURS,
+      TARGET_COMMIT_WINDOWS,
+      getOrderedBacklog,
+      getTotalEstimatedTime,
+    } = await import('../agent/TaskBacklog');
+    const progress = agentTaskStore.getBacklogProgress(TASK_BACKLOG.length);
     const time = getTotalEstimatedTime();
-    const tasks = getTasksByPriority();
+    const orderedTasks = getOrderedBacklog();
+    const nextTasks = orderedTasks
+      .filter((task) => agentTaskStore.getSourceTask(task.id)?.status !== 'succeeded')
+      .slice(0, 10);
     
     res.json({
       progress,
+      cadence: {
+        commitWindowMinutes: COMMIT_WINDOW_MINUTES,
+        runtimeCommitWindowMinutes: getRuntimeCommitWindowMinutes(),
+        targetHours: TARGET_COMMIT_HOURS,
+        targetCommitWindows: TARGET_COMMIT_WINDOWS,
+      },
       estimatedTime: time,
       totalTasks: TASK_BACKLOG.length,
-      nextTasks: tasks.slice(progress.completed, progress.completed + 10).map(t => ({
+      phases: BACKLOG_PHASES,
+      nextTasks: nextTasks.map(t => ({
         id: t.id,
         title: t.title,
         type: t.type,
         priority: t.priority,
         estimatedMinutes: t.estimatedMinutes,
-        tags: t.tags
+        commitWindowMinutes: t.commitWindowMinutes,
+        phaseId: t.phaseId,
+        phaseTitle: t.phaseTitle,
+        workstreamId: t.workstreamId,
+        workstreamTitle: t.workstreamTitle,
+        allowedScopes: t.allowedScopes,
+        expectedOutcome: t.expectedOutcome,
+        verification: t.verification,
+        tags: t.tags,
       }))
     });
   });
   
-  // Start the autonomous agent worker
-  agentWorker.start();
-  console.log('[AGENT] Autonomous agent worker started');
+  // Start the autonomous agent worker by default unless explicitly disabled.
+  if (agentConfig.autorunEnabled && agentConfig.effectiveMode !== 'disabled') {
+    await agentWorker.start();
+    console.log(`[AGENT] Autonomous agent worker started in ${agentConfig.effectiveMode} mode`);
+  } else {
+    console.log(
+      `[AGENT] Worker not started (autorun=${agentConfig.autorunEnabled}, effectiveMode=${agentConfig.effectiveMode})`
+    );
+  }
   
   // Set up logging for agent events
   let currentTaskId: string | undefined;
@@ -910,6 +1006,29 @@ Live context:
           break;
         case 'tool_start':
           addLog('tool_use', `Using tool: ${chunk.data?.tool}`, currentTaskId, currentTaskTitle, chunk.data);
+          break;
+        case 'tool_result':
+          addLog('tool_result', `Tool finished: ${chunk.data?.tool}`, currentTaskId, currentTaskTitle, chunk.data);
+          break;
+        case 'analysis_start':
+          addLog('analysis_start', `Analyzing: ${currentTaskTitle || chunk.data?.taskId || 'task'}`, currentTaskId, currentTaskTitle, chunk.data);
+          break;
+        case 'verification_start':
+          addLog('verification_start', `Verifying: ${currentTaskTitle || chunk.data?.sourceTaskId || 'task'}`, currentTaskId, currentTaskTitle, chunk.data);
+          break;
+        case 'verification_result':
+          addLog(
+            'verification_result',
+            chunk.data?.summary || chunk.data?.failureReason || chunk.data?.step || 'Verification update',
+            currentTaskId,
+            currentTaskTitle,
+            chunk.data
+          );
+          break;
+        case 'task_blocked':
+          addLog('task_blocked', chunk.data?.reason || 'Task blocked', chunk.data?.taskId || currentTaskId, currentTaskTitle, chunk.data);
+          currentTaskId = undefined;
+          currentTaskTitle = undefined;
           break;
         case 'git_deploy':
           addLog('git_commit', `Deployed commit ${chunk.data?.commit} to ${chunk.data?.branch || 'main'}`, chunk.data?.taskId, currentTaskTitle, chunk.data);

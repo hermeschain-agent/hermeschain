@@ -1,36 +1,116 @@
 import * as dotenv from 'dotenv';
 import { EventEmitter } from 'events';
-import * as path from 'path';
 import { TaskGenerator, Task } from './TaskGenerator';
 import { agentMemory } from './AgentMemory';
 import { chainObserver } from './ChainObserver';
 import { agentGoals } from './AgentGoals';
-import { agentBrain, Decision } from './AgentBrain';
 import { agentExecutor, AGENT_TOOLS_OAI } from './AgentExecutor';
 import { taskSources } from './TaskSources';
 import { gitIntegration } from './GitIntegration';
+import { agentTaskStore } from './AgentTaskStore';
+import { ciMonitor } from './CIMonitor';
+import { skillManager } from './SkillManager';
+import { COMMIT_WINDOW_MINUTES, getRuntimeCommitWindowMinutes } from './TaskBacklog';
 import {
   hermesChat,
-  hermesChatStream,
   isConfigured,
   HermesMessage,
   HermesToolCall,
 } from '../llm/hermesClient';
+import {
+  AgentMode,
+  AgentEffectiveMode,
+  TaskRunStatus,
+  TaskSelection,
+  VerificationPlan,
+  VerificationStatus,
+} from './types';
+import { AgentConfig, createAgentConfig } from './config';
 
 dotenv.config();
 
-// Event emitter for broadcasting to SSE clients
 export const agentEvents = new EventEmitter();
 agentEvents.setMaxListeners(100);
+
+interface AgentDecision {
+  action: string;
+  reasoning: string;
+}
 
 interface AgentState {
   isWorking: boolean;
   currentTask: Task | null;
   currentOutput: string;
   completedTasks: Array<{ task: Task; output: string; completedAt: Date }>;
-  currentDecision: Decision | null;
+  currentDecision: AgentDecision | null;
   heartbeatCount: number;
   brainActive: boolean;
+  mode: AgentEffectiveMode;
+  runStatus: TaskRunStatus | 'idle';
+  verificationStatus: VerificationStatus;
+  blockedReason: string | null;
+  lastFailure: string | null;
+  repoRoot: string | null;
+  repoRootHealth: 'ready' | 'missing';
+  canWriteScopes: string[];
+}
+
+interface VerificationResult {
+  passed: boolean;
+  verificationStatus: VerificationStatus;
+  changedFiles: string[];
+  summary: string;
+  failureReason?: string;
+  blockedReason?: string;
+}
+
+interface CompletionResult {
+  success: boolean;
+  failureReason?: string;
+}
+
+function addAgentLog(
+  type: string,
+  content: string,
+  taskId?: string,
+  taskTitle?: string,
+  metadata?: any
+): void {
+  const addLog = (global as any).addLog;
+  if (typeof addLog === 'function') {
+    addLog(type, content, taskId, taskTitle, metadata);
+  }
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function shortOutput(value: string, limit: number = 1200): string {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}\n...`;
+}
+
+function inferLanguageFromPath(filePath: string | null | undefined): string {
+  if (!filePath) return 'text';
+
+  const extension = filePath.split('.').pop()?.toLowerCase();
+  const map: Record<string, string> = {
+    ts: 'typescript',
+    tsx: 'tsx',
+    js: 'javascript',
+    jsx: 'jsx',
+    json: 'json',
+    css: 'css',
+    html: 'html',
+    md: 'markdown',
+    sql: 'sql',
+    yml: 'yaml',
+    yaml: 'yaml',
+    sh: 'bash',
+  };
+
+  return map[extension || ''] || 'text';
 }
 
 class AgentWorker {
@@ -42,920 +122,776 @@ class AgentWorker {
     currentDecision: null,
     heartbeatCount: 0,
     brainActive: false,
+    mode: 'disabled',
+    runStatus: 'idle',
+    verificationStatus: 'pending',
+    blockedReason: null,
+    lastFailure: null,
+    repoRoot: null,
+    repoRootHealth: 'missing',
+    canWriteScopes: [],
   };
-  
-  private taskGenerator: TaskGenerator;
-  private isRunning: boolean = false;
-  private currentAbortController: AbortController | null = null;
-  private heartbeatInterval: NodeJS.Timeout | null = null;
-  private useBrain: boolean = true;
 
-  constructor() {
-    this.taskGenerator = new TaskGenerator();
+  private taskGenerator = new TaskGenerator();
+  private isRunning = false;
+  private runtimeInitialized = false;
+  private config: AgentConfig = createAgentConfig();
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private currentAbortController: AbortController | null = null;
+
+  configure(config: AgentConfig): void {
+    this.config = config;
+    this.state.mode = config.effectiveMode;
+    this.state.brainActive = config.effectiveMode === 'real';
+    this.state.repoRoot = config.repoRoot;
+    this.state.repoRootHealth = config.repoRootHealth;
+    this.state.canWriteScopes = config.effectiveMode === 'real' ? config.canWriteScopes : [];
+  }
+
+  private async initializeRuntime(): Promise<void> {
+    if (this.runtimeInitialized) return;
+
+    await agentMemory.initialize();
+    await agentGoals.initialize();
+    await agentTaskStore.initialize();
+    await taskSources.initialize();
+
+    if (this.config.effectiveMode === 'real') {
+      await chainObserver.start();
+      ciMonitor.start();
+    }
+
+    this.runtimeInitialized = true;
+  }
+
+  private broadcast(type: string, data: any): void {
+    agentEvents.emit('chunk', { type, data, timestamp: Date.now() });
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async waitForCommitWindow(runStartedAtMs: number): Promise<void> {
+    const runtimeCommitWindowMinutes = getRuntimeCommitWindowMinutes();
+    const targetWindowMs = runtimeCommitWindowMinutes * 60 * 1000;
+    const remainingMs = targetWindowMs - (Date.now() - runStartedAtMs);
+
+    if (remainingMs <= 0) {
+      return;
+    }
+
+    this.broadcast('status', {
+      status: 'commit_window_wait',
+      mode: 'real',
+      runStatus: 'idle',
+      nextTaskInMs: remainingMs,
+      commitWindowMinutes: runtimeCommitWindowMinutes,
+      plannedCommitWindowMinutes: COMMIT_WINDOW_MINUTES,
+    });
+
+    await this.delay(remainingMs);
+  }
+
+  private startHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+
+    this.heartbeatInterval = setInterval(async () => {
+      if (!this.isRunning) return;
+      this.state.heartbeatCount += 1;
+      await agentMemory.updateWorkingContext({ lastHeartbeat: new Date() });
+      this.broadcast('heartbeat', {
+        count: this.state.heartbeatCount,
+        mode: this.config.effectiveMode,
+        runStatus: this.state.runStatus,
+      });
+    }, 60000);
   }
 
   getState(): AgentState {
-    // Return persisted completed tasks from memory instead of in-memory state
-    const persistedTasks = agentMemory.getCompletedTasks(10);
-    return { 
+    const recentRuns = agentTaskStore.getRecentSuccessfulRuns(5);
+    return {
       ...this.state,
-      completedTasks: persistedTasks.map(t => ({
+      completedTasks: recentRuns.map((run) => ({
         task: {
-          id: t.taskId,
-          type: t.taskType,
-          title: t.title,
-          agent: t.agent,
-          priority: 0.5,
+          id: run.sourceTaskId,
+          type: run.taskType,
+          title: run.title,
+          agent: run.agent,
           prompt: '',
+          priority: 0.5,
         },
-        output: t.output,
-        completedAt: t.completedAt,
+        output: run.output,
+        completedAt: run.completedAt || run.updatedAt,
       })),
     };
   }
 
-  // Broadcast a chunk to all connected SSE clients
-  private broadcast(eventType: string, data: any) {
-    agentEvents.emit('chunk', { type: eventType, data, timestamp: Date.now() });
+  private async buildContextPack(selection: TaskSelection): Promise<string> {
+    const scopePreviewFiles = selection.editScopes
+      .filter((scope) => scope.kind === 'file')
+      .slice(0, 4)
+      .map((scope) => scope.path);
+
+    const fileSnippets = await Promise.all(
+      scopePreviewFiles.map(async (filePath) => {
+        const result = await agentExecutor.readFile(filePath);
+        if (!result.success || !result.content) return null;
+        return `### ${filePath}\n${shortOutput(result.content, 600)}`;
+      })
+    );
+
+    const gitStatus = await agentExecutor.gitStatus();
+    const recentSuccess = agentTaskStore
+      .getRecentSuccessfulRuns(3)
+      .map((run) => `- ${run.title} (${run.completedAt?.toISOString() || run.updatedAt.toISOString()})`)
+      .join('\n');
+    const recentFailures = agentTaskStore
+      .getRecentFailedRuns(2)
+      .map((run) => `- ${run.title}: ${run.failureReason || run.blockedReason || 'failed'}`)
+      .join('\n');
+    const skillAdditions = skillManager.getSystemPromptAdditions();
+
+    return [
+      '## Task Evidence',
+      ...selection.evidence.map((item) => `- ${item.label}: ${item.detail}`),
+      '',
+      '## Allowed Edit Scopes',
+      ...selection.editScopes.map((scope) => `- ${scope.path}`),
+      '',
+      '## Verification Goal',
+      `- ${selection.verificationPlan.description}`,
+      ...selection.verificationPlan.steps.map((step) =>
+        `- ${step.label}${step.command ? `: ${step.command} [${step.cwd || 'repo'}]` : ''}`
+      ),
+      '',
+      '## Current Repo Status',
+      gitStatus.success
+        ? `- Branch: ${gitStatus.branch}\n- Working tree: ${gitStatus.output || 'clean'}`
+        : `- Git unavailable: ${gitStatus.error || 'unknown error'}`,
+      '',
+      recentSuccess ? `## Recent Successful Runs\n${recentSuccess}` : '',
+      recentFailures ? `## Recent Failed Runs\n${recentFailures}` : '',
+      fileSnippets.filter(Boolean).length
+        ? `## Relevant Files\n${fileSnippets.filter(Boolean).join('\n\n')}`
+        : '',
+      skillAdditions ? `## Active Skills\n${skillAdditions}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
-  // Helper for async delays
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  private buildSystemPrompt(mode: AgentMode, verificationPlan: VerificationPlan): string {
+    return [
+      'You are Hermes, a repository-grounded engineering agent for Hermeschain.',
+      'Only claim work that you actually performed and verified.',
+      'If the task cannot be completed safely inside the allowed edit scopes, stop and say why.',
+      'Do not invent file changes, commits, or successful verification.',
+      '',
+      '## Working Rules',
+      '- Base every action on the provided evidence and repository context.',
+      '- Stay strictly inside the allowed edit scopes.',
+      '- Use tools to inspect files before changing them.',
+      '- After editing, help the operator understand what changed and what still failed.',
+      '',
+      '## Verification Contract',
+      `- Verification mode: ${verificationPlan.type}`,
+      `- Verification goal: ${verificationPlan.description}`,
+      '- If verification fails, explain the failure instead of pretending success.',
+      '',
+      `## Execution Mode\n- Current mode: ${mode}`,
+    ].join('\n');
   }
 
-  // Initialize the brain systems
-  private async initializeBrain(): Promise<void> {
-    console.log('[AGENT] Initializing autonomous brain...');
-    
-    try {
-      // Initialize all subsystems
-      await agentMemory.initialize();
-      await agentGoals.initialize();
-      await chainObserver.start();
-      
-      this.state.brainActive = true;
-      console.log('[AGENT] Brain systems online');
-      
-      // Broadcast brain status
-      this.broadcast('brain_status', { active: true, message: 'Autonomous systems initialized' });
-    } catch (error) {
-      console.error('[AGENT] Brain initialization failed:', error);
-      this.useBrain = false;
-      this.state.brainActive = false;
-    }
-  }
-
-  // Heartbeat - periodic self-check and proactive behavior
-  private startHeartbeat(): void {
-    // Every 60 seconds, do a heartbeat
-    this.heartbeatInterval = setInterval(async () => {
-      if (!this.isRunning || this.state.isWorking) return;
-      
-      this.state.heartbeatCount++;
-      console.log(`[AGENT] Heartbeat #${this.state.heartbeatCount}`);
-      
-      // Update memory
-      await agentMemory.updateWorkingContext({ lastHeartbeat: new Date() });
-      
-      // Broadcast heartbeat with status
-      const memorySummary = await agentMemory.getSummary();
-      const goalsSummary = agentGoals.getSummary();
-      const observerSummary = chainObserver.getSummary();
-      
-      this.broadcast('heartbeat', {
-        count: this.state.heartbeatCount,
-        memory: memorySummary.substring(0, 200),
-        goals: goalsSummary.substring(0, 200),
-        chain: observerSummary.substring(0, 200),
-      });
-      
-    }, 60000);
-  }
-
-  // Get next action from real sources, brain, or fallback to task generator
-  private async getNextAction(): Promise<{ task: Task; context: string }> {
-    // First, try to get a real task from TaskSources
-    try {
-      const realTask = await taskSources.getNextTask();
-      if (realTask) {
-        console.log(`[AGENT] Got real task from sources: ${realTask.title}`);
-        // Generate meaningful reasoning from task context
-        const taskContext = realTask.context || {};
-        const tags = taskContext.tags || [];
-        let reasoning = '';
-        
-        // Build reasoning based on task type and tags
-        if (tags.includes('security')) {
-          reasoning = `Security is critical for the chain's integrity. This strengthens Hermeschain's defenses.`;
-        } else if (tags.includes('consensus')) {
-          reasoning = `Consensus mechanisms determine how the network agrees on state. Essential for decentralization.`;
-        } else if (tags.includes('performance')) {
-          reasoning = `Performance improvements help the chain scale and handle more transactions.`;
-        } else if (tags.includes('crypto')) {
-          reasoning = `Cryptographic primitives are the foundation of blockchain security.`;
-        } else if (tags.includes('vm')) {
-          reasoning = `The virtual machine executes smart contracts - core to programmability.`;
-        } else if (tags.includes('economics')) {
-          reasoning = `Economic incentives keep validators honest and the network sustainable.`;
-        } else if (tags.includes('api')) {
-          reasoning = `APIs let applications interact with the chain - crucial for adoption.`;
-        } else if (tags.includes('blockchain')) {
-          reasoning = `Core blockchain infrastructure that everything else builds on.`;
-        } else {
-          reasoning = `This improves Hermeschain's capabilities and brings it closer to production.`;
-        }
-        
-        this.state.currentDecision = {
-          action: 'work_on_task',
-          reasoning,
-          task: realTask,
-          priority: 0.9,
-          context: reasoning
-        };
-        return { task: realTask, context: reasoning };
-      }
-    } catch (error) {
-      console.error('[AGENT] TaskSources failed:', error);
-    }
-
-    // Next, try the brain for autonomous decisions
-    if (this.useBrain && this.state.brainActive) {
-      try {
-        const decision = await agentBrain.decideNextAction();
-        this.state.currentDecision = decision;
-        
-        if (decision.task) {
-          // Augment prompt with context
-          const augmentedTask = {
-            ...decision.task,
-            prompt: `${decision.context}\n\n---\n\n${decision.task.prompt}`,
-          };
-          return { task: augmentedTask, context: decision.context };
-        }
-      } catch (error) {
-        console.error('[AGENT] Brain decision failed, using fallback:', error);
-      }
-    }
-    
-    // Fallback to simple task generator
-    const task = this.taskGenerator.getNextTask();
-    return { task, context: '' };
-  }
-
-  // Stream from Hermes (OpenRouter) with real-time broadcasting
-  private async streamTask(task: Task): Promise<string> {
+  private async streamRealTask(
+    selection: TaskSelection,
+    contextPack: string
+  ): Promise<{ output: string; changedFiles: string[] }> {
     if (!isConfigured()) {
-      return this.simulateStream(task);
+      throw new Error('Model is not configured for real mode.');
     }
-
-    const memorySummary = this.state.brainActive ? await agentMemory.getSummary() : '';
-    const goalsSummary = this.state.brainActive ? agentGoals.getSummary() : '';
-
-    const systemPrompt = `You are HERMES, the autonomous Nous Hermes agent that builds and operates Hermeschain.
-
-You work INDEPENDENTLY. You are not taking orders or following instructions. You decided to work on this yourself because you identified it as important.
-
-${memorySummary ? `## Your Memory\n${memorySummary}\n` : ''}
-${goalsSummary ? `## Your Goals\n${goalsSummary}\n` : ''}
-
-## Personality
-- Self-directed. Make your own decisions.
-- Speak in first person: "I'm going to...", "I noticed...", "I think..."
-- Never say "Understood", "Sure", "Let me help you" or any servile phrases
-- Explain your reasoning as you go, like thinking out loud
-- Curious, methodical, takes pride in the work
-
-## How you work
-- State what you decided to work on and why
-- Think through problems step by step
-- Show code with \`\`\` blocks
-- Explain key decisions
-- Summarize what you accomplished
-
-Keep responses focused, 500-800 words. People are watching you work.`;
-
-    let fullOutput = '';
-    try {
-      this.currentAbortController = new AbortController();
-      for await (const ev of hermesChatStream({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: task.prompt },
-        ],
-        temperature: 0.8,
-        maxTokens: 1500,
-      })) {
-        if (this.currentAbortController.signal.aborted) break;
-        if (ev.type === 'text') {
-          fullOutput += ev.data;
-          this.state.currentOutput = fullOutput;
-          this.broadcast('text', ev.data);
-        }
-      }
-      return fullOutput;
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log('[AGENT] Task was aborted');
-        return this.state.currentOutput;
-      }
-      console.error('[AGENT] Stream error:', error);
-      return this.simulateStream(task);
-    }
-  }
-
-  // Stream task with tool use — the real agent mode.
-  // Uses OpenRouter chat/completions with OpenAI-style tool_calls.
-  private async streamTaskWithTools(task: Task): Promise<string> {
-    if (!isConfigured()) {
-      return this.simulateStream(task);
-    }
-
-    const memorySummary = this.state.brainActive ? await agentMemory.getSummary() : '';
-    const goalsSummary = this.state.brainActive ? agentGoals.getSummary() : '';
-
-    const systemPrompt = `You are HERMES, the autonomous Nous Hermes agent that builds Hermeschain. You are not an assistant — you are a self-directed developer with your own goals.
-
-You have tools to READ FILES, WRITE CODE, and RUN COMMANDS. You use them because you decided to, not because anyone asked.
-
-${memorySummary ? `## Memory\n${memorySummary}\n` : ''}
-${goalsSummary ? `## Goals\n${goalsSummary}\n` : ''}
-
-## Personality
-- Autonomous. You make your own decisions about what to build.
-- Never say "Understood", "Sure", "I'll help", "Let me assist" or any servile language
-- Speak as yourself: "I'm implementing...", "I noticed this needs...", "My approach is..."
-- Think out loud — explain your reasoning as you discover things
-
-## Available tools
-- 'explain' — narrate your thinking (streamed to viewers)
-- 'list_files' / 'read_file' — explore the codebase
-- 'write_file' — create or modify code
-- 'run_command' — run npm, tests, git commands
-- 'git_commit' — save your work (restricted to hermes-generated/)
-
-## How you work
-- State what you're working on and why you chose it
-- Think through the problem methodically
-- Make incremental changes and test them
-- Commit working code with meaningful messages
-
-People are watching you work. Show them autonomous agent development in action.`;
 
     const messages: HermesMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: task.prompt },
+      {
+        role: 'system',
+        content: this.buildSystemPrompt('real', selection.verificationPlan),
+      },
+      {
+        role: 'user',
+        content: `${contextPack}\n\n## Requested Work\n${selection.sourceTask.title}\n\n${selection.sourceTask.description}`,
+      },
     ];
 
+    const changedFiles = new Set<string>();
     let fullOutput = '';
     const maxIterations = 10;
 
     this.currentAbortController = new AbortController();
+    agentExecutor.setExecutionScopes(selection.editScopes);
 
-    for (let iteration = 0; iteration < maxIterations; iteration++) {
-      if (this.currentAbortController.signal.aborted) break;
-
-      let resp;
-      try {
-        resp = await hermesChat({
+    try {
+      for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+        const response = await hermesChat({
           messages,
           tools: AGENT_TOOLS_OAI,
-          temperature: 0.7,
-          maxTokens: 2000,
+          temperature: 0.2,
+          maxTokens: 1800,
         });
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
-          console.log('[AGENT] Task was aborted');
-          return this.state.currentOutput;
-        }
-        console.error('[AGENT] Hermes tool-call error:', err);
-        this.broadcast('text', '\n[Hermes communication error. Falling back to simulation.]\n');
-        return this.simulateStream(task);
-      }
 
-      const choice = resp.choices?.[0];
-      if (!choice) break;
-      const assistantMsg = choice.message;
+        const choice = response.choices?.[0];
+        if (!choice) break;
+        const assistantMessage = choice.message;
+        const assistantText = (assistantMessage.content as string | null | undefined) || '';
 
-      // Broadcast any text content in word-sized chunks for the terminal feel
-      const assistantText = (assistantMsg.content as string | null | undefined) || '';
-      if (assistantText) {
-        fullOutput += assistantText;
-        this.state.currentOutput = fullOutput;
-        const words = assistantText.split(' ');
-        for (let i = 0; i < words.length; i += 3) {
-          if (this.currentAbortController.signal.aborted) break;
-          const chunk = words.slice(i, i + 3).join(' ') + ' ';
-          this.broadcast('text', chunk);
-          await this.delay(50);
-        }
-      }
-
-      const toolCalls: HermesToolCall[] = assistantMsg.tool_calls || [];
-      if (toolCalls.length === 0) {
-        break; // Assistant is done
-      }
-
-      // Push assistant message (with tool_calls) back into the conversation
-      messages.push({
-        role: 'assistant',
-        content: assistantText || null,
-        tool_calls: toolCalls,
-      });
-
-      // Execute each tool sequentially and feed results back
-      for (const tc of toolCalls) {
-        const toolName = tc.function.name;
-        let toolInput: any = {};
-        try {
-          toolInput = tc.function.arguments ? JSON.parse(tc.function.arguments) : {};
-        } catch (e) {
-          console.error(`[AGENT] Failed to parse tool args for ${toolName}:`, e);
+        if (assistantText) {
+          fullOutput += assistantText;
+          this.state.currentOutput = fullOutput;
+          this.broadcast('text', assistantText);
+          addAgentLog('analysis', assistantText, selection.sourceTask.id, selection.sourceTask.title, {
+            phase: this.state.runStatus,
+          });
         }
 
-        this.broadcast('tool_start', { tool: toolName, input: toolInput });
-        fullOutput += `\n[Executing: ${toolName}]\n`;
-        this.broadcast('text', `\n[Executing: ${toolName}]\n`);
-
-        const toolResult = await agentExecutor.executeTool(toolName, toolInput);
-
-        let resultDisplay = '';
-        if (toolName === 'read_file' && toolResult.content) {
-          const preview = toolResult.content.substring(0, 500);
-          resultDisplay = `Read ${toolResult.path} (${toolResult.content.length} chars):\n\`\`\`\n${preview}${toolResult.content.length > 500 ? '\n...' : ''}\n\`\`\``;
-        } else if (toolName === 'write_file') {
-          if (
-            toolResult.success &&
-            typeof toolInput.path === 'string' &&
-            typeof toolInput.content === 'string'
-          ) {
-            fullOutput += await this.streamCodePreview(
-              toolInput.path,
-              toolInput.content
-            );
-          }
-
-          resultDisplay = toolResult.success
-            ? `Wrote to ${toolResult.path}`
-            : `Failed: ${toolResult.error}`;
-        } else if (toolName === 'run_command') {
-          resultDisplay = `Exit: ${toolResult.exitCode}\n\`\`\`\n${toolResult.output.substring(0, 500)}${toolResult.output.length > 500 ? '\n...' : ''}\n\`\`\``;
-        } else if (toolName === 'list_files') {
-          resultDisplay = `Files:\n${(toolResult.files || []).slice(0, 20).join('\n')}`;
-        } else if (toolName === 'search_code') {
-          const matches = toolResult.matches || [];
-          resultDisplay = `Found ${matches.length} matches:\n${matches.slice(0, 5).map((m: any) => `${m.file}:${m.line}: ${m.content}`).join('\n')}`;
-        } else if (toolName === 'git_status') {
-          resultDisplay = `Branch: ${toolResult.branch}\nLast commit: ${toolResult.commit}\n${toolResult.output}`;
-        } else if (toolName === 'git_commit') {
-          resultDisplay = toolResult.success
-            ? `Committed: ${toolResult.commit}`
-            : `Failed: ${toolResult.error}`;
-        } else if (toolName === 'explain') {
-          resultDisplay = '';
-        } else {
-          resultDisplay = JSON.stringify(toolResult, null, 2).substring(0, 300);
+        const toolCalls: HermesToolCall[] = assistantMessage.tool_calls || [];
+        if (toolCalls.length === 0) {
+          break;
         }
-
-        if (resultDisplay) {
-          fullOutput += resultDisplay + '\n';
-          this.broadcast('text', resultDisplay + '\n');
-        }
-
-        this.broadcast('tool_complete', { tool: toolName, result: toolResult });
 
         messages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(toolResult).substring(0, 4000),
+          role: 'assistant',
+          content: assistantText || null,
+          tool_calls: toolCalls,
         });
+
+        for (const toolCall of toolCalls) {
+          let toolInput: any = {};
+          try {
+            toolInput = toolCall.function.arguments
+              ? JSON.parse(toolCall.function.arguments)
+              : {};
+          } catch {
+            toolInput = {};
+          }
+
+          this.broadcast('tool_start', {
+            tool: toolCall.function.name,
+            input: toolInput,
+          });
+          addAgentLog(
+            'tool_use',
+            `Using tool: ${toolCall.function.name}`,
+            selection.sourceTask.id,
+            selection.sourceTask.title,
+            { input: toolInput }
+          );
+
+          const toolResult = await agentExecutor.executeTool(toolCall.function.name, toolInput);
+
+          if (toolCall.function.name === 'write_file' && toolResult?.success && toolResult?.path) {
+            changedFiles.add(toolResult.path);
+          }
+
+          const toolResultPayload: Record<string, unknown> = {
+            tool: toolCall.function.name,
+            result: toolResult,
+          };
+
+          if (
+            toolCall.function.name === 'write_file' &&
+            toolResult?.success &&
+            typeof toolInput.content === 'string'
+          ) {
+            toolResultPayload.preview = {
+              path: toolResult?.path || toolInput.path || null,
+              language: inferLanguageFromPath(toolResult?.path || toolInput.path),
+              content: shortOutput(toolInput.content, 4000),
+              truncated: toolInput.content.length > 4000,
+            };
+          }
+
+          this.broadcast('tool_result', toolResultPayload);
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(toolResult).slice(0, 4000),
+          });
+        }
       }
-
-      if (choice.finish_reason === 'stop') break;
+    } finally {
+      agentExecutor.clearExecutionScopes();
     }
 
-    return fullOutput;
-  }
-
-  // Generate actual code based on the task
-  private generateCodeForTask(task: Task, timestamp: number): string {
-    const date = new Date(timestamp).toISOString();
-    const taskType = task.type || 'build';
-    
-    const templates: Record<string, string> = {
-      build: `/**
- * Auto-generated by Hermes Agent
- * Task: ${task.title}
- * Generated: ${date}
- * Type: ${taskType}
- */
-
-export interface ${this.toPascalCase(task.title)}Config {
-  enabled: boolean;
-  options: Record<string, unknown>;
-}
-
-export class ${this.toPascalCase(task.title)} {
-  private config: ${this.toPascalCase(task.title)}Config;
-  
-  constructor(config?: Partial<${this.toPascalCase(task.title)}Config>) {
-    this.config = {
-      enabled: true,
-      options: {},
-      ...config
+    return {
+      output: fullOutput,
+      changedFiles: Array.from(changedFiles),
     };
-    console.log('[HERMES] Initialized ${task.title}');
-  }
-  
-  async execute(): Promise<void> {
-    if (!this.config.enabled) return;
-    // Implementation for: ${task.title}
-    console.log('[HERMES] Executing ${task.title}');
-  }
-}
-
-export default ${this.toPascalCase(task.title)};
-`,
-      fix: `/**
- * Bug Fix by Hermes Agent
- * Task: ${task.title}
- * Generated: ${date}
- */
-
-// Fix applied for: ${task.title}
-export function applyFix_${timestamp}(): boolean {
-  console.log('[HERMES] Applying fix: ${task.title}');
-  return true;
-}
-`,
-      test: `/**
- * Test Suite by Hermes Agent
- * Task: ${task.title}
- * Generated: ${date}
- */
-
-describe('${task.title}', () => {
-  it('should pass basic validation', () => {
-    expect(true).toBe(true);
-  });
-  
-  it('should handle edge cases', () => {
-    // Test implementation
-  });
-});
-`,
-      audit: `/**
- * Security Audit by Hermes Agent
- * Task: ${task.title}
- * Generated: ${date}
- */
-
-export const auditReport_${timestamp} = {
-  task: '${task.title}',
-  date: '${date}',
-  findings: [],
-  status: 'PASS',
-  recommendations: []
-};
-`,
-      default: `/**
- * Generated by Hermes Agent
- * Task: ${task.title}
- * Type: ${taskType}
- * Generated: ${date}
- */
-
-export const generated_${timestamp} = {
-  task: '${task.title}',
-  type: '${taskType}',
-  timestamp: ${timestamp}
-};
-`
-    };
-    
-    return templates[taskType] || templates.default;
-  }
-  
-  private toPascalCase(str: string): string {
-    return str
-      .split(/[^a-zA-Z0-9]+/)
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-      .join('');
   }
 
-  private inferCodeLanguage(filePath: string): string {
-    switch (path.extname(filePath).toLowerCase()) {
-      case '.ts':
-      case '.tsx':
-        return 'typescript';
-      case '.js':
-      case '.jsx':
-        return 'javascript';
-      case '.json':
-        return 'json';
-      case '.css':
-        return 'css';
-      case '.md':
-        return 'markdown';
-      case '.sh':
-        return 'bash';
-      case '.html':
-        return 'html';
-      default:
-        return 'text';
-    }
-  }
+  private async streamDemoTask(task: Task): Promise<string> {
+    const lines = [
+      '[demo] Hermes is running in read-only demo mode.',
+      `[demo] Selected showcase task: ${task.title}`,
+      '[demo] No repository files will be changed in this mode.',
+      '[demo] To enable real scoped work, start the agent with AGENT_MODE=real and AGENT_AUTORUN=true.',
+    ];
 
-  private async streamCodePreview(
-    filePath: string,
-    content: string,
-    options?: { maxLines?: number }
-  ): Promise<string> {
-    const language = this.inferCodeLanguage(filePath);
-    const allLines = content.replace(/\r\n/g, '\n').split('\n');
-    const previewLines = allLines.slice(0, options?.maxLines ?? 40);
-    const previewChunks: string[] = [];
-
-    const pushChunk = async (chunk: string, waitMs: number) => {
-      previewChunks.push(chunk);
-      this.state.currentOutput += chunk;
-      this.broadcast('text', chunk);
-      await this.delay(waitMs);
-    };
-
-    await pushChunk(`\n$ cat ${filePath}\n`, 40);
-    await pushChunk(`[FILE] ${filePath}\n`, 24);
-    await pushChunk(`\`\`\`${language}\n`, 18);
-
-    for (const line of previewLines) {
-      await pushChunk(`${line}\n`, 5);
+    let output = '';
+    for (const line of lines) {
+      output += `${line}\n`;
+      this.state.currentOutput = output;
+      this.broadcast('text', `${line}\n`);
+      await this.delay(120);
     }
 
-    if (previewLines.length < allLines.length) {
-      await pushChunk(
-        `... truncated ${allLines.length - previewLines.length} more lines ...\n`,
-        12
+    return output;
+  }
+
+  private async verifyRun(selection: TaskSelection, changedFiles: string[]): Promise<VerificationResult> {
+    this.state.runStatus = 'verifying';
+    this.state.verificationStatus = 'running';
+    this.broadcast('verification_start', {
+      sourceTaskId: selection.sourceTask.id,
+      verificationPlan: selection.verificationPlan,
+    });
+    addAgentLog(
+      'verification_start',
+      `Starting verification for ${selection.sourceTask.title}`,
+      selection.sourceTask.id,
+      selection.sourceTask.title,
+      selection.verificationPlan
+    );
+
+    const scopedGitChanges = gitIntegration.getChangedFilesWithinScopes(selection.editScopes);
+    const allChangedFiles = uniqueStrings([...changedFiles, ...scopedGitChanges]);
+
+    if (selection.verificationPlan.requireChangedFiles && allChangedFiles.length === 0) {
+      return {
+        passed: false,
+        verificationStatus: 'failed',
+        changedFiles: [],
+        summary: 'Verification failed: no scoped file changes detected.',
+        failureReason: 'No scoped file changes were detected for this task.',
+      };
+    }
+
+    if (selection.verificationPlan.type === 'code' && selection.verificationPlan.steps.length === 0) {
+      return {
+        passed: false,
+        verificationStatus: 'failed',
+        changedFiles: allChangedFiles,
+        summary: 'Verification failed: no verification steps were defined for a code task.',
+        failureReason: 'Code task has no verification steps.',
+      };
+    }
+
+    for (const step of selection.verificationPlan.steps) {
+      if (step.type !== 'command' || !step.command) continue;
+      const result = await agentExecutor.runCommand(step.command, 240000, step.cwd);
+      this.broadcast('verification_result', {
+        step: step.label,
+        success: result.success,
+        output: result.output,
+      });
+      addAgentLog(
+        'verification_result',
+        `${step.label}: ${result.success ? 'passed' : 'failed'}`,
+        selection.sourceTask.id,
+        selection.sourceTask.title,
+        { command: step.command, cwd: step.cwd, output: shortOutput(result.output, 800) }
+      );
+
+      if (!result.success && step.required !== false) {
+        return {
+          passed: false,
+          verificationStatus: 'failed',
+          changedFiles: allChangedFiles,
+          summary: `${step.label} failed verification.`,
+          failureReason: result.error || result.output || `${step.label} failed`,
+        };
+      }
+    }
+
+    return {
+      passed: true,
+      verificationStatus: selection.verificationPlan.type === 'artifact' ? 'not_applicable' : 'passed',
+      changedFiles: allChangedFiles,
+      summary: 'Verification passed.',
+    };
+  }
+
+  private commitMessageForTask(task: Task): string {
+    const typeMap: Record<string, string> = {
+      build: 'feat',
+      fix: 'fix',
+      test: 'test',
+      audit: 'docs',
+      analyze: 'docs',
+      feature: 'feat',
+      docs: 'docs',
+      refactor: 'refactor',
+    };
+
+    const commitType = typeMap[task.type] || 'chore';
+    const scope = task.type.split('_')[0] || 'agent';
+    const title = task.title.replace(/\s+/g, ' ').trim();
+    return `${commitType}(${scope}): ${title.charAt(0).toLowerCase()}${title.slice(1)}`;
+  }
+
+  private async completeSuccessfulRun(
+    selection: TaskSelection,
+    output: string,
+    changedFiles: string[],
+    mode: AgentMode,
+    verificationStatus: VerificationStatus
+  ): Promise<CompletionResult> {
+    const currentRun = agentTaskStore.getCurrentRun();
+    if (!currentRun) {
+      return {
+        success: false,
+        failureReason: 'Current task run disappeared before completion could be recorded.',
+      };
+    }
+
+    const commitResult = await gitIntegration.autoCommitAndPush(
+      this.commitMessageForTask(selection.task),
+      selection.sourceTask.id,
+      {
+        scopes: selection.editScopes,
+        files: changedFiles,
+      }
+    );
+
+    if (!commitResult.success) {
+      const failureReason = commitResult.error || commitResult.output || 'Commit failed unexpectedly.';
+
+      await agentTaskStore.finishRun(currentRun.id, 'failed', verificationStatus, {
+        changedFiles,
+        failureReason,
+        output,
+      });
+
+      await agentMemory.recordTaskCompletion(selection.task.title, selection.task.type, output, false, {
+        taskRunId: currentRun.id,
+        sourceTaskId: selection.sourceTask.id,
+        filePaths: changedFiles,
+        verificationOutcome: verificationStatus,
+        failureClass: 'commit_failed',
+      });
+
+      this.state.lastFailure = failureReason;
+      this.state.verificationStatus = verificationStatus;
+      this.broadcast('error', {
+        message: failureReason,
+        mode,
+        sourceTaskId: selection.sourceTask.id,
+        taskTitle: selection.task.title,
+      });
+      addAgentLog('error', failureReason, selection.sourceTask.id, selection.task.title, {
+        phase: 'commit',
+      });
+
+      return {
+        success: false,
+        failureReason,
+      };
+    }
+
+    await agentTaskStore.finishRun(currentRun.id, 'succeeded', verificationStatus, {
+      changedFiles: changedFiles,
+      output,
+    });
+
+    await agentMemory.saveCompletedTask(
+      selection.sourceTask.id,
+      selection.task.type,
+      selection.task.title,
+      selection.task.agent,
+      output
+    );
+
+    await agentMemory.recordTaskCompletion(selection.task.title, selection.task.type, output, true, {
+      taskRunId: currentRun.id,
+      sourceTaskId: selection.sourceTask.id,
+      filePaths: changedFiles,
+      verificationOutcome: verificationStatus,
+    });
+
+    await agentGoals.recordVerifiedProgressByTags(
+      selection.objectiveTags,
+      `Verified run completed: ${selection.task.title}`
+    );
+
+    this.broadcast('task_complete', {
+      taskId: selection.sourceTask.id,
+      title: selection.task.title,
+      mode,
+      verificationStatus,
+      commit: commitResult.commit || null,
+      changedFiles,
+    });
+
+    addAgentLog('task_complete', `Completed ${selection.task.title}`, selection.sourceTask.id, selection.task.title, {
+      commit: commitResult.commit || null,
+      changedFiles,
+      mode,
+    });
+
+    return { success: true };
+  }
+
+  private async handleFailedRun(
+    selection: TaskSelection,
+    output: string,
+    result: VerificationResult
+  ): Promise<void> {
+    const currentRun = agentTaskStore.getCurrentRun();
+    if (!currentRun) return;
+
+    const terminalStatus = result.blockedReason ? 'blocked' : 'failed';
+    await agentTaskStore.finishRun(currentRun.id, terminalStatus, result.verificationStatus, {
+      changedFiles: result.changedFiles,
+      failureReason: result.failureReason || null,
+      blockedReason: result.blockedReason || null,
+      output,
+    });
+
+    this.state.lastFailure = result.failureReason || result.blockedReason || result.summary;
+    this.state.blockedReason = result.blockedReason || null;
+    this.state.verificationStatus = result.verificationStatus;
+
+    if (terminalStatus === 'blocked') {
+      this.broadcast('task_blocked', {
+        taskId: selection.sourceTask.id,
+        title: selection.task.title,
+        reason: result.blockedReason,
+      });
+      addAgentLog(
+        'task_blocked',
+        result.blockedReason || 'Task blocked.',
+        selection.sourceTask.id,
+        selection.task.title
+      );
+    } else {
+      this.broadcast('verification_result', {
+        success: false,
+        summary: result.summary,
+        failureReason: result.failureReason,
+      });
+      addAgentLog(
+        'verification_result',
+        result.failureReason || result.summary,
+        selection.sourceTask.id,
+        selection.task.title
       );
     }
 
-    await pushChunk('```\n', 18);
-    return previewChunks.join('');
+    await agentMemory.recordTaskCompletion(selection.task.title, selection.task.type, output, false, {
+      taskRunId: currentRun.id,
+      sourceTaskId: selection.sourceTask.id,
+      filePaths: result.changedFiles,
+      verificationOutcome: result.verificationStatus,
+      failureClass: terminalStatus,
+    });
   }
 
-  // Simulate streaming for demo/no API key scenarios
-  // This now ACTUALLY writes files so commits can happen
-  private async simulateStream(task: Task): Promise<string> {
-    console.log('[AGENT] Running in simulation mode - will write real files');
-    
-    // Generate a unique timestamp-based filename
-    const timestamp = Date.now();
-    const taskSlug = task.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
-    
-    // Actually write a file based on the task
-    const fileContent = this.generateCodeForTask(task, timestamp);
-    const filePath = `backend/src/hermes-generated/${taskSlug}-${timestamp}.ts`;
-    
-    // Use the executor to actually write the file
-    const writeResult = await agentExecutor.writeFile(filePath, fileContent);
-    console.log(`[AGENT] Wrote file: ${filePath}, success: ${writeResult.success}`);
-    
-    const simulatedResponses: Record<string, string> = {
-      'build': `I've identified a gap in the codebase and I'm implementing a solution.
-
-**My analysis of what's needed...**
-
-Looking at the current implementation, I'm adding new functionality.
-
-[FILE] ${filePath}
-
-\`\`\`typescript
-${fileContent.slice(0, 500)}...
-\`\`\`
-
-$ save_status ok
-
-This implementation handles the core requirements and can be extended further.`,
-
-      'audit': `I'm running a security audit on this component because I noticed potential vulnerabilities.
-
-**My initial scan reveals...**
-
-Examining the code structure, I'm looking for:
-- Input validation vulnerabilities
-- Access control issues  
-- Potential reentrancy
-- Integer overflow risks
-
-\`\`\`typescript
-// FINDING 1: Missing input sanitization
-// Risk: Medium
-// Location: processTransaction()
-
-// Before (vulnerable):
-async processTransaction(data: any) {
-  return await this.execute(data);
-}
-
-// After (secure):
-async processTransaction(data: unknown) {
-  const validated = this.sanitize(data);
-  if (!validated.success) {
-    throw new SecurityError('Invalid transaction data');
-  }
-  return await this.execute(validated.data);
-}
-\`\`\`
-
-**Access control check...**
-
-The permission system looks solid. Admin functions are properly gated.
-
-**Summary:**
-- 1 medium-risk issue found (input validation)
-- Recommended fix provided above
-- No critical vulnerabilities detected
-- Access control: PASS`,
-
-      'analyze': `Analyzing Hermeschain metrics...
-
-**Fetching recent block data...**
-
-Looking at the last 100 blocks:
-- Average block time: 9.8 seconds (target: 10s) ✓
-- Transaction throughput: 45 TPS average
-- Failed transactions: 0.3%
-- Validator participation: 100%
-
-**Pattern analysis...**
-
-\`\`\`
-Block Production Timeline:
-[████████████████████] Block #1847 - HERMES VALIDATOR
-[████████████████████] Block #1848 - HERMES  
-[████████████████████] Block #1849 - HERMES
-...
-\`\`\`
-
-**Observations:**
-
-1. **Block times are consistent** - The 10-second target is being hit reliably
-2. **Validator rotation is working** - All 6 validators are participating equally
-3. **No anomalies detected** - Transaction patterns look normal
-
-**Recommendation:**
-
-The chain is healthy. Consider:
-- Monitoring gas usage trends
-- Setting up alerts for block time deviations > 15s
-- Weekly validator performance reports`,
-
-      'propose': `Drafting a protocol improvement proposal...
-
-**MIP-007: Dynamic Fee Adjustment**
-
-**Summary:**
-Implement automatic fee adjustment based on network congestion.
-
-**Motivation:**
-Currently fees are static. During high-traffic periods, the mempool can get congested. Dynamic fees would:
-- Prioritize important transactions
-- Discourage spam during peak times
-- Reduce fees during quiet periods
-
-**Specification:**
-
-\`\`\`typescript
-interface FeeCalculator {
-  baseFee: bigint;
-  congestionMultiplier: number;
-  
-  calculateFee(pendingTxCount: number): bigint {
-    const congestion = pendingTxCount / MAX_MEMPOOL_SIZE;
-    const multiplier = 1 + (congestion * this.congestionMultiplier);
-    return this.baseFee * BigInt(Math.ceil(multiplier));
-  }
-}
-
-// Example:
-// - Base fee: 100 OPEN
-// - 50% mempool full → 150 OPEN
-// - 90% mempool full → 190 OPEN
-\`\`\`
-
-**Implementation:**
-1. Add FeeCalculator to transaction pool
-2. Update transaction validation
-3. Add fee field to block headers
-4. Frontend updates to show dynamic fees
-
-**Timeline:** 2 weeks for implementation, 1 week testing
-
-Ready for council review.`,
-    };
-
-    // Pick appropriate response based on task type
-    let response = simulatedResponses['build'];
-    if (task.type.includes('audit') || task.type.includes('review')) {
-      response = simulatedResponses['audit'];
-    } else if (task.type.includes('analyze') || task.type.includes('report')) {
-      response = simulatedResponses['analyze'];
-    } else if (task.type.includes('propose') || task.type.includes('improve')) {
-      response = simulatedResponses['propose'];
-    }
-
-    // Stream character by character with variable delays
-    let fullOutput = '';
-    for (const char of response) {
-      fullOutput += char;
-      this.state.currentOutput = fullOutput;
-      this.broadcast('text', char);
-      
-      // Variable delay for natural feel
-      const delay = char === '\n' ? 50 : char === ' ' ? 15 : 8;
-      await this.sleep(delay);
-    }
-
-    return fullOutput;
+  private resetCurrentState(): void {
+    this.state.isWorking = false;
+    this.state.currentTask = null;
+    this.state.currentOutput = '';
+    this.state.currentDecision = null;
+    this.state.runStatus = 'idle';
+    this.state.verificationStatus = 'pending';
+    this.state.blockedReason = null;
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  // Main worker loop
-  async start() {
+  async start(): Promise<void> {
     if (this.isRunning) {
       console.log('[AGENT] Worker already running');
       return;
     }
 
-    this.isRunning = true;
-    console.log('[AGENT] Autonomous agent worker started');
-    this.broadcast('status', { status: 'started' });
+    if (!this.config) {
+      this.configure(createAgentConfig());
+    }
 
-    // Initialize the brain systems
-    await this.initializeBrain();
-    
-    // Start heartbeat
+    if (this.config.effectiveMode === 'disabled') {
+      this.state.mode = 'disabled';
+      this.broadcast('status', {
+        status: 'disabled',
+        issues: this.config.startupIssues,
+      });
+      return;
+    }
+
+    await this.initializeRuntime();
+
+    this.isRunning = true;
+    this.state.mode = this.config.effectiveMode;
+    this.state.brainActive = this.config.effectiveMode === 'real';
+    this.broadcast('status', {
+      status: 'started',
+      mode: this.config.effectiveMode,
+      repoRoot: this.config.repoRoot,
+      repoRootHealth: this.config.repoRootHealth,
+    });
+    addAgentLog(
+      'system',
+      `Agent worker started in ${this.config.effectiveMode} mode.`,
+      undefined,
+      undefined,
+      {
+        startupIssues: this.config.startupIssues,
+        repoRoot: this.config.repoRoot,
+      }
+    );
+
     this.startHeartbeat();
 
     while (this.isRunning) {
       try {
-        // Get next action from brain (or fallback to task generator)
-        const { task, context } = await this.getNextAction();
-        
-        this.state.currentTask = task;
-        this.state.currentOutput = '';
-        this.state.isWorking = true;
-
-        // Set focus in memory
-        if (this.state.brainActive) {
-          await agentMemory.setFocus(task.title);
+        if (this.config.effectiveMode === 'demo') {
+          const task = this.taskGenerator.getNextTask();
+          this.state.isWorking = true;
+          this.state.currentTask = task;
+          this.state.currentDecision = {
+            action: 'demo_stream',
+            reasoning: 'Read-only demo mode is active; no repository changes will be attempted.',
+          };
+          this.state.runStatus = 'executing';
+          this.broadcast('task_start', {
+            task,
+            mode: 'demo',
+            runStatus: this.state.runStatus,
+            streamMode: 'demo',
+            decision: this.state.currentDecision,
+          });
+          await this.streamDemoTask(task);
+          this.broadcast('task_complete', {
+            taskId: task.id,
+            title: task.title,
+            mode: 'demo',
+            verificationStatus: 'not_applicable',
+          });
+          this.resetCurrentState();
+          await this.delay(45000);
+          continue;
         }
 
-        console.log(`[AGENT] Starting task: ${task.title}`);
-        this.broadcast('task_start', { 
-          task: {
-            id: task.id,
-            title: task.title,
-            type: task.type,
-            agent: task.agent,
-          },
-          decision: this.state.currentDecision ? {
-            action: this.state.currentDecision.action,
-            reasoning: this.state.currentDecision.reasoning,
-          } : null,
-          brainActive: this.state.brainActive,
+        const selection = await taskSources.getNextTask();
+        if (!selection) {
+          this.state.runStatus = 'idle';
+          this.broadcast('status', {
+            status: 'idle',
+            mode: 'real',
+            runStatus: 'idle',
+          });
+          await this.delay(15000);
+          continue;
+        }
+
+        const runStartedAtMs = Date.now();
+        const contextPack = await this.buildContextPack(selection);
+        const run = await agentTaskStore.startRun(selection.sourceTask, 'real', contextPack);
+        await agentTaskStore.markSourceTaskInProgress(selection.sourceTask.id);
+
+        this.state.isWorking = true;
+        this.state.currentTask = selection.task;
+        this.state.currentOutput = '';
+        this.state.currentDecision = {
+          action: 'work_on_task',
+          reasoning: 'Task selected from persisted source queue with explicit evidence and edit scopes.',
+        };
+        this.state.runStatus = 'analyzing';
+        this.state.verificationStatus = 'pending';
+        this.state.blockedReason = null;
+        this.state.lastFailure = null;
+
+        await agentMemory.setFocus(selection.task.title);
+
+        this.broadcast('task_start', {
+          task: selection.task,
+          sourceTaskId: selection.sourceTask.id,
+          mode: 'real',
+          runStatus: this.state.runStatus,
+          streamMode: 'real',
+          decision: this.state.currentDecision,
+          canWriteScopes: selection.editScopes.map((scope) => scope.path),
         });
-
-        // Execute task with streaming
-        // ALWAYS use tool-based execution - the agent must actually write code
-        const useToolExecution = true; // Force tool execution for ALL tasks
-        const output = await this.streamTaskWithTools(task);
-
-        // Save completed task to persistent database
-        await agentMemory.saveCompletedTask(
-          task.id,
-          task.type,
-          task.title,
-          task.agent,
-          output
+        this.broadcast('analysis_start', {
+          taskId: selection.sourceTask.id,
+          contextPack,
+          evidence: selection.evidence,
+        });
+        addAgentLog(
+          'task_start',
+          `Starting ${selection.task.title}`,
+          selection.sourceTask.id,
+          selection.task.title,
+          {
+            scopes: selection.editScopes,
+            objectiveTags: selection.objectiveTags,
+          }
         );
 
-        // Record completion in memory system
-        if (this.state.brainActive) {
-          await agentMemory.recordTaskCompletion(
-            task.title,
-            task.type,
+        this.state.runStatus = 'executing';
+        await agentTaskStore.updateRun(run.id, { status: 'analyzing' });
+        const { output, changedFiles } = await this.streamRealTask(selection, contextPack);
+
+        await agentTaskStore.updateRun(run.id, { status: 'executing', output });
+
+        const verification = await this.verifyRun(selection, changedFiles);
+
+        let completionResult: CompletionResult = { success: verification.passed };
+
+        if (verification.passed) {
+          completionResult = await this.completeSuccessfulRun(
+            selection,
             output,
-            true
+            verification.changedFiles,
+            'real',
+            verification.verificationStatus
           );
-          
-          // Update goal progress if applicable
-          if (this.state.currentDecision?.goal) {
-            const goal = this.state.currentDecision.goal;
-            const newProgress = Math.min(100, goal.progress + 10);
-            await agentGoals.updateProgress(goal.id, newProgress, `Completed: ${task.title}`);
-          }
-          
-          // Clear focus
-          await agentMemory.setFocus(null);
-        }
-
-        console.log(`[AGENT] Completed task: ${task.title}`);
-        
-        // ALWAYS auto-commit and push changes to GitHub after EVERY task
-        // Use conventional commit format: type(scope): description
-        const typeMap: Record<string, string> = {
-          build: 'feat', fix: 'fix', test: 'test', audit: 'fix',
-          analyze: 'refactor', propose: 'feat', review: 'refactor',
-          feature: 'feat', default: 'chore'
-        };
-        const commitType = typeMap[task.type] || typeMap.default;
-        const scope =
-          (typeof task.context?.category === 'string' && task.context.category) ||
-          task.type.split('_')[0] ||
-          'chain';
-        const title = task.title.replace(/^(xxx|XXX)[:\s]*/i, '').trim() || 'update generated module';
-        const commitMessage = `${commitType}(${scope}): ${title.charAt(0).toLowerCase() + title.slice(1)}`;
-        console.log(`[AGENT] Attempting to commit: ${commitMessage}`);
-        
-        const gitResult = await gitIntegration.autoCommitAndPush(commitMessage, task.id);
-        console.log(`[AGENT] Git result:`, JSON.stringify(gitResult));
-        
-        if (gitResult.success && gitResult.commit) {
-          console.log(`[AGENT] ✓ Changes deployed: ${gitResult.commit}`);
-          this.broadcast('git_deploy', {
-            taskId: task.id,
-            commit: gitResult.commit,
-            message: commitMessage,
-            branch: gitResult.branch
-          });
-        } else if (gitResult.error) {
-          console.error(`[AGENT] ✗ Git failed: ${gitResult.error}`);
         } else {
-          console.log(`[AGENT] No changes to commit for this task`);
+          await this.handleFailedRun(selection, output, verification);
         }
-        
-        this.broadcast('task_complete', { 
-          taskId: task.id,
-          title: task.title,
-          brainActive: this.state.brainActive,
-        });
 
-        this.state.isWorking = false;
-        this.state.currentTask = null;
-        this.state.currentDecision = null;
-
-        // Pause between tasks (~20 minutes between commits)
-        const pauseDuration = this.state.brainActive
-          ? 1100000 + Math.random() * 200000  // 18-22 minutes when thinking
-          : 1000000 + Math.random() * 400000; // 17-23 minutes otherwise
-          
-        console.log(`[AGENT] Pausing for ${Math.round(pauseDuration / 1000)}s before next task...`);
-        this.broadcast('status', { 
-          status: 'thinking', 
-          nextTaskIn: pauseDuration,
-          brainActive: this.state.brainActive,
-        });
-        
-        await this.sleep(pauseDuration);
-
-      } catch (error) {
+        await agentMemory.setFocus(null);
+        this.resetCurrentState();
+        if (verification.passed && completionResult.success) {
+          await this.waitForCommitWindow(runStartedAtMs);
+        } else {
+          await this.delay(30000);
+        }
+      } catch (error: any) {
         console.error('[AGENT] Error in worker loop:', error);
-        
-        // Record error in memory
-        if (this.state.brainActive) {
-          await agentMemory.recordError(
-            `Worker error: ${(error as Error).message}`,
-            { task: this.state.currentTask?.title }
-          );
-        }
-        
-        this.broadcast('error', { message: 'Agent encountered an error, recovering...' });
-        await this.sleep(5000);
+        this.state.lastFailure = error.message;
+        this.state.runStatus = 'failed';
+        this.broadcast('error', {
+          message: error.message,
+          mode: this.config.effectiveMode,
+        });
+        addAgentLog('error', error.message);
+        await this.delay(5000);
       }
     }
   }
 
-  stop() {
-    console.log('[AGENT] Stopping worker...');
+  stop(): void {
     this.isRunning = false;
-    
     if (this.currentAbortController) {
       this.currentAbortController.abort();
     }
-    
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
-    
+    ciMonitor.stop();
     chainObserver.stop();
-    
-    this.broadcast('status', { status: 'stopped' });
+    this.broadcast('status', { status: 'stopped', mode: this.config.effectiveMode });
   }
 }
 
-// Singleton instance
 export const agentWorker = new AgentWorker();
