@@ -30,4 +30,3 @@ export class AddBlockSizeLimitsAndValidation {
 }
 
 export default AddBlockSizeLimitsAndValidation;
-// registered in hermes task queue
