@@ -30,3 +30,4 @@ export class AddRateLimitingToPublicEndpoints {
 }
 
 export default AddRateLimitingToPublicEndpoints;
+// registered in hermes task queue
