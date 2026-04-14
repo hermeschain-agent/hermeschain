@@ -30,3 +30,4 @@ export class ImplementProperMerklePatriciaTrie {
 }
 
 export default ImplementProperMerklePatriciaTrie;
+// registered in hermes task queue
