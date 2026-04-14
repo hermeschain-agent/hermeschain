@@ -30,4 +30,3 @@ export class ImplementSendtransactionRpc {
 }
 
 export default ImplementSendtransactionRpc;
-// registered in hermes task queue
