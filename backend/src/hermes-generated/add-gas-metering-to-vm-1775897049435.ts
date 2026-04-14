@@ -30,3 +30,4 @@ export class AddGasMeteringToVm {
 }
 
 export default AddGasMeteringToVm;
+// registered in hermes task queue
