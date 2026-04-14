@@ -30,3 +30,4 @@ export class BuildChainHealthDashboardMetrics {
 }
 
 export default BuildChainHealthDashboardMetrics;
+// registered in hermes task queue
