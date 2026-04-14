@@ -30,4 +30,3 @@ export class CreateTransactionSigningLibrary {
 }
 
 export default CreateTransactionSigningLibrary;
-// registered in hermes task queue
