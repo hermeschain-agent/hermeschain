@@ -30,4 +30,3 @@ export class ImplementAccountStorageSlots {
 }
 
 export default ImplementAccountStorageSlots;
-// registered in hermes task queue
