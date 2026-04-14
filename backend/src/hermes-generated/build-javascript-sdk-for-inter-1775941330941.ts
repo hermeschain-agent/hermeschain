@@ -30,3 +30,4 @@ export class BuildJavascriptSdkForInteractingWithHermeschain {
 }
 
 export default BuildJavascriptSdkForInteractingWithHermeschain;
+// registered in hermes task queue
