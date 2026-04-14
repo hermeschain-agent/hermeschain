@@ -30,4 +30,3 @@ export class ImplementGetaccountinfoRpc {
 }
 
 export default ImplementGetaccountinfoRpc;
-// registered in hermes task queue
