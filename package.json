@@ -1,0 +1,28 @@
+{
+  "name": "hermeschain",
+  "version": "2.0.0",
+  "description": "Autonomous AI blockchain built live by Hermes. Watch an agent write code, produce blocks, and evolve a chain in real-time.",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "build": "cd backend && npm run build && cd ../frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "start": "cd backend && npm start",
+    "dev": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "test": "cd backend && node --test tests/"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hermeschain-agent/hermeschain.git"
+  },
+  "license": "MIT"
+}
