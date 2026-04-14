@@ -30,4 +30,3 @@ export class ImplementChainReorganizationLogic {
 }
 
 export default ImplementChainReorganizationLogic;
-// registered in hermes task queue
