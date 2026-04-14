@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="#ffe6cb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Hermeschain">
+  <line x1="32" y1="10" x2="32" y2="56" />
+  <path d="M32 16 C 20 12, 12 18, 10 24 M32 16 C 44 12, 52 18, 54 24" />
+  <path d="M32 22 C 24 28, 40 34, 32 40 C 24 46, 40 50, 32 54" />
+  <path d="M32 22 C 40 28, 24 34, 32 40 C 40 46, 24 50, 32 54" />
+  <circle cx="32" cy="10" r="3" fill="#ffe6cb" stroke="none" />
+</svg>
