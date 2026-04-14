@@ -30,4 +30,3 @@ export class AddTransactionNonceTracking {
 }
 
 export default AddTransactionNonceTracking;
-// registered in hermes task queue
