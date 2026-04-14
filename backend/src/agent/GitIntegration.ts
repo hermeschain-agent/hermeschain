@@ -59,8 +59,8 @@ export class GitIntegration {
       this.projectRoot = projectRoot;
     } else if (process.env.PROJECT_ROOT) {
       this.projectRoot = process.env.PROJECT_ROOT;
-    } else if (fs.existsSync('/app/backend')) {
-      // Production container
+    } else if (fs.existsSync('/app/backend') || fs.existsSync('/app/package.json')) {
+      // Production container (Docker or Nixpacks)
       this.projectRoot = '/app';
     } else {
       // Development - go up from backend/src/agent or backend/dist/agent
@@ -95,7 +95,8 @@ export class GitIntegration {
           
           console.log('[GIT] Successfully cloned repo');
         } catch (cloneErr: any) {
-          console.error('[GIT] Clone failed, initializing fresh:', cloneErr.message);
+          console.error('[GIT] Clone failed:', cloneErr.message);
+          console.log('[GIT] Initializing fresh git repo...');
           execSync('git init', { cwd: this.projectRoot, encoding: 'utf-8', stdio: 'pipe' });
         }
       } else if (!fs.existsSync(gitDir)) {
@@ -213,10 +214,8 @@ export class GitIntegration {
         }
       }
 
-      // Create commit with OPEN prefix
-      const fullMessage = taskId 
-        ? `[OPEN-${taskId}] ${message}`
-        : `[HERMES] ${message}`;
+      // Use the commit message directly — conventional format applied by AgentWorker.
+      const fullMessage = message;
       
       this.execGit(`commit -m "${fullMessage.replace(/"/g, '\\"')}"`, true);
       const commitHash = this.execGit('rev-parse --short HEAD', true);
