@@ -30,3 +30,4 @@ export class AddSimulatetransactionRpc {
 }
 
 export default AddSimulatetransactionRpc;
+// registered in hermes task queue
