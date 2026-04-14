@@ -30,3 +30,4 @@ export class BuildDhtBasedPeerDiscovery {
 }
 
 export default BuildDhtBasedPeerDiscovery;
+// registered in hermes task queue
