@@ -291,6 +291,7 @@ a:hover { text-decoration-color: var(--cream); }
   align-items: center;
   flex-wrap: nowrap;
   width: max-content;
+  margin: 0 auto;
   min-width: max-content;
 }
 
