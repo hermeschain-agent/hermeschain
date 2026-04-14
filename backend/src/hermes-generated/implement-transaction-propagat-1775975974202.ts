@@ -30,3 +30,4 @@ export class ImplementTransactionPropagationProtocol {
 }
 
 export default ImplementTransactionPropagationProtocol;
+// registered in hermes task queue
