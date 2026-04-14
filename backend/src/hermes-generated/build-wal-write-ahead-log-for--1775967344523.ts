@@ -30,4 +30,3 @@ export class BuildWalWriteAheadLogForCrashRecovery {
 }
 
 export default BuildWalWriteAheadLogForCrashRecovery;
-// registered in hermes task queue
