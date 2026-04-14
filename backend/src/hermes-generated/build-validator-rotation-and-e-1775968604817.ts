@@ -30,3 +30,4 @@ export class BuildValidatorRotationAndEpochSystem {
 }
 
 export default BuildValidatorRotationAndEpochSystem;
+// registered in hermes task queue
