@@ -120,7 +120,7 @@ export class TaskSources {
     
     try {
       const output = execSync(
-        'grep -rn "TODO\\|FIXME\\|HACK\\|XXX" --include="*.ts" --include="*.tsx" . 2>/dev/null | head -20',
+        'grep -rn "TODO\\|FIXME" --include="*.ts" --include="*.tsx" . 2>/dev/null | head -20',
         { cwd: this.projectRoot, encoding: 'utf-8', timeout: 10000 }
       );
 
@@ -135,14 +135,15 @@ export class TaskSources {
           if (this.processedIds.has(id)) continue;
           
           // Extract the TODO type and message
-          const todoMatch = content.match(/(TODO|FIXME|HACK|XXX):?\s*(.+)/i);
+          const todoMatch = content.match(/(TODO|FIXME):?\s*(.+)/i);
           if (todoMatch) {
             const [, type, message] = todoMatch;
             
-            const priority: TaskPriority = 
-              type === 'FIXME' ? 'high' :
-              type === 'HACK' ? 'medium' :
-              type === 'XXX' ? 'high' : 'low';
+            const priority: TaskPriority =
+              type === 'FIXME' ? 'high' : 'low';
+
+            // Skip junk — messages must be at least 10 chars and not gibberish
+            if (message.trim().length < 10) continue;
 
             tasks.push({
               id,

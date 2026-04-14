@@ -158,7 +158,54 @@ export class GitIntegration {
     }
   }
 
-  // Auto-commit and push all agent changes
+  // Derive a detailed conventional commit message from a file path
+  private deriveCommitMessage(filePath: string): string {
+    const base = path.basename(filePath, path.extname(filePath));
+    const dir = path.dirname(filePath);
+
+    // Determine scope from directory
+    let scope = 'chain';
+    if (dir.includes('hermes-generated')) scope = 'agent';
+    else if (dir.includes('api')) scope = 'api';
+    else if (dir.includes('blockchain')) scope = 'chain';
+    else if (dir.includes('agent')) scope = 'agent';
+    else if (dir.includes('vm')) scope = 'vm';
+    else if (dir.includes('validators')) scope = 'consensus';
+    else if (dir.includes('frontend') || dir.includes('src/components')) scope = 'frontend';
+    else if (dir.includes('contracts')) scope = 'contracts';
+    else if (dir.includes('database')) scope = 'db';
+    else if (dir.includes('x402')) scope = 'x402';
+    else if (dir.includes('test')) scope = 'test';
+
+    // Determine type from filename patterns
+    let type = 'feat';
+    const lowerBase = base.toLowerCase();
+    if (lowerBase.includes('test') || lowerBase.includes('spec')) type = 'test';
+    else if (lowerBase.includes('fix') || lowerBase.includes('patch')) type = 'fix';
+    else if (lowerBase.includes('audit') || lowerBase.includes('review') || lowerBase.includes('security')) type = 'fix';
+    else if (lowerBase.includes('optimize') || lowerBase.includes('perf')) type = 'perf';
+    else if (lowerBase.includes('refactor')) type = 'refactor';
+    else if (lowerBase.startsWith('xxx')) type = 'chore';
+
+    // Convert filename to readable description
+    let desc = base
+      .replace(/[-_]+/g, ' ')               // dashes/underscores to spaces
+      .replace(/\d{10,}/g, '')               // strip timestamps
+      .replace(/^xxx\s*/i, '')               // strip xxx prefix
+      .replace(/\s+/g, ' ')                  // collapse spaces
+      .trim();
+
+    if (!desc || desc.length < 3) {
+      desc = 'update module';
+    }
+
+    // Lowercase first char
+    desc = desc.charAt(0).toLowerCase() + desc.slice(1);
+
+    return `${type}(${scope}): ${desc}`;
+  }
+
+  // Auto-commit and push agent changes — one commit per file for detailed history
   async autoCommitAndPush(message: string, taskId?: string): Promise<GitOperationResult> {
     console.log('[GIT] autoCommitAndPush called:', message);
 
@@ -172,21 +219,34 @@ export class GitIntegration {
         return { success: true, output: 'No changes to commit' };
       }
 
-      console.log(`[GIT] Staging ${changedFiles.length} changed files...`);
+      console.log(`[GIT] Found ${changedFiles.length} changed files, committing individually...`);
+      let lastCommitHash = '';
 
-      // Stage all changes — on Railway this is a dedicated container
-      // so all changes are from the agent.
-      try {
-        this.execGit('add -A', true);
-      } catch (e: any) {
-        console.error('[GIT] Failed to stage files:', e.message);
+      for (const line of changedFiles) {
+        const status = line.substring(0, 2).trim();
+        const filePath = line.substring(3).trim();
+        if (!filePath) continue;
+
+        try {
+          // Stage this single file
+          if (status === 'D') {
+            this.execGit(`rm "${filePath}"`, true);
+          } else {
+            this.execGit(`add "${filePath}"`, true);
+          }
+
+          // Generate a detailed commit message from the file path
+          const commitMsg = this.deriveCommitMessage(filePath);
+          const escapedMsg = commitMsg.replace(/"/g, '\\"');
+          this.execGit(`commit -m "${escapedMsg}"`, true);
+          lastCommitHash = this.execGit('rev-parse --short HEAD', true);
+          console.log(`[GIT] Committed: ${lastCommitHash} ${commitMsg}`);
+        } catch (e: any) {
+          console.log(`[GIT] Skip ${filePath}: ${e.message?.substring(0, 80)}`);
+        }
       }
 
-      // Use the commit message directly — conventional format applied by AgentWorker.
-      const fullMessage = message;
-      
-      this.execGit(`commit -m "${fullMessage.replace(/"/g, '\\"')}"`, true);
-      const commitHash = this.execGit('rev-parse --short HEAD', true);
+      const commitHash = lastCommitHash;
 
       console.log(`[GIT] Created commit: ${commitHash}`);
 
@@ -215,7 +275,7 @@ export class GitIntegration {
           
           eventBus.emit('git_action', {
             type: 'auto_deploy',
-            message: fullMessage,
+            message,
             commit: commitHash,
             branch,
             pushed: true
@@ -232,7 +292,7 @@ export class GitIntegration {
           
           eventBus.emit('git_action', {
             type: 'commit',
-            message: fullMessage,
+            message,
             commit: commitHash,
             pushed: false,
             error: pushError.message
@@ -248,7 +308,7 @@ export class GitIntegration {
       } else {
         eventBus.emit('git_action', {
           type: 'commit',
-          message: fullMessage,
+          message,
           commit: commitHash,
           pushed: false
         });
@@ -478,7 +538,7 @@ export class GitIntegration {
       
       eventBus.emit('git_action', {
         type: 'commit',
-        message: fullMessage,
+        message,
         commit: commitHash,
         taskId
       });
