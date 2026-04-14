@@ -30,4 +30,3 @@ export class CreateGenesisBlockConfigurationSystem {
 }
 
 export default CreateGenesisBlockConfigurationSystem;
-// registered in hermes task queue
