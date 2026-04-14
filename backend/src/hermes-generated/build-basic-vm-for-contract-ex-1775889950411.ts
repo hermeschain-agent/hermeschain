@@ -30,3 +30,4 @@ export class BuildBasicVmForContractExecution {
 }
 
 export default BuildBasicVmForContractExecution;
+// registered in hermes task queue
