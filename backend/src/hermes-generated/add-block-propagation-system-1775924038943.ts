@@ -30,4 +30,3 @@ export class AddBlockPropagationSystem {
 }
 
 export default AddBlockPropagationSystem;
-// registered in hermes task queue
