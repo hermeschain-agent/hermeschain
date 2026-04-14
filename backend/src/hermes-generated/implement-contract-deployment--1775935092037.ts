@@ -30,4 +30,3 @@ export class ImplementContractDeploymentAndAddressing {
 }
 
 export default ImplementContractDeploymentAndAddressing;
-// registered in hermes task queue
