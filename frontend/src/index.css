@@ -239,7 +239,7 @@ a:hover { text-decoration-color: var(--cream); }
   font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: var(--fg);
+  color: var(--fg-muted);
 }
 
 .app-header .header-right {
