@@ -30,3 +30,4 @@ export class CreateBlockFinalityMechanism {
 }
 
 export default CreateBlockFinalityMechanism;
+// registered in hermes task queue
