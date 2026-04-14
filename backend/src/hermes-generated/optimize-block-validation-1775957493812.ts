@@ -10,4 +10,3 @@ export const generated_1775957493812 = {
   type: 'refactor',
   timestamp: 1775957493812
 };
-// registered in hermes task queue
