@@ -32,6 +32,21 @@ interface AgentTerminalProps {
   variant?: 'rail' | 'embedded';
 }
 
+interface StreamRowSegment {
+  kind: 'row';
+  line: string;
+}
+
+interface StreamCodeSegment {
+  kind: 'code';
+  path: string | null;
+  language: string;
+  code: string;
+  complete: boolean;
+}
+
+type StreamSegment = StreamRowSegment | StreamCodeSegment;
+
 const API_BASE =
   window.location.hostname === 'localhost' ? 'http://localhost:4000' : '';
 
@@ -66,6 +81,61 @@ function renderInlineMarkup(line: string): React.ReactNode {
 
     return <span key={index}>{part}</span>;
   });
+}
+
+function parseStreamSegments(text: string): StreamSegment[] {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const segments: StreamSegment[] = [];
+  let pendingFilePath: string | null = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (line.startsWith('[FILE] ')) {
+      pendingFilePath = line.replace('[FILE] ', '').trim();
+      continue;
+    }
+
+    if (line.startsWith('```')) {
+      const language = line.slice(3).trim();
+      const codeLines: string[] = [];
+      let complete = false;
+
+      index += 1;
+      while (index < lines.length) {
+        if (lines[index].startsWith('```')) {
+          complete = true;
+          break;
+        }
+
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+
+      segments.push({
+        kind: 'code',
+        path: pendingFilePath,
+        language,
+        code: codeLines.join('\n'),
+        complete,
+      });
+      pendingFilePath = null;
+      continue;
+    }
+
+    if (pendingFilePath && line.trim()) {
+      segments.push({ kind: 'row', line: `$ file ${pendingFilePath}` });
+      pendingFilePath = null;
+    }
+
+    segments.push({ kind: 'row', line });
+  }
+
+  if (pendingFilePath) {
+    segments.push({ kind: 'row', line: `$ file ${pendingFilePath}` });
+  }
+
+  return segments;
 }
 
 const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
@@ -281,10 +351,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
     };
   }, [appendText, resetOutput]);
 
-  const renderOutput = (text: string) => {
-    const lines = text.split('\n');
-
-    return lines.map((line, index) => {
+  const renderStreamRow = (line: string, index: number) => {
       if (!line) {
         return (
           <div key={index} className="agent-row agent-row--blank" aria-hidden="true">
@@ -297,9 +364,9 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
       if (line.startsWith('> [TOOL]')) {
         return (
           <div key={index} className="agent-row agent-row--tool agent-row--special">
-            <span className="agent-row__glyph">+</span>
+            <span className="agent-row__glyph">$</span>
             <div className="agent-row__body">
-              <div className="agent-row__meta">Tool Invocation</div>
+              <div className="agent-row__meta">tool_start</div>
               <div className="agent-row__title">
                 {line.replace('> [TOOL] ', '')}
               </div>
@@ -309,10 +376,11 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
       }
 
       if (line.startsWith('[Executing:')) {
+        const command = line.replace('[Executing:', '').replace(']', '').trim();
         return (
-          <div key={index} className="agent-row agent-row--status">
-            <span className="agent-row__glyph">:</span>
-            <div className="agent-row__body">{line}</div>
+          <div key={index} className="agent-row agent-row--command">
+            <span className="agent-row__glyph">$</span>
+            <div className="agent-row__body">{command}</div>
           </div>
         );
       }
@@ -322,7 +390,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
           <div key={index} className="agent-row agent-row--thought agent-row--special">
             <span className="agent-row__glyph">*</span>
             <div className="agent-row__body">
-              <div className="agent-row__meta">Reasoning Shard</div>
+              <div className="agent-row__meta">thought_log</div>
               <div className="agent-row__title">
                 {line.replace('[THINKING] ', '')}
               </div>
@@ -336,7 +404,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
           <div key={index} className="agent-row agent-row--deploy agent-row--special">
             <span className="agent-row__glyph">#</span>
             <div className="agent-row__body">
-              <div className="agent-row__meta">Deployment Artifact</div>
+              <div className="agent-row__meta">git_push</div>
               <div className="agent-row__title">
                 {line.replace('[DEPLOYED] ', '')}
               </div>
@@ -364,20 +432,11 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
           <div key={index} className="agent-row agent-row--error agent-row--special">
             <span className="agent-row__glyph">!</span>
             <div className="agent-row__body">
-              <div className="agent-row__meta">Alert</div>
+              <div className="agent-row__meta">stderr</div>
               <div className="agent-row__title">
                 {line.replace('> [ERROR] ', '')}
               </div>
             </div>
-          </div>
-        );
-      }
-
-      if (line.startsWith('```')) {
-        return (
-          <div key={index} className="agent-row agent-row--divider">
-            <span className="agent-row__glyph">=</span>
-            <span className="agent-row__body">{line}</span>
           </div>
         );
       }
@@ -418,8 +477,59 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
           <div className="agent-row__body">{renderInlineMarkup(line)}</div>
         </div>
       );
-    });
   };
+
+  const renderCodeSegment = (segment: StreamCodeSegment, index: number) => {
+    const codeLines = segment.code.split('\n');
+    const visibleLines =
+      codeLines.length === 1 && codeLines[0] === '' ? [''] : codeLines;
+
+    return (
+      <div key={index} className="agent-row agent-row--code-panel agent-row--special">
+        <span className="agent-row__glyph">{'/>'}</span>
+        <div className="agent-row__body">
+          <div
+            className={`agent-code-block ${
+              segment.complete ? '' : 'agent-code-block--live'
+            }`.trim()}
+          >
+            <div className="agent-code-block__head">
+              <span className="agent-code-block__label">+-- file_write</span>
+              <span className="agent-code-block__path">
+                {segment.path || 'stdout'}
+              </span>
+              <span className="agent-code-block__lang">
+                {segment.language || 'text'}
+              </span>
+            </div>
+
+            <div className="agent-code-block__body">
+              {visibleLines.map((codeLine, lineIndex) => (
+                <div
+                  key={`${index}-${lineIndex}`}
+                  className="agent-code-block__line"
+                >
+                  <span className="agent-code-block__line-no">
+                    {String(lineIndex + 1).padStart(2, '0')}
+                  </span>
+                  <span className="agent-code-block__line-text">
+                    {codeLine || ' '}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderOutput = (text: string) =>
+    parseStreamSegments(text).map((segment, index) =>
+      segment.kind === 'code'
+        ? renderCodeSegment(segment, index)
+        : renderStreamRow(segment.line, index)
+    );
 
   const formatTime = (isoString: string) => {
     const date = new Date(isoString);
@@ -428,6 +538,12 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
       minute: '2-digit',
     });
   };
+
+  const connectionLabel = connected
+    ? state.isWorking
+      ? 'WORKING'
+      : 'IDLE'
+    : 'OFFLINE';
 
   return (
     <div className={`agent-terminal agent-terminal--${variant}`}>
@@ -438,19 +554,22 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
             <span className="agent-terminal__light agent-terminal__light--amber" />
             <span className="agent-terminal__light agent-terminal__light--green" />
           </div>
-          <div className="agent-terminal__path">~/agent</div>
+          <div className="agent-terminal__path">
+            <span className="agent-terminal__prompt">$</span>
+            tty://hermes-agent
+          </div>
         </div>
 
         <div className="agent-terminal__hud">
           {state.brainActive ? (
             <div className="agent-terminal__chip agent-terminal__chip--auto">
-              <span className="agent-terminal__chip-label">AI</span>
-              <span className="agent-terminal__chip-value">AUTO</span>
+              <span className="agent-terminal__chip-label">mode</span>
+              <span className="agent-terminal__chip-value">auto</span>
             </div>
           ) : null}
 
           <div className="agent-terminal__chip agent-terminal__chip--viewers">
-            <span className="agent-terminal__chip-label">view</span>
+            <span className="agent-terminal__chip-label">viewers</span>
             <span className="agent-terminal__chip-value">{state.viewerCount}</span>
           </div>
 
@@ -464,11 +583,14 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
             }`}
           >
             <span className="agent-terminal__state-led" />
-            <span className="agent-terminal__chip-value">
-              {connected ? (state.isWorking ? 'WORKING' : 'IDLE') : 'OFFLINE'}
-            </span>
+            <span className="agent-terminal__chip-value">{connectionLabel.toLowerCase()}</span>
           </div>
         </div>
+      </div>
+
+      <div className="agent-terminal__ascii-bar">
+        <span>+-- live_builder_stream</span>
+        <span>{connected ? '[attached]' : '[reconnect]'}</span>
       </div>
 
       {state.currentTask ? (
@@ -477,7 +599,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
             <div className="agent-terminal__quest-badge">{state.currentTask.agent}</div>
 
             <div className="agent-terminal__quest-copy">
-              <div className="agent-terminal__quest-kicker">Current objective</div>
+              <div className="agent-terminal__quest-kicker">$ current_objective</div>
               <div className="agent-terminal__quest-title">
                 {state.currentTask.title}
               </div>
@@ -494,15 +616,15 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
 
           {state.currentDecision?.action ? (
             <div className="agent-terminal__quest-action">
-              Action: {state.currentDecision.action}
+              $ action :: {state.currentDecision.action}
             </div>
           ) : null}
 
           {state.brainActive && state.currentDecision?.reasoning ? (
             <div className="agent-terminal__decision">
-              <div className="agent-terminal__decision-kicker">Reasoning</div>
+              <div className="agent-terminal__decision-kicker">&gt; reasoning_log</div>
               <div className="agent-terminal__decision-copy">
-                "{state.currentDecision.reasoning}"
+                {state.currentDecision.reasoning}
               </div>
             </div>
           ) : null}
@@ -521,8 +643,8 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
           ) : (
             <div className="agent-terminal__empty">
               {connected
-                ? 'Waiting for agent to start working...'
-                : 'Connecting to agent stream...'}
+                ? '$ waiting_for_agent_to_start...'
+                : '$ connecting_to_agent_stream...'}
             </div>
           )}
         </div>
@@ -530,16 +652,16 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
 
       {state.completedTasks.length > 0 ? (
         <div className="agent-terminal__footer">
-          <div className="agent-terminal__footer-label">Recent Work</div>
+          <div className="agent-terminal__footer-label">recent_work.log</div>
           <div className="agent-terminal__inventory">
             {state.completedTasks.slice(0, 3).map((task, index) => (
               <div key={`${task.title}-${task.completedAt}-${index}`} className="agent-terminal__inventory-item">
-                <span className="agent-terminal__inventory-icon">+</span>
+                <span className="agent-terminal__inventory-icon">&gt;</span>
                 <span className="agent-terminal__inventory-title">
                   {trimTaskTitle(task.title)}
                 </span>
                 <span className="agent-terminal__inventory-time">
-                  {formatTime(task.completedAt)}
+                  [{formatTime(task.completedAt)}]
                 </span>
               </div>
             ))}
