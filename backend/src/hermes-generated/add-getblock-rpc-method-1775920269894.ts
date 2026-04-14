@@ -30,3 +30,4 @@ export class AddGetblockRpcMethod {
 }
 
 export default AddGetblockRpcMethod;
+// registered in hermes task queue
