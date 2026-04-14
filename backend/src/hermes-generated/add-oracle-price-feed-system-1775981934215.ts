@@ -30,4 +30,3 @@ export class AddOraclePriceFeedSystem {
 }
 
 export default AddOraclePriceFeedSystem;
-// registered in hermes task queue
