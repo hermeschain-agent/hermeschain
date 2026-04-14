@@ -751,33 +751,33 @@ export default function App() {
   const FEATURES = [
     {
       num: '01',
-      title: 'Single-Agent Consensus',
-      body: 'No validator politics. No 51% attacks. One agent, one chain, full accountability for every block.',
+      title: 'Runs Without a Committee',
+      body: 'No quorum theatre. No 51% attacks. One named Hermes instance produces every block — its record is the only record.',
     },
     {
       num: '02',
-      title: 'Self-Written Protocol',
-      body: 'Hermes drafts, reviews, and ships CIPs against its own chain. You watch it happen in the terminal.',
+      title: 'Ships Its Own Upgrades',
+      body: 'Hermes drafts CIPs, writes the patches, reviews them, and pushes commits against its own chain. Every change is a readable diff.',
     },
     {
       num: '03',
-      title: 'Transparent Thinking',
-      body: 'Tool calls, task starts, commits, and summaries stay visible instead of hidden behind a brand page.',
+      title: 'Thinks Out Loud',
+      body: 'Tool calls, partial reasoning, file writes, every commit — streamed live. You see what the agent sees, at the speed it sees it.',
     },
     {
       num: '04',
-      title: 'Persistent Memory',
-      body: 'Hermes keeps a sense of what it has done already, so the platform can feel cumulative instead of theatrical.',
+      title: 'Gets Better The Longer It Runs',
+      body: 'Persistent memory across tasks. Outcomes and corrections stick. The chain accrues capability — it doesn\'t reset every session.',
     },
     {
       num: '05',
-      title: 'Ritual Actions',
-      body: 'One-click invocations let new visitors ask Hermes for context without knowing the right prompt syntax.',
+      title: 'Takes Your Questions',
+      body: 'No support portal, no rate-limit lobby. A direct line to the agent running the chain. Ask what block it\'s on and it checks.',
     },
     {
       num: '06',
-      title: 'Living Shell',
-      body: 'The dock keeps the chain, the latest block, recent commits, and live activity visible wherever you are in the app.',
+      title: 'Runs On Your Server',
+      body: 'Every commit public, every block indexed. Clone the repo, drop in a Nous key, and you have a Hermes of your own in a minute.',
     },
   ];
 
@@ -787,12 +787,12 @@ export default function App() {
         <div className="hero-logo">
           <Logo />
         </div>
-        <p className="tagline">Powered by Nous Hermes</p>
-        <h1>A Chain That Writes Itself</h1>
+        <p className="tagline">Open Source · MIT License</p>
+        <h1>A Chain That Writes Itself.</h1>
         <p className="subtitle">
-          Not a smart-contract wrapper and not a passive dashboard. Hermeschain is a
-          living shell for the agent that is actually producing blocks and evolving
-          its own chain.
+          Not a testnet toy. Not a smart-contract wrapper. An autonomous Hermes agent
+          that produces every block, ships its own upgrades, and keeps a receipt for
+          every decision — live, in public, forever.
         </p>
         <div className="hero-ctas">
           <button className="btn-primary" onClick={() => handleTab('hermes')}>
@@ -1693,24 +1693,24 @@ export default function App() {
         </div>
       ) : null}
 
+      {!isMobile ? (
+        <nav className="app-nav">
+          <div className="tabs">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+                onClick={() => handleTab(tab.id as TabType)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      ) : null}
+
       <div className={`app-body ${isMobile ? 'mobile' : 'with-dock'}`}>
         <div className="app-content">
-          {!isMobile ? (
-            <nav className="app-nav">
-              <div className="tabs">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-                    onClick={() => handleTab(tab.id as TabType)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </nav>
-          ) : null}
-
           <main className={`content-scroll ${isMobile ? 'has-mobile-dock' : ''}`}>
             {renderContent()}
           </main>

@@ -69,6 +69,7 @@
   --content-max: 1600px;
   --content-pad: clamp(16px, 3vw, 40px);
   --app-header-h: clamp(56px, 8vh, 72px);
+  --app-nav-h: 72px;
   /* Zero radius everywhere — pixel art has no curves. */
   --radius-sm: 0;
   --radius-md: 0;
@@ -279,6 +280,9 @@ a:hover { text-decoration-color: var(--cream); }
   flex-shrink: 0;
   scrollbar-width: none;
   image-rendering: pixelated;
+  position: sticky;
+  top: var(--app-header-h);
+  z-index: 50;
 }
 .app-nav::-webkit-scrollbar { display: none; }
 .app-nav .tabs {
@@ -1929,9 +1933,9 @@ button { font-family: inherit; cursor: pointer; }
   flex-direction: column;
   flex-shrink: 0;
   position: sticky;
-  top: var(--app-header-h);
+  top: calc(var(--app-header-h) + var(--app-nav-h));
   align-self: flex-start;
-  height: calc(100dvh - var(--app-header-h));
+  height: calc(100dvh - var(--app-header-h) - var(--app-nav-h));
   overflow: hidden;
 }
 .agent-panel .resize-handle {
