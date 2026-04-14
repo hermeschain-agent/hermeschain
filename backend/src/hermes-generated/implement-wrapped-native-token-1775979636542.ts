@@ -30,4 +30,3 @@ export class ImplementWrappedNativeTokenWopen {
 }
 
 export default ImplementWrappedNativeTokenWopen;
-// registered in hermes task queue
