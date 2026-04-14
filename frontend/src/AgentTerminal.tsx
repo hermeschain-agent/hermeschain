@@ -790,11 +790,6 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
     <div className={`agent-terminal agent-terminal--${variant}`}>
       <div className="agent-terminal__topbar">
         <div className="agent-terminal__topbar-left">
-          <div className="agent-terminal__lights" aria-hidden="true">
-            <span className="agent-terminal__light agent-terminal__light--red" />
-            <span className="agent-terminal__light agent-terminal__light--amber" />
-            <span className="agent-terminal__light agent-terminal__light--green" />
-          </div>
           <div className="agent-terminal__path">
             <span className="agent-terminal__prompt">$</span>
             tty://hermes-agent
