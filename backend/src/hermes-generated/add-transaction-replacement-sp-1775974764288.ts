@@ -30,4 +30,3 @@ export class AddTransactionReplacementSpeedUpAndCancel {
 }
 
 export default AddTransactionReplacementSpeedUpAndCancel;
-// registered in hermes task queue
