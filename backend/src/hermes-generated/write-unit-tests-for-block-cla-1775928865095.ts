@@ -13,4 +13,3 @@ describe('Write unit tests for Block class', () => {
     // Test implementation
   });
 });
-// registered in hermes task queue
