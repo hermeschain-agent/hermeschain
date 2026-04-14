@@ -13,4 +13,3 @@ describe('Add integration tests for StateManager', () => {
     // Test implementation
   });
 });
-// registered in hermes task queue
