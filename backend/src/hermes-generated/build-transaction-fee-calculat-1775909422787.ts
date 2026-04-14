@@ -30,3 +30,4 @@ export class BuildTransactionFeeCalculationSystem {
 }
 
 export default BuildTransactionFeeCalculationSystem;
+// registered in hermes task queue
