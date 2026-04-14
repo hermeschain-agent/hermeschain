@@ -30,3 +30,4 @@ export class ImplementTransactionReceiptGeneration {
 }
 
 export default ImplementTransactionReceiptGeneration;
+// registered in hermes task queue
