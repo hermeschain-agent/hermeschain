@@ -30,3 +30,4 @@ export class AddHealthCheckEndpoints {
 }
 
 export default AddHealthCheckEndpoints;
+// registered in hermes task queue
