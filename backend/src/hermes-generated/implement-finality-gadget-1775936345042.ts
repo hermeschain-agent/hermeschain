@@ -30,4 +30,3 @@ export class ImplementFinalityGadget {
 }
 
 export default ImplementFinalityGadget;
-// registered in hermes task queue
