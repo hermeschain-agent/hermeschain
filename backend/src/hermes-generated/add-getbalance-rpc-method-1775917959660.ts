@@ -30,3 +30,4 @@ export class AddGetbalanceRpcMethod {
 }
 
 export default AddGetbalanceRpcMethod;
+// registered in hermes task queue
