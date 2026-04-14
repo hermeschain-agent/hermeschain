@@ -30,3 +30,4 @@ export class BuildBlockExplorerPage {
 }
 
 export default BuildBlockExplorerPage;
+// registered in hermes task queue
