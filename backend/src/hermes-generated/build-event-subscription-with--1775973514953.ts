@@ -30,4 +30,3 @@ export class BuildEventSubscriptionWithWebsocketSupport {
 }
 
 export default BuildEventSubscriptionWithWebsocketSupport;
-// registered in hermes task queue
