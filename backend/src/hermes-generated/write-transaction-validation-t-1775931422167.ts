@@ -13,4 +13,3 @@ describe('Write transaction validation tests', () => {
     // Test implementation
   });
 });
-// registered in hermes task queue
