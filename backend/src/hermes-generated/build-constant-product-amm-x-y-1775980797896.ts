@@ -30,4 +30,3 @@ export class BuildConstantProductAmmXYK {
 }
 
 export default BuildConstantProductAmmXYK;
-// registered in hermes task queue
