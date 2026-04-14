@@ -30,3 +30,4 @@ export class DesignOpenTokenStandardOrc20 {
 }
 
 export default DesignOpenTokenStandardOrc20;
+// registered in hermes task queue
