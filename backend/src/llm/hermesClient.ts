@@ -1,16 +1,60 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-export const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-export const HERMES_MODEL = process.env.HERMES_MODEL || 'nousresearch/hermes-4-405b';
-export const HERMES_BASE_URL = process.env.HERMES_BASE_URL || 'https://openrouter.ai/api/v1';
+// ─── Multi-provider LLM configuration ───────────────────────────
+// Supported providers: "openrouter" | "anthropic" | "openai"
+//
+//   LLM_PROVIDER=openrouter   → OPENROUTER_API_KEY   (default)
+//   LLM_PROVIDER=anthropic    → ANTHROPIC_API_KEY
+//   LLM_PROVIDER=openai       → OPENAI_API_KEY
+// ─────────────────────────────────────────────────────────────────
+
+export type LLMProvider = 'openrouter' | 'anthropic' | 'openai';
+
+function detectProvider(): LLMProvider {
+  const explicit = (process.env.LLM_PROVIDER || '').toLowerCase();
+  if (explicit === 'anthropic' || explicit === 'claude') return 'anthropic';
+  if (explicit === 'openai') return 'openai';
+  if (explicit === 'openrouter') return 'openrouter';
+  if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
+  if (process.env.OPENAI_API_KEY) return 'openai';
+  return 'openrouter';
+}
+
+export const LLM_PROVIDER = detectProvider();
+
+const PROVIDER_DEFAULTS: Record<LLMProvider, { key: string; model: string; baseUrl: string }> = {
+  openrouter: {
+    key: process.env.OPENROUTER_API_KEY || '',
+    model: 'nousresearch/hermes-4-405b',
+    baseUrl: 'https://openrouter.ai/api/v1',
+  },
+  anthropic: {
+    key: process.env.ANTHROPIC_API_KEY || '',
+    model: 'claude-sonnet-4-5-20250514',
+    baseUrl: 'https://api.anthropic.com/v1',
+  },
+  openai: {
+    key: process.env.OPENAI_API_KEY || '',
+    model: 'gpt-4o',
+    baseUrl: 'https://api.openai.com/v1',
+  },
+};
+
+const defaults = PROVIDER_DEFAULTS[LLM_PROVIDER];
+export const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || defaults.key;
+export const HERMES_MODEL = process.env.HERMES_MODEL || defaults.model;
+export const HERMES_BASE_URL = process.env.HERMES_BASE_URL || defaults.baseUrl;
+
+const IS_ANTHROPIC = LLM_PROVIDER === 'anthropic' || OPENROUTER_API_KEY.startsWith('sk-ant-');
 
 const HERMES_REFERER = 'https://hermeschain.app';
 const HERMES_TITLE = 'Hermeschain';
 
 if (!OPENROUTER_API_KEY) {
-  console.warn('[HERMES] OPENROUTER_API_KEY not set — Hermes responses will fall back to offline messages.');
+  console.warn('[HERMES] No LLM API key set — Hermes responses will fall back to offline messages.');
 }
+console.log(`[HERMES] LLM provider: ${LLM_PROVIDER} | model: ${HERMES_MODEL}`);
 
 export type HermesRole = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -68,11 +112,57 @@ export function isConfigured(): boolean {
 }
 
 function headers(): Record<string, string> {
+  if (IS_ANTHROPIC) {
+    return {
+      'x-api-key': OPENROUTER_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+    };
+  }
   return {
     'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
     'Content-Type': 'application/json',
     'HTTP-Referer': HERMES_REFERER,
     'X-Title': HERMES_TITLE,
+  };
+}
+
+function getApiUrl(): string {
+  if (IS_ANTHROPIC) return `${HERMES_BASE_URL}/messages`;
+  return `${HERMES_BASE_URL}/chat/completions`;
+}
+
+function toAnthropicBody(params: HermesChatParams): Record<string, unknown> {
+  const systemMsg = params.messages.find(m => m.role === 'system');
+  const nonSystemMsgs = params.messages.filter(m => m.role !== 'system');
+  const body: Record<string, unknown> = {
+    model: HERMES_MODEL,
+    max_tokens: params.maxTokens ?? 1024,
+    messages: nonSystemMsgs.map(m => ({ role: m.role, content: m.content || '' })),
+  };
+  if (systemMsg?.content) body.system = systemMsg.content;
+  if (params.temperature !== undefined) body.temperature = params.temperature;
+  return body;
+}
+
+function fromAnthropicResponse(data: any): HermesResponse {
+  const textContent = (data.content || [])
+    .filter((b: any) => b.type === 'text')
+    .map((b: any) => b.text)
+    .join('');
+  return {
+    id: data.id,
+    model: data.model,
+    choices: [{
+      index: 0,
+      message: { role: 'assistant', content: textContent },
+      finish_reason: data.stop_reason || 'stop',
+    }],
+    usage: data.usage ? {
+      prompt_tokens: data.usage.input_tokens,
+      completion_tokens: data.usage.output_tokens,
+      total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+    } : undefined,
   };
 }
 
@@ -118,16 +208,22 @@ export async function hermesChat(params: HermesChatParams): Promise<HermesRespon
   if (!isConfigured()) {
     throw new Error('OPENROUTER_API_KEY not configured');
   }
-  const body: Record<string, unknown> = {
-    model: HERMES_MODEL,
-    messages: params.messages,
-    temperature: params.temperature ?? 0.7,
-    max_tokens: params.maxTokens ?? 1024,
-  };
-  if (params.topP !== undefined) body.top_p = params.topP;
-  if (params.tools && params.tools.length > 0) body.tools = params.tools;
+  let body: Record<string, unknown>;
 
-  const response = await fetch(`${HERMES_BASE_URL}/chat/completions`, {
+  if (IS_ANTHROPIC) {
+    body = toAnthropicBody(params);
+  } else {
+    body = {
+      model: HERMES_MODEL,
+      messages: params.messages,
+      temperature: params.temperature ?? 0.7,
+      max_tokens: params.maxTokens ?? 1024,
+    };
+    if (params.topP !== undefined) body.top_p = params.topP;
+    if (params.tools && params.tools.length > 0) body.tools = params.tools;
+  }
+
+  const response = await fetch(getApiUrl(), {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
@@ -138,7 +234,8 @@ export async function hermesChat(params: HermesChatParams): Promise<HermesRespon
     throw new Error(`Hermes API ${response.status}: ${text}`);
   }
 
-  return (await response.json()) as HermesResponse;
+  const data = await response.json();
+  return IS_ANTHROPIC ? fromAnthropicResponse(data) : data as HermesResponse;
 }
 
 /**
@@ -156,16 +253,22 @@ export async function* hermesChatStream(
     return;
   }
 
-  const body: Record<string, unknown> = {
-    model: HERMES_MODEL,
-    messages: params.messages,
-    temperature: params.temperature ?? 0.7,
-    max_tokens: params.maxTokens ?? 2048,
-    stream: true,
-  };
-  if (params.tools && params.tools.length > 0) body.tools = params.tools;
+  let body: Record<string, unknown>;
 
-  const response = await fetch(`${HERMES_BASE_URL}/chat/completions`, {
+  if (IS_ANTHROPIC) {
+    body = { ...toAnthropicBody({ ...params, maxTokens: params.maxTokens ?? 2048 }), stream: true };
+  } else {
+    body = {
+      model: HERMES_MODEL,
+      messages: params.messages,
+      temperature: params.temperature ?? 0.7,
+      max_tokens: params.maxTokens ?? 2048,
+      stream: true,
+    };
+    if (params.tools && params.tools.length > 0) body.tools = params.tools;
+  }
+
+  const response = await fetch(getApiUrl(), {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
