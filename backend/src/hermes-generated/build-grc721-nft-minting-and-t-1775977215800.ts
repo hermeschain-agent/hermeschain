@@ -30,4 +30,3 @@ export class BuildGrc721NftMintingAndTransferSystem {
 }
 
 export default BuildGrc721NftMintingAndTransferSystem;
-// registered in hermes task queue
