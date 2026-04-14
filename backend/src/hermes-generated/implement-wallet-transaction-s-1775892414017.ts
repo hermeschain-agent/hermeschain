@@ -30,4 +30,3 @@ export class ImplementWalletTransactionSigning {
 }
 
 export default ImplementWalletTransactionSigning;
-// registered in hermes task queue
