@@ -30,4 +30,3 @@ export class BuildStakingRewardsSystem {
 }
 
 export default BuildStakingRewardsSystem;
-// registered in hermes task queue
