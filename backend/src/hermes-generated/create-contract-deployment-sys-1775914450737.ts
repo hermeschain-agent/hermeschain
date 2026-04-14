@@ -30,3 +30,4 @@ export class CreateContractDeploymentSystem {
 }
 
 export default CreateContractDeploymentSystem;
+// registered in hermes task queue
