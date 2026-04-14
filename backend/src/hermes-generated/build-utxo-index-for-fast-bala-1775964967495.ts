@@ -30,4 +30,3 @@ export class BuildUtxoIndexForFastBalanceLookups {
 }
 
 export default BuildUtxoIndexForFastBalanceLookups;
-// registered in hermes task queue
