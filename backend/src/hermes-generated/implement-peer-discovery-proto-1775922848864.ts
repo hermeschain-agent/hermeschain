@@ -30,3 +30,4 @@ export class ImplementPeerDiscoveryProtocol {
 }
 
 export default ImplementPeerDiscoveryProtocol;
+// registered in hermes task queue
