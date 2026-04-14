@@ -30,4 +30,3 @@ export class ImplementViewChangeProtocol {
 }
 
 export default ImplementViewChangeProtocol;
-// registered in hermes task queue
