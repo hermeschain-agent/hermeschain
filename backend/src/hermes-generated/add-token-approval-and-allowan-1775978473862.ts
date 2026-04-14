@@ -30,4 +30,3 @@ export class AddTokenApprovalAndAllowanceSystem {
 }
 
 export default AddTokenApprovalAndAllowanceSystem;
-// registered in hermes task queue
