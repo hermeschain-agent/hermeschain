@@ -30,4 +30,3 @@ export class AddSlashingConditionsForMisbehavior {
 }
 
 export default AddSlashingConditionsForMisbehavior;
-// registered in hermes task queue
