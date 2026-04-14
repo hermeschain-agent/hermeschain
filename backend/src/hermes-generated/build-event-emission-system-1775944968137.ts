@@ -30,4 +30,3 @@ export class BuildEventEmissionSystem {
 }
 
 export default BuildEventEmissionSystem;
-// registered in hermes task queue
