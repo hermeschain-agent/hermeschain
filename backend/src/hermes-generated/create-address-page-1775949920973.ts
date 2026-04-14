@@ -30,4 +30,3 @@ export class CreateAddressPage {
 }
 
 export default CreateAddressPage;
-// registered in hermes task queue
