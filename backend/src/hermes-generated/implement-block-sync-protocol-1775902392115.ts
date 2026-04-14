@@ -30,3 +30,4 @@ export class ImplementBlockSyncProtocol {
 }
 
 export default ImplementBlockSyncProtocol;
+// registered in hermes task queue
