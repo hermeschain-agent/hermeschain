@@ -1654,23 +1654,23 @@ export default function App() {
             </>
           ) : null}
         </div>
-
-        {!isMobile ? (
-          <nav className="app-nav">
-            <div className="tabs">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-                  onClick={() => handleTab(tab.id as TabType)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </nav>
-        ) : null}
       </header>
+
+      {!isMobile ? (
+        <nav className="app-nav">
+          <div className="tabs">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+                onClick={() => handleTab(tab.id as TabType)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      ) : null}
 
       {isMobile && mobileMenuOpen ? (
         <div className="mobile-menu" onClick={() => setMobileMenuOpen(false)}>
