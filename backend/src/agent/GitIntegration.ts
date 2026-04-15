@@ -48,6 +48,12 @@ export interface CommitInfo {
   date: string;
 }
 
+export interface GitCapabilityProbe {
+  git: 'ready' | 'unavailable';
+  push: 'ready' | 'unavailable';
+  reason?: string;
+}
+
 export class GitIntegration {
   private projectRoot: string;
   private mainBranch: string = 'main';
@@ -56,7 +62,10 @@ export class GitIntegration {
   private config: AgentConfig | null = null;
 
   constructor(projectRoot?: string) {
-    this.projectRoot = projectRoot || process.cwd();
+    this.projectRoot =
+      projectRoot ||
+      process.env.AGENT_REPO_ROOT ||
+      process.cwd();
     console.log(`[GIT] Initialized with project root: ${this.projectRoot}`);
     this.setupGitConfig();
   }
@@ -172,29 +181,59 @@ export class GitIntegration {
 
   // Configure git user and remote for commits
   private setupGitConfig(): void {
-    try {
-      if (!this.hasGitRepo()) {
-        console.log('[GIT] No git repository detected. Auto-commit will stay local-only and inactive.');
+    if (!this.hasGitRepo()) {
+      // In production containers the source is uploaded without a .git
+      // directory. If we have credentials, clone the repo metadata so the
+      // agent can commit + push. This is gated on the worker role so web
+      // containers never self-clone.
+      const token = process.env.GITHUB_TOKEN;
+      const repo = process.env.GITHUB_REPO;
+      const shouldClone =
+        process.env.AGENT_ROLE === 'worker' &&
+        process.env.AUTO_GIT_PUSH === 'true' &&
+        token &&
+        repo;
+
+      if (shouldClone) {
+        try {
+          console.log(`[GIT] No .git found — cloning ${repo} to ${this.projectRoot}`);
+          const tempDir = `/tmp/hermeschain-clone-${Date.now()}`;
+          const cloneUrl = `https://${token}@github.com/${repo}.git`;
+          execSync(`git clone --depth 50 ${cloneUrl} ${tempDir}`, {
+            stdio: 'pipe',
+            timeout: 60000,
+          });
+          execSync(`cp -r ${tempDir}/.git ${this.projectRoot}/`, { stdio: 'pipe' });
+          execSync(`rm -rf ${tempDir}`, { stdio: 'pipe' });
+          execSync(`git config user.name "${GIT_USER_NAME}"`, {
+            cwd: this.projectRoot,
+            stdio: 'pipe',
+          });
+          execSync(`git config user.email "${GIT_USER_EMAIL}"`, {
+            cwd: this.projectRoot,
+            stdio: 'pipe',
+          });
+          execSync(`git remote set-url origin ${cloneUrl}`, {
+            cwd: this.projectRoot,
+            stdio: 'pipe',
+          });
+          console.log('[GIT] Clone complete, git metadata in place.');
+        } catch (error: any) {
+          console.error('[GIT] Clone failed:', error?.message || error);
+          return;
+        }
+      } else {
+        console.log(
+          '[GIT] No git repository detected. Auto-commit will stay local-only and inactive.'
+        );
         return;
       }
-
-      // Configure user
-      execSync(`git config user.name "${GIT_USER_NAME}"`, {
-        cwd: this.projectRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
-      });
-      execSync(`git config user.email "${GIT_USER_EMAIL}"`, {
-        cwd: this.projectRoot,
-        encoding: 'utf-8',
-        stdio: 'pipe'
-      });
-
-      this.initialized = true;
-      console.log(`[GIT] Configured git user: ${GIT_USER_NAME} <${GIT_USER_EMAIL}>`);
-    } catch (error) {
-      console.error('[GIT] Failed to configure git:', error);
     }
+
+    this.initialized = true;
+    console.log(
+      `[GIT] Using per-command git author identity: ${GIT_USER_NAME} <${GIT_USER_EMAIL}>`
+    );
   }
 
   // Derive a detailed conventional commit message from a file path
@@ -386,6 +425,46 @@ export class GitIntegration {
     }
   }
 
+  probeCapabilities(): GitCapabilityProbe {
+    if (!this.hasGitRepo()) {
+      return {
+        git: 'unavailable',
+        push: 'unavailable',
+        reason: 'Git metadata is unavailable in this workspace.',
+      };
+    }
+
+    try {
+      this.execGit('rev-parse --is-inside-work-tree', true);
+    } catch (error: any) {
+      return {
+        git: 'unavailable',
+        push: 'unavailable',
+        reason: error?.message || 'Git repository check failed.',
+      };
+    }
+
+    if (!AUTO_PUSH_ENABLED) {
+      return {
+        git: 'ready',
+        push: 'unavailable',
+        reason: 'AUTO_GIT_PUSH is disabled.',
+      };
+    }
+
+    try {
+      this.execGit('fetch --dry-run --all', true);
+      this.execGit('push --dry-run', true);
+      return { git: 'ready', push: 'ready' };
+    } catch (error: any) {
+      return {
+        git: 'ready',
+        push: 'unavailable',
+        reason: error?.message || 'Git push probe failed.',
+      };
+    }
+  }
+
   // Execute git command safely
   private execGit(command: string, silent: boolean = false): string {
     if (!this.hasGitRepo()) {
@@ -397,6 +476,13 @@ export class GitIntegration {
         cwd: this.projectRoot,
         encoding: 'utf-8',
         timeout: 30000,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: GIT_USER_NAME,
+          GIT_AUTHOR_EMAIL: GIT_USER_EMAIL,
+          GIT_COMMITTER_NAME: GIT_USER_NAME,
+          GIT_COMMITTER_EMAIL: GIT_USER_EMAIL,
+        },
         stdio: silent ? 'pipe' : undefined
       });
       return result.trim();
