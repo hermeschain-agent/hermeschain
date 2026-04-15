@@ -68,8 +68,8 @@
   /* Layout */
   --content-max: 1600px;
   --content-pad: clamp(16px, 3vw, 40px);
-  --app-header-h: clamp(96px, 13vh, 128px);
-  --app-nav-h: 72px;
+  --app-header-h: clamp(120px, 16vh, 160px);
+  --app-nav-h: 0px;
   /* Zero radius everywhere — pixel art has no curves. */
   --radius-sm: 0;
   --radius-md: 0;
@@ -194,11 +194,12 @@ a:hover { text-decoration-color: var(--cream); }
   background: var(--bg);
   border-bottom: 1px solid var(--cream-dim);
   padding: 14px var(--content-pad);
-  height: var(--app-header-h);
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: clamp(20px, 3vw, 48px);
+  row-gap: 4px;
   align-items: center;
-  justify-content: space-between;
-  gap: clamp(20px, 3vw, 48px);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -207,12 +208,16 @@ a:hover { text-decoration-color: var(--cream); }
   background: rgba(4, 28, 28, 0.88);
 }
 
+/* Logo occupies column 1, spans both rows of the top band. */
 .app-topband .logo,
 .app-header .logo {
+  grid-column: 1;
+  grid-row: 1 / span 2;
   display: flex;
   align-items: center;
   gap: clamp(12px, 1.5vw, 20px);
   text-decoration: none;
+  align-self: center;
 }
 
 .app-topband .logo-mark,
@@ -262,8 +267,11 @@ a:hover { text-decoration-color: var(--cream); }
 
 .app-topband .header-right,
 .app-header .header-right {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 16px;
 }
 
@@ -283,17 +291,17 @@ a:hover { text-decoration-color: var(--cream); }
 /* ---- Navigation tabs ---- */
 
 .app-nav {
-  background: var(--bg);
-  border-bottom: 1px solid var(--cream-dim);
-  padding: 14px var(--content-pad);
+  background: transparent;
+  border: none;
+  padding: 0;
   overflow-x: auto;
   overflow-y: hidden;
   flex-shrink: 0;
   scrollbar-width: none;
   image-rendering: pixelated;
-  position: sticky;
-  top: var(--app-header-h);
-  z-index: 50;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
 }
 .app-nav::-webkit-scrollbar { display: none; }
 .app-nav .tabs {
@@ -302,7 +310,6 @@ a:hover { text-decoration-color: var(--cream); }
   align-items: center;
   flex-wrap: nowrap;
   width: max-content;
-  margin: 0 auto;
   min-width: max-content;
 }
 
