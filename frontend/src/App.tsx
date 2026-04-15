@@ -1602,10 +1602,13 @@ export default function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="logo" onClick={() => handleTab('terminal')} style={{ cursor: 'pointer' }}>
-          <div className="logo-mark">
-            <Logo />
-          </div>
-          <span className="logo-text"><span>HERMES</span><span>CHAIN</span></span>
+          <span className="logo-text">
+            <span className="logo-line">
+              <span>HERMES</span>
+              <span className="logo-mark" aria-hidden="true"><Logo /></span>
+            </span>
+            <span>CHAIN</span>
+          </span>
         </div>
 
         <div className="header-right">

@@ -213,8 +213,7 @@ a:hover { text-decoration-color: var(--cream); }
 }
 
 .app-header .logo-mark {
-  height: clamp(56px, 8vh, 80px);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--cream);
@@ -230,7 +229,10 @@ a:hover { text-decoration-color: var(--cream); }
   image-rendering: -moz-crisp-edges;
   image-rendering: crisp-edges;
 }
-.app-header .logo-mark .hermes-mark { height: clamp(56px, 8vh, 80px); }
+.app-header .logo-mark .hermes-mark {
+  height: clamp(48px, 7vh, 72px);
+  width: auto;
+}
 .hero-logo .hermes-mark { height: clamp(96px, 14vh, 148px); }
 .chat-empty-logo .hermes-mark { height: 72px; }
 
@@ -245,9 +247,15 @@ a:hover { text-decoration-color: var(--cream); }
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
+  gap: 4px;
 }
 .app-header .logo-text > span {
   display: block;
+}
+.app-header .logo-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .app-header .header-right {
