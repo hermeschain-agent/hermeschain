@@ -1600,14 +1600,12 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
+      <header className="app-topband">
         <div className="logo" onClick={() => handleTab('terminal')} style={{ cursor: 'pointer' }}>
+          <span className="logo-mark" aria-hidden="true"><Logo /></span>
           <span className="logo-text">
-            <span className="logo-line">
-              <span>HERMES</span>
-              <span className="logo-mark" aria-hidden="true"><Logo /></span>
-            </span>
-            <span>CHAIN</span>
+            <span className="logo-line logo-line--top">HERMES</span>
+            <span className="logo-line logo-line--bottom">CHAIN</span>
           </span>
         </div>
 
@@ -1656,6 +1654,22 @@ export default function App() {
             </>
           ) : null}
         </div>
+
+        {!isMobile ? (
+          <nav className="app-nav">
+            <div className="tabs">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+                  onClick={() => handleTab(tab.id as TabType)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </nav>
+        ) : null}
       </header>
 
       {isMobile && mobileMenuOpen ? (
@@ -1694,22 +1708,6 @@ export default function App() {
             </div>
           </div>
         </div>
-      ) : null}
-
-      {!isMobile ? (
-        <nav className="app-nav">
-          <div className="tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => handleTab(tab.id as TabType)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </nav>
       ) : null}
 
       <div className={`app-body ${isMobile ? 'mobile' : 'with-dock'}`}>
