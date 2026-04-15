@@ -68,7 +68,7 @@
   /* Layout */
   --content-max: 1600px;
   --content-pad: clamp(16px, 3vw, 40px);
-  --app-header-h: clamp(56px, 8vh, 72px);
+  --app-header-h: clamp(72px, 11vh, 104px);
   --app-nav-h: 72px;
   /* Zero radius everywhere — pixel art has no curves. */
   --radius-sm: 0;
@@ -213,7 +213,7 @@ a:hover { text-decoration-color: var(--cream); }
 }
 
 .app-header .logo-mark {
-  height: 40px;
+  height: clamp(56px, 8vh, 80px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -230,18 +230,18 @@ a:hover { text-decoration-color: var(--cream); }
   image-rendering: -moz-crisp-edges;
   image-rendering: crisp-edges;
 }
-.app-header .logo-mark .hermes-mark { height: 40px; }
+.app-header .logo-mark .hermes-mark { height: clamp(56px, 8vh, 80px); }
 .hero-logo .hermes-mark { height: clamp(96px, 14vh, 148px); }
 .chat-empty-logo .hermes-mark { height: 72px; }
 
 .app-header .logo-text {
   font-family: var(--font-display);
-  font-size: var(--fs-md);
+  font-size: clamp(22px, 2.6vw + 8px, 38px);
   font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   color: var(--fg-muted);
-  line-height: 0.95;
+  line-height: 0.9;
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
