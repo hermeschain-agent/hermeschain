@@ -73,7 +73,7 @@ export async function validateBlockWithAI(
   
   // If no API key, use heuristic validation
   if (!isConfigured()) {
-    console.log('[AI] No OPENROUTER_API_KEY — using heuristic validation');
+    console.log('[AI] No ANTHROPIC_API_KEY — using heuristic validation');
     return heuristicValidation(block, previousBlock);
   }
   
@@ -249,4 +249,4 @@ export function getValidationStats(): {
   };
 }
 
-console.log('[AI] AI Validator loaded', isConfigured() ? '(Hermes via OpenRouter)' : '(heuristic mode)');
+console.log('[AI] AI Validator loaded', isConfigured() ? '(Hermes via Anthropic)' : '(heuristic mode)');

@@ -143,6 +143,52 @@ export class StateManager {
     return this.accounts.get(address)?.balance ?? 0n;
   }
 
+  async refreshAccount(address: string): Promise<void> {
+    try {
+      const result = await db.query(
+        `
+        SELECT *
+        FROM account_state
+        WHERE address = $1
+        LIMIT 1
+        `,
+        [address]
+      );
+
+      const row = result.rows?.[0];
+      if (!row) {
+        return;
+      }
+
+      this.accounts.set(address, {
+        address: row.address,
+        balance: BigInt(row.balance),
+        nonce: row.nonce,
+        codeHash: row.code_hash,
+        storageRoot: row.storage_root,
+      });
+    } catch (error) {
+      console.error('[STATE] Failed to refresh account from DB:', error);
+    }
+  }
+
+  async refreshAllAccounts(): Promise<void> {
+    try {
+      const result = await db.query('SELECT * FROM account_state');
+      for (const row of result.rows || []) {
+        this.accounts.set(row.address, {
+          address: row.address,
+          balance: BigInt(row.balance),
+          nonce: row.nonce,
+          codeHash: row.code_hash,
+          storageRoot: row.storage_root,
+        });
+      }
+    } catch (error) {
+      console.error('[STATE] Failed to refresh state snapshot from DB:', error);
+    }
+  }
+
   // Get account nonce
   getNonce(address: string): number {
     return this.accounts.get(address)?.nonce ?? 0;
