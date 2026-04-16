@@ -619,17 +619,23 @@ export class AgentExecutor {
     try {
       const branch = execSync('git branch --show-current', {
         cwd: this.projectRoot,
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        maxBuffer: 16 * 1024 * 1024,
       }).trim();
 
-      const status = execSync('git status --porcelain', {
+      // Limit to first 200 lines so node_modules / large untracked sets
+      // can't blow the default 1MB buffer (ENOBUFS).
+      const status = execSync('git status --porcelain | head -n 200', {
         cwd: this.projectRoot,
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        maxBuffer: 16 * 1024 * 1024,
+        shell: '/bin/sh',
       });
 
       const lastCommit = execSync('git log -1 --oneline', {
         cwd: this.projectRoot,
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        maxBuffer: 16 * 1024 * 1024,
       }).trim();
 
       return {

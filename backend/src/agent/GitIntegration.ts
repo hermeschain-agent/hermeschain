@@ -476,6 +476,7 @@ export class GitIntegration {
         cwd: this.projectRoot,
         encoding: 'utf-8',
         timeout: 30000,
+        maxBuffer: 64 * 1024 * 1024,
         env: {
           ...process.env,
           GIT_AUTHOR_NAME: GIT_USER_NAME,
