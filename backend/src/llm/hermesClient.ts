@@ -334,9 +334,35 @@ function fromAnthropicResponse(data: any): HermesResponse {
   };
 }
 
+// Anti-guzzler circuit breaker: when Anthropic says we're out of credits
+// (or auth-broken), pause all calls for a long cooldown instead of retrying
+// every few seconds. Avoids burning rate-limit headroom and spamming logs.
+const CREDIT_BACKOFF_MS = Number(process.env.HERMES_CREDIT_BACKOFF_MS) || 60 * 60 * 1000;
+let circuitBreakerUntil = 0;
+let circuitBreakerReason = '';
+
+function isFatalProviderBody(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('credit balance is too low') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('billing') ||
+    lower.includes('authentication_error')
+  );
+}
+
 async function fetchAnthropic(body: Record<string, unknown>): Promise<any> {
   if (!isConfigured()) {
     throw createError('missing_key');
+  }
+
+  const now = Date.now();
+  if (circuitBreakerUntil > now) {
+    const minutesLeft = Math.ceil((circuitBreakerUntil - now) / 60000);
+    throw createError('provider_error', {
+      message: `Hermes circuit breaker open for ${minutesLeft}m: ${circuitBreakerReason}`,
+      status: 503,
+    });
   }
 
   const controller = new AbortController();
@@ -358,6 +384,17 @@ async function fetchAnthropic(body: Record<string, unknown>): Promise<any> {
       console.error(
         `[HERMES] Anthropic ${response.status} error body: ${text.slice(0, 800)}`
       );
+      // Trip the circuit breaker on fatal billing/auth errors so we stop
+      // burning calls until a human top-ups credits or rotates the key.
+      if (response.status === 400 || response.status === 401 || response.status === 403) {
+        if (isFatalProviderBody(text)) {
+          circuitBreakerUntil = Date.now() + CREDIT_BACKOFF_MS;
+          circuitBreakerReason = snippet;
+          console.error(
+            `[HERMES] Circuit breaker OPEN for ${CREDIT_BACKOFF_MS / 60000}min — ${snippet}`
+          );
+        }
+      }
       throw createError('provider_error', {
         message: `Anthropic returned HTTP ${response.status}: ${snippet}`,
         status: response.status,

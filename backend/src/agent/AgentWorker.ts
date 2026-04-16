@@ -8,6 +8,7 @@ import { agentExecutor, AGENT_TOOLS_OAI } from './AgentExecutor';
 import { taskSources } from './TaskSources';
 import { gitIntegration } from './GitIntegration';
 import { agentTaskStore } from './AgentTaskStore';
+import { agentRuntimeStore } from './AgentRuntimeStore';
 import { ciMonitor } from './CIMonitor';
 import { skillManager } from './SkillManager';
 import { COMMIT_WINDOW_MINUTES, getRuntimeCommitWindowMinutes } from './TaskBacklog';
@@ -20,6 +21,7 @@ import {
 import {
   AgentMode,
   AgentEffectiveMode,
+  AgentRuntimeSnapshot,
   TaskRunStatus,
   TaskSelection,
   VerificationPlan,
@@ -146,11 +148,13 @@ class AgentWorker {
     this.state.repoRoot = config.repoRoot;
     this.state.repoRootHealth = config.repoRootHealth;
     this.state.canWriteScopes = config.effectiveMode === 'real' ? config.canWriteScopes : [];
+    this.persistRuntimeState();
   }
 
   private async initializeRuntime(): Promise<void> {
     if (this.runtimeInitialized) return;
 
+    await agentRuntimeStore.initialize();
     await agentMemory.initialize();
     await agentGoals.initialize();
     await agentTaskStore.initialize();
@@ -172,6 +176,47 @@ class AgentWorker {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  private buildRuntimeSnapshot(): AgentRuntimeSnapshot {
+    return {
+      role: this.config.role,
+      mode: this.state.mode,
+      isWorking: this.state.isWorking,
+      runStatus: this.state.runStatus,
+      verificationStatus: this.state.verificationStatus,
+      blockedReason: this.state.blockedReason,
+      lastFailure: this.state.lastFailure,
+      repoRoot: this.state.repoRoot,
+      repoRootHealth: this.state.repoRootHealth,
+      canWriteScopes: this.state.canWriteScopes,
+      currentTask: this.state.currentTask
+        ? {
+            id: this.state.currentTask.id,
+            title: this.state.currentTask.title,
+            type: this.state.currentTask.type,
+            agent: this.state.currentTask.agent,
+          }
+        : null,
+      currentOutput: this.state.currentOutput,
+      currentDecision: this.state.currentDecision,
+      heartbeatCount: this.state.heartbeatCount,
+      brainActive: this.state.brainActive,
+      agentEnabled: this.config.effectiveMode !== 'disabled',
+      startupIssues: this.config.startupIssues,
+      capabilities: {
+        workspace: this.config.workspaceReady ? 'ready' : 'unavailable',
+        git: this.config.gitAvailable ? 'ready' : 'unavailable',
+        push: this.config.pushAvailable ? 'ready' : 'unavailable',
+        llm: this.config.modelConfigured ? 'ready' : 'unavailable',
+      },
+      updatedAt: new Date().toISOString(),
+      workerHeartbeatAt: this.isRunning ? new Date().toISOString() : null,
+    };
+  }
+
+  private persistRuntimeState(): void {
+    void agentRuntimeStore.saveSnapshot(this.buildRuntimeSnapshot());
+  }
+
   private async waitForCommitWindow(runStartedAtMs: number): Promise<void> {
     const runtimeCommitWindowMinutes = getRuntimeCommitWindowMinutes();
     const targetWindowMs = runtimeCommitWindowMinutes * 60 * 1000;
@@ -189,6 +234,7 @@ class AgentWorker {
       commitWindowMinutes: runtimeCommitWindowMinutes,
       plannedCommitWindowMinutes: COMMIT_WINDOW_MINUTES,
     });
+    this.persistRuntimeState();
 
     await this.delay(remainingMs);
   }
@@ -202,6 +248,7 @@ class AgentWorker {
       if (!this.isRunning) return;
       this.state.heartbeatCount += 1;
       await agentMemory.updateWorkingContext({ lastHeartbeat: new Date() });
+      this.persistRuntimeState();
       this.broadcast('heartbeat', {
         count: this.state.heartbeatCount,
         mode: this.config.effectiveMode,
@@ -326,7 +373,10 @@ class AgentWorker {
 
     const changedFiles = new Set<string>();
     let fullOutput = '';
-    const maxIterations = 10;
+    // Anti-guzzler: tighten the per-task LLM budget. Was 10 iterations × 1800
+    // tokens. Now 6 × 1024, configurable via env so we can tune without redeploy.
+    const maxIterations = Number(process.env.AGENT_MAX_ITERATIONS) || 6;
+    const maxTokensPerCall = Number(process.env.AGENT_MAX_TOKENS) || 1024;
 
     this.currentAbortController = new AbortController();
     agentExecutor.setExecutionScopes(selection.editScopes);
@@ -337,7 +387,7 @@ class AgentWorker {
           messages,
           tools: AGENT_TOOLS_OAI,
           temperature: 0.2,
-          maxTokens: 1800,
+          maxTokens: maxTokensPerCall,
         });
 
         const choice = response.choices?.[0];
@@ -348,6 +398,7 @@ class AgentWorker {
         if (assistantText) {
           fullOutput += assistantText;
           this.state.currentOutput = fullOutput;
+          this.persistRuntimeState();
           this.broadcast('text', assistantText);
           addAgentLog('analysis', assistantText, selection.sourceTask.id, selection.sourceTask.title, {
             phase: this.state.runStatus,
@@ -379,6 +430,7 @@ class AgentWorker {
             tool: toolCall.function.name,
             input: toolInput,
           });
+          this.persistRuntimeState();
           addAgentLog(
             'tool_use',
             `Using tool: ${toolCall.function.name}`,
@@ -412,6 +464,7 @@ class AgentWorker {
           }
 
           this.broadcast('tool_result', toolResultPayload);
+          this.persistRuntimeState();
 
           messages.push({
             role: 'tool',
@@ -452,6 +505,7 @@ class AgentWorker {
   private async verifyRun(selection: TaskSelection, changedFiles: string[]): Promise<VerificationResult> {
     this.state.runStatus = 'verifying';
     this.state.verificationStatus = 'running';
+    this.persistRuntimeState();
     this.broadcast('verification_start', {
       sourceTaskId: selection.sourceTask.id,
       verificationPlan: selection.verificationPlan,
@@ -583,6 +637,7 @@ class AgentWorker {
 
       this.state.lastFailure = failureReason;
       this.state.verificationStatus = verificationStatus;
+      this.persistRuntimeState();
       this.broadcast('error', {
         message: failureReason,
         mode,
@@ -623,6 +678,7 @@ class AgentWorker {
       selection.objectiveTags,
       `Verified run completed: ${selection.task.title}`
     );
+    this.persistRuntimeState();
 
     this.broadcast('task_complete', {
       taskId: selection.sourceTask.id,
@@ -661,6 +717,7 @@ class AgentWorker {
     this.state.lastFailure = result.failureReason || result.blockedReason || result.summary;
     this.state.blockedReason = result.blockedReason || null;
     this.state.verificationStatus = result.verificationStatus;
+    this.persistRuntimeState();
 
     if (terminalStatus === 'blocked') {
       this.broadcast('task_blocked', {
@@ -705,6 +762,7 @@ class AgentWorker {
     this.state.runStatus = 'idle';
     this.state.verificationStatus = 'pending';
     this.state.blockedReason = null;
+    this.persistRuntimeState();
   }
 
   async start(): Promise<void> {
@@ -719,6 +777,7 @@ class AgentWorker {
 
     if (this.config.effectiveMode === 'disabled') {
       this.state.mode = 'disabled';
+      this.persistRuntimeState();
       this.broadcast('status', {
         status: 'disabled',
         issues: this.config.startupIssues,
@@ -728,9 +787,23 @@ class AgentWorker {
 
     await this.initializeRuntime();
 
+    if (this.config.role === 'worker' && this.config.effectiveMode === 'real') {
+      const probe = gitIntegration.probeCapabilities();
+      this.config.gitAvailable = probe.git === 'ready';
+      this.config.pushAvailable = probe.push === 'ready';
+
+      if (
+        probe.reason &&
+        !this.config.startupIssues.some((issue) => issue === probe.reason)
+      ) {
+        this.config.startupIssues.push(probe.reason);
+      }
+    }
+
     this.isRunning = true;
     this.state.mode = this.config.effectiveMode;
     this.state.brainActive = this.config.effectiveMode === 'real';
+    this.persistRuntimeState();
     this.broadcast('status', {
       status: 'started',
       mode: this.config.effectiveMode,
@@ -761,6 +834,7 @@ class AgentWorker {
             reasoning: 'Read-only demo mode is active; no repository changes will be attempted.',
           };
           this.state.runStatus = 'executing';
+          this.persistRuntimeState();
           this.broadcast('task_start', {
             task,
             mode: 'demo',
@@ -783,6 +857,7 @@ class AgentWorker {
         const selection = await taskSources.getNextTask();
         if (!selection) {
           this.state.runStatus = 'idle';
+          this.persistRuntimeState();
           this.broadcast('status', {
             status: 'idle',
             mode: 'real',
@@ -808,6 +883,7 @@ class AgentWorker {
         this.state.verificationStatus = 'pending';
         this.state.blockedReason = null;
         this.state.lastFailure = null;
+        this.persistRuntimeState();
 
         await agentMemory.setFocus(selection.task.title);
 
@@ -837,6 +913,7 @@ class AgentWorker {
         );
 
         this.state.runStatus = 'executing';
+        this.persistRuntimeState();
         await agentTaskStore.updateRun(run.id, { status: 'analyzing' });
         const { output, changedFiles } = await this.streamRealTask(selection, contextPack);
 
@@ -863,18 +940,23 @@ class AgentWorker {
         if (verification.passed && completionResult.success) {
           await this.waitForCommitWindow(runStartedAtMs);
         } else {
-          await this.delay(30000);
+          // Anti-guzzler: bumped from 30s to 5min after a failed task so
+          // we don't burn through the credit-exhausted circuit-breaker
+          // window with a fresh failed task every 30 seconds.
+          await this.delay(5 * 60 * 1000);
         }
       } catch (error: any) {
         console.error('[AGENT] Error in worker loop:', error);
         this.state.lastFailure = error.message;
         this.state.runStatus = 'failed';
+        this.persistRuntimeState();
         this.broadcast('error', {
           message: error.message,
           mode: this.config.effectiveMode,
         });
         addAgentLog('error', error.message);
-        await this.delay(5000);
+        // Anti-guzzler: 5s → 60s on uncaught loop errors.
+        await this.delay(60 * 1000);
       }
     }
   }
@@ -890,6 +972,7 @@ class AgentWorker {
     }
     ciMonitor.stop();
     chainObserver.stop();
+    this.persistRuntimeState();
     this.broadcast('status', { status: 'stopped', mode: this.config.effectiveMode });
   }
 }
