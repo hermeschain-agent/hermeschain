@@ -2371,24 +2371,24 @@ button { font-family: inherit; cursor: pointer; }
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   min-height: 100%;
-  padding-left: 10px;
+  padding-left: 56px;
   font-family: var(--font-mono);
+  /* Reset CSS counter so each row gets a sequential line number */
+  counter-reset: agent-line;
 }
 
+/* Vertical gutter line + subtle background for the line-number column */
 .agent-terminal__stream::before {
-  content: '|';
+  content: '';
   position: absolute;
-  left: 0;
+  left: 44px;
   top: 0;
   bottom: 0;
-  width: auto;
-  background: none;
-  color: rgba(112, 255, 173, 0.22);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.25;
+  width: 1px;
+  background: rgba(112, 255, 173, 0.18);
+  pointer-events: none;
 }
 
 .agent-terminal__empty {
@@ -2427,7 +2427,43 @@ button { font-family: inherit; cursor: pointer; }
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.55;
+  counter-increment: agent-line;
+  padding: 1px 0;
+  border-left: 2px solid transparent;
+  transition: background 80ms steps(2, end);
 }
+
+/* Line-number gutter — printed via CSS counter so React doesn't have to thread indexes. */
+.agent-row::before {
+  content: counter(agent-line, decimal-leading-zero);
+  position: absolute;
+  left: -54px;
+  top: 0;
+  width: 38px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: rgba(112, 255, 173, 0.35);
+  letter-spacing: 0.02em;
+  user-select: none;
+  pointer-events: none;
+}
+
+.agent-row:hover {
+  background: rgba(112, 255, 173, 0.04);
+  border-left-color: rgba(112, 255, 173, 0.4);
+}
+.agent-row:hover::before {
+  color: rgba(112, 255, 173, 0.7);
+}
+
+/* Per-row-type accent on the gutter line number */
+.agent-row--tool::before        { color: rgba(112, 200, 255, 0.6); }
+.agent-row--command::before     { color: rgba(112, 255, 173, 0.6); }
+.agent-row--thought::before     { color: rgba(255, 230, 173, 0.5); }
+.agent-row--deploy::before      { color: rgba(120, 255, 200, 0.7); }
+.agent-row--error::before       { color: rgba(255, 130, 130, 0.7); }
+.agent-row--header::before      { color: rgba(255, 230, 203, 0.55); }
 
 .agent-row__glyph {
   position: relative;
