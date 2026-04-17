@@ -929,9 +929,11 @@ Live context:
   // When running as web, proxy agent status to the worker so the frontend
   // sees live task/run state from the container that's actually doing work.
   // Worker is reachable over Railway's private network at the internal domain.
+  // Prefer explicit WORKER_INTERNAL_URL; fall back to the public Railway
+  // domain since private-network DNS+port assumptions aren't guaranteed.
   const WORKER_INTERNAL_URL =
     process.env.WORKER_INTERNAL_URL ||
-    'http://hermeschain-worker.railway.internal:4000';
+    'https://hermeschain-worker-production.up.railway.app';
 
   app.get('/api/agent/status', async (req, res) => {
     if (process.env.AGENT_ROLE !== 'worker') {
@@ -974,8 +976,8 @@ Live context:
           });
           return;
         }
-      } catch {
-        // Fall through to local payload when the worker is unreachable.
+      } catch (e: any) {
+        console.error('[PROXY] worker /status fetch failed:', e?.message || e);
       }
     }
     res.json(await buildAgentStatusPayload());
