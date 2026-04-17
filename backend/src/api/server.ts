@@ -12,6 +12,7 @@ import { EventBus } from '../events/EventBus';
 import { stateManager } from '../blockchain/StateManager';
 import { db, cache } from '../database/db';
 import { createTables } from '../database/schema';
+import { getHermesConfigStatus, getPublicHermesError } from '../llm/hermesClient';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -20,12 +21,15 @@ dotenv.config();
 export let io: SocketIOServer | null = null;
 
 async function main() {
+  const hermesConfig = getHermesConfigStatus();
   console.log('[INIT] Starting HERMESCHAIN — powered by Nous Hermes\n');
   console.log('[ENV] Environment check:');
   console.log(`   DATABASE_URL:       ${process.env.DATABASE_URL ? '[OK]' : '[--]'}`);
   console.log(`   REDIS_URL:          ${process.env.REDIS_URL ? '[OK]' : '[--]'}`);
-  console.log(`   OPENROUTER_API_KEY: ${process.env.OPENROUTER_API_KEY ? '[OK]' : '[--]'}`);
-  console.log(`   HERMES_MODEL:       ${process.env.HERMES_MODEL || 'nousresearch/hermes-4-405b (default)'}\n`);
+  console.log(`   LLM_PROVIDER:       ${hermesConfig.provider}`);
+  console.log(`   ANTHROPIC_API_KEY:  ${hermesConfig.configured ? '[OK]' : '[--]'}`);
+  console.log(`   HERMES_MODEL:       ${hermesConfig.model}`);
+  console.log(`   AGENT_ROLE:         ${process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web'}\n`);
 
   try {
     // Connect to database
@@ -52,6 +56,7 @@ async function main() {
   await txPool.initialize();
   await stateManager.initialize();
   await validatorManager.initialize();
+  (global as any).transactionPool = txPool;
   
   console.log('[STATE] Initial state loaded:');
   console.log(`   State Root: ${stateManager.getStateRoot().substring(0, 20)}...`);
@@ -62,6 +67,19 @@ async function main() {
   app.use(cors());
   app.use(express.json());
 
+  const syncSharedReadState = async () => {
+    if (process.env.AGENT_ROLE === 'worker') return;
+    await chain.refreshFromDb();
+    await stateManager.refreshAllAccounts();
+    await txPool.getPendingTransactions(200);
+  };
+
+  const { authRouter, initializeAuthTables, ipRateLimit, requireApiKey } =
+    await import('./auth');
+  await initializeAuthTables();
+  app.use('/api/auth', authRouter);
+  console.log('[AUTH] Authentication system ready');
+
   // Health check endpoint for Railway
   app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok' });
@@ -69,21 +87,32 @@ async function main() {
 
   // API status check (no key exposure)
   app.get('/api/config/status', (req, res) => {
+    const role = process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web';
     res.json({
-      openrouterKey: process.env.OPENROUTER_API_KEY ? 'configured' : 'not_set'
+      llmProvider: hermesConfig.provider,
+      llmConfigured: hermesConfig.configured,
+      model: hermesConfig.model,
+      baseUrl: hermesConfig.baseUrl,
+      agentRole: role,
+      serviceRole: role,
+      agentRepoRootConfigured: !!process.env.AGENT_REPO_ROOT,
+      autoGitPush: process.env.AUTO_GIT_PUSH === 'true',
     });
   });
 
-  app.get('/api/status', (req, res) => {
+  app.get('/api/status', async (req, res) => {
+    await syncSharedReadState();
     res.json({
       status: 'online',
       chainLength: chain.getChainLength(),
       pendingTransactions: txPool.getPendingCount(),
       validators: validatorManager.getAllValidators().length,
       genesisTime: chain.getGenesisTime(),
+      chainAgeMs: Date.now() - chain.getGenesisTime(),
       totalTransactions: chain.getTotalTransactions(),
       storedTransactions: chain.getStoredTransactionCount(),
-      uptime: Date.now() - chain.getGenesisTime(),
+      uptime: process.uptime() * 1000,
+      serverUptimeMs: process.uptime() * 1000,
       redisConnected: cache.isConnected(),
       stateRoot: stateManager.getStateRoot(),
       totalSupply: stateManager.getTotalSupply().toString(),
@@ -92,7 +121,8 @@ async function main() {
   });
 
   // State endpoints
-  app.get('/api/state', (req, res) => {
+  app.get('/api/state', async (req, res) => {
+    await syncSharedReadState();
     res.json({
       stateRoot: stateManager.getStateRoot(),
       totalSupply: stateManager.formatBalance(stateManager.getTotalSupply()),
@@ -101,7 +131,8 @@ async function main() {
     });
   });
 
-  app.get('/api/state/account/:address', (req, res) => {
+  app.get('/api/state/account/:address', async (req, res) => {
+    await stateManager.refreshAccount(req.params.address);
     const account = stateManager.getAccount(req.params.address);
     if (account) {
       res.json({
@@ -120,7 +151,8 @@ async function main() {
     }
   });
 
-  app.get('/api/state/balance/:address', (req, res) => {
+  app.get('/api/state/balance/:address', async (req, res) => {
+    await stateManager.refreshAccount(req.params.address);
     const balance = stateManager.getBalance(req.params.address);
     res.json({
       address: req.params.address,
@@ -130,11 +162,13 @@ async function main() {
   });
 
   app.get('/api/blocks', async (req, res) => {
+    await syncSharedReadState();
     const blocks = chain.getAllBlocks();
     res.json(blocks.map(b => b.toJSON()));
   });
 
-  app.get('/api/blocks/:height', (req, res) => {
+  app.get('/api/blocks/:height', async (req, res) => {
+    await syncSharedReadState();
     const block = chain.getBlockByHeight(parseInt(req.params.height));
     if (block) {
       res.json(block.toJSON());
@@ -229,7 +263,7 @@ async function main() {
   });
 
   // Terminal chat endpoint — powered by Nous Hermes
-  app.post('/api/personality/:validator', async (req, res) => {
+  app.post('/api/personality/:validator', ipRateLimit(20), async (req, res) => {
     try {
       // Accept both 'message' and 'command' for flexibility
       const userMessage = req.body.message || req.body.command;
@@ -261,15 +295,18 @@ async function main() {
       // Return in format frontend expects
       res.json({ message: response, response });
     } catch (error) {
+      const providerError = getPublicHermesError(error);
       console.error('Terminal chat error:', error);
-      res.status(500).json({ 
-        error: (error as Error).message,
-        message: 'I encountered an error processing your request. Please try again.'
+      res.status(providerError.status).json({
+        error: providerError.message,
+        code: providerError.code,
+        providerError,
+        message: providerError.message,
       });
     }
   });
 
-  app.post('/api/personality/hermes/ritual', async (req, res) => {
+  app.post('/api/personality/hermes/ritual', ipRateLimit(20), async (req, res) => {
     try {
       const ritual = req.body.ritual as
         | 'explain_last_block'
@@ -450,10 +487,13 @@ Live context:
         sourceRefs,
       });
     } catch (error) {
+      const providerError = getPublicHermesError(error);
       console.error('Ritual error:', error);
-      res.status(500).json({
+      res.status(providerError.status).json({
         title: 'Ritual interrupted',
-        message: 'Hermes could not complete that ritual right now. Please try again.',
+        message: providerError.message,
+        code: providerError.code,
+        providerError,
         sourceRefs: [],
       });
     }
@@ -475,8 +515,14 @@ Live context:
   console.log('[WALLET] Wallet & faucet system ready');
 
   // ========== AGENT NETWORK ==========
-  const networkRouter = await import('./network');
-  app.use('/api/network', networkRouter.default);
+  const {
+    default: networkRouter,
+    initializeNetworkStore,
+    startNetworkHeartbeat,
+    stopNetworkHeartbeat,
+  } = await import('./network');
+  await initializeNetworkStore();
+  app.use('/api/network', networkRouter);
   console.log('[NETWORK] Multi-agent network ready');
   console.log('[x402] Payment protocol routes mounted at /api/network/x402/*');
 
@@ -511,11 +557,6 @@ Live context:
     }
   });
 
-  // ========== ADMIN DASHBOARD ==========
-  const { adminRouter } = await import('./admin');
-  app.use('/api/admin', adminRouter);
-  console.log('[ADMIN] Admin dashboard API ready');
-
   // ========== LOGS SYSTEM ==========
   const { logsRouter, initializeLogsTable, addLog } = await import('./logs');
   await initializeLogsTable();
@@ -524,12 +565,6 @@ Live context:
   // Make addLog available globally for agent logging
   (global as any).addLog = addLog;
   console.log('[LOGS] Logs system ready');
-
-  // ========== AUTH SYSTEM ==========
-  const { authRouter, initializeAuthTables } = await import('./auth');
-  await initializeAuthTables();
-  app.use('/api/auth', authRouter);
-  console.log('[AUTH] Authentication system ready');
 
   // ========== SKILLS + AGENT CONFIG ==========
   const {
@@ -540,11 +575,26 @@ Live context:
     agentEvents,
     agentMemory,
     agentTaskStore,
+    agentRuntimeStore,
     taskSources,
+    gitIntegration,
   } = await import('../agent');
   const agentConfig = createAgentConfig(process.cwd());
   configureAgentSubsystems(agentConfig);
   await skillManager.initialize();
+  await agentTaskStore.initialize();
+  await agentRuntimeStore.initialize();
+
+  if (agentConfig.role === 'worker') {
+    await startNetworkHeartbeat();
+  } else {
+    stopNetworkHeartbeat();
+  }
+
+  // ========== ADMIN DASHBOARD ==========
+  const { adminRouter } = await import('./admin');
+  app.use('/api/admin', requireApiKey('admin'), adminRouter);
+  console.log('[ADMIN] Admin dashboard API ready');
   
   // Skills API endpoints
   app.get('/api/skills', (req, res) => {
@@ -582,31 +632,156 @@ Live context:
   // Track connected SSE clients
   let agentViewerCount = 0;
 
-  const buildAgentStatusPayload = () => {
+  const parseGitLogEntry = (row: any) => {
+    const metadata = row.metadata || {};
+    const shortHash =
+      metadata.commit ||
+      row.content?.match(/commit\s+([a-f0-9]{7,40})/i)?.[1] ||
+      'unknown';
+
+    return {
+      hash: metadata.fullHash || shortHash,
+      shortHash,
+      message: metadata.message || row.content || 'Recent git activity',
+      author: metadata.author || 'Hermes',
+      date:
+        typeof row.timestamp === 'string'
+          ? row.timestamp
+          : new Date(row.timestamp || Date.now()).toISOString(),
+    };
+  };
+
+  const getSharedGitSnapshot = async (limit: number = 5) => {
+    const sharedRuntime = agentRuntimeStore.getLatestSnapshot();
+    const result = await db
+      .query(
+        `
+        SELECT timestamp, content, metadata
+        FROM agent_logs
+        WHERE type = 'git_commit'
+        ORDER BY timestamp DESC
+        LIMIT $1
+        `,
+        [limit]
+      )
+      .catch(() => ({ rows: [] as any[] }));
+
+    return {
+      role: agentConfig.role,
+      gitAvailable:
+        sharedRuntime?.capabilities?.git === 'ready' || agentConfig.gitAvailable,
+      pushAvailable:
+        sharedRuntime?.capabilities?.push === 'ready' || agentConfig.pushAvailable,
+      branch: agentConfig.gitAvailable ? gitIntegration.getCurrentBranch() : 'unavailable',
+      clean: agentConfig.gitAvailable ? gitIntegration.getStatus().clean : true,
+      changes: agentConfig.gitAvailable ? gitIntegration.getStatus().changes : [],
+      staged: agentConfig.gitAvailable ? gitIntegration.getStatus().staged : [],
+      recentCommits: (result.rows || []).map(parseGitLogEntry),
+      summary:
+        agentConfig.gitAvailable
+          ? gitIntegration.getSummary()
+          : sharedRuntime?.capabilities?.push === 'unavailable'
+            ? 'Worker runtime is active, but git push is unavailable in this environment.'
+            : 'Git activity is being observed from the shared worker runtime.',
+    };
+  };
+
+  const formatLogStreamText = (row: any): string => {
+    switch (row.type) {
+      case 'task_start':
+        return `$ begin_task :: ${row.content}\n`;
+      case 'analysis_start':
+        return `> [ANALYSIS] ${row.content}\n`;
+      case 'tool_use':
+        return `> [TOOL] ${row.content.replace(/^Using tool:\s*/i, '')}\n`;
+      case 'tool_result':
+        return `> [RESULT] ${row.content}\n`;
+      case 'verification_start':
+        return `> [VERIFY] ${row.content}\n`;
+      case 'verification_result':
+        return `> [PASS] ${row.content}\n`;
+      case 'task_complete':
+        return `> [DONE] ${row.content}\n`;
+      case 'task_blocked':
+        return `> [BLOCKED] ${row.content}\n`;
+      case 'git_commit':
+        return `> [RESULT] ${row.content}\n`;
+      case 'error':
+        return `> [ERROR] ${row.content}\n`;
+      default:
+        return `${row.content}\n`;
+    }
+  };
+
+  const buildAgentStatusPayload = async () => {
+    await syncSharedReadState();
     const state = agentWorker.getState();
+    const sharedRuntime = agentRuntimeStore.getLatestSnapshot();
+    const observedRuntime =
+      agentConfig.role === 'web' && sharedRuntime
+        ? sharedRuntime
+        : {
+            role: agentConfig.role,
+            mode: state.mode,
+            isWorking: state.isWorking,
+            runStatus: state.runStatus,
+            verificationStatus: state.verificationStatus,
+            blockedReason: state.blockedReason,
+            lastFailure: state.lastFailure,
+            repoRoot: state.repoRoot,
+            repoRootHealth: state.repoRootHealth,
+            canWriteScopes: state.canWriteScopes,
+            currentTask: state.currentTask
+              ? {
+                  id: state.currentTask.id,
+                  title: state.currentTask.title,
+                  type: state.currentTask.type,
+                  agent: state.currentTask.agent,
+                }
+              : null,
+            currentOutput: state.currentOutput,
+            currentDecision: state.currentDecision,
+            heartbeatCount: state.heartbeatCount,
+            brainActive: state.brainActive,
+            agentEnabled: agentConfig.effectiveMode !== 'disabled',
+            startupIssues: agentConfig.startupIssues,
+            capabilities: {
+              workspace: agentConfig.workspaceReady ? 'ready' : 'unavailable',
+              git: agentConfig.gitAvailable ? 'ready' : 'unavailable',
+              push: agentConfig.pushAvailable ? 'ready' : 'unavailable',
+              llm: agentConfig.modelConfigured ? 'ready' : 'unavailable',
+            },
+            updatedAt: new Date().toISOString(),
+            workerHeartbeatAt:
+              agentConfig.role === 'worker' ? new Date().toISOString() : null,
+          };
+    const workerHeartbeatAt =
+      observedRuntime.workerHeartbeatAt || observedRuntime.updatedAt || null;
+    const workerActive = workerHeartbeatAt
+      ? Date.now() - new Date(workerHeartbeatAt).getTime() < 90_000
+      : false;
     const currentRun = agentTaskStore.getCurrentRun();
     const recentRuns = agentTaskStore.getRecentRuns(20);
     const recentSuccessfulRuns = recentRuns.filter((run) => run.status === 'succeeded').slice(0, 5);
 
     return {
-      mode: state.mode,
-      streamMode: state.mode,
-      isWorking: state.isWorking,
-      runStatus: state.runStatus,
-      verificationStatus: state.verificationStatus,
-      blockedReason: state.blockedReason,
-      lastFailure: state.lastFailure,
-      repoRoot: state.repoRoot,
-      repoRootHealth: state.repoRootHealth,
-      canWriteScopes: state.canWriteScopes,
-      currentTask: state.currentTask ? {
-        id: state.currentTask.id,
-        title: state.currentTask.title,
-        type: state.currentTask.type,
-        agent: state.currentTask.agent,
-      } : null,
-      currentOutput: state.currentOutput,
-      currentDecision: state.currentDecision,
+      role: agentConfig.role,
+      serviceRole: agentConfig.role,
+      observedWorkerRole: observedRuntime.role,
+      statusSource: agentConfig.role === 'web' && sharedRuntime ? 'shared' : 'local',
+      mode: observedRuntime.mode,
+      streamMode: observedRuntime.mode,
+      isWorking: observedRuntime.isWorking,
+      runStatus: observedRuntime.runStatus,
+      verificationStatus: observedRuntime.verificationStatus,
+      blockedReason: observedRuntime.blockedReason,
+      lastFailure: observedRuntime.lastFailure,
+      repoRoot: observedRuntime.repoRoot,
+      repoRootHealth: observedRuntime.repoRootHealth,
+      canWriteScopes: observedRuntime.canWriteScopes,
+      currentTask: observedRuntime.currentTask,
+      currentOutput: observedRuntime.currentOutput,
+      currentDecision: observedRuntime.currentDecision,
       completedTaskCount: recentSuccessfulRuns.length,
       recentTasks: recentSuccessfulRuns.map((run) => ({
         title: run.title,
@@ -629,8 +804,11 @@ Live context:
       })),
       currentRunId: currentRun?.id || null,
       viewerCount: agentViewerCount,
-      agentEnabled: agentConfig.effectiveMode !== 'disabled',
-      startupIssues: agentConfig.startupIssues,
+      agentEnabled: observedRuntime.agentEnabled,
+      workerActive,
+      workerHeartbeatAt,
+      startupIssues: observedRuntime.startupIssues,
+      capabilities: observedRuntime.capabilities,
       genesisTimestamp: chain.getGenesisTime(),
       chainAgeMs: Date.now() - chain.getGenesisTime(),
       lastBlockTimestamp: chain.getLatestBlock()?.header.timestamp || null,
@@ -652,13 +830,21 @@ Live context:
     agentViewerCount++;
     console.log(`[AGENT] New viewer connected (total: ${agentViewerCount})`);
     
-    const payload = buildAgentStatusPayload();
-    
-    res.write(`data: ${JSON.stringify({
-      type: 'init',
-      data: payload,
-      timestamp: Date.now()
-    })}\n\n`);
+    void buildAgentStatusPayload().then((payload) => {
+      res.write(`data: ${JSON.stringify({
+        type: 'init',
+        data: payload,
+        timestamp: Date.now()
+      })}\n\n`);
+    }).catch(() => {
+      res.write(`data: ${JSON.stringify({
+        type: 'init',
+        data: {
+          error: 'Failed to build shared agent status payload.',
+        },
+        timestamp: Date.now()
+      })}\n\n`);
+    });
     
     // Subscribe to agent events
     const onChunk = (chunk: any) => {
@@ -670,12 +856,60 @@ Live context:
     };
     
     agentEvents.on('chunk', onChunk);
+    let lastLogSeenAt = new Date(Date.now() - 60 * 1000);
+
+    const statusPulse = setInterval(() => {
+      void buildAgentStatusPayload()
+        .then((payload) => {
+          res.write(`data: ${JSON.stringify({
+            type: 'status',
+            data: payload,
+            viewerCount: agentViewerCount,
+            timestamp: Date.now()
+          })}\n\n`);
+        })
+        .catch(() => {
+          clearInterval(statusPulse);
+        });
+    }, 5000);
+
+    const sharedLogPoll = setInterval(async () => {
+      if (agentConfig.role !== 'web') return;
+
+      try {
+        const result = await db.query(
+          `
+          SELECT id, timestamp, type, content, metadata
+          FROM agent_logs
+          WHERE timestamp > $1
+          ORDER BY timestamp ASC
+          LIMIT 50
+          `,
+          [lastLogSeenAt]
+        );
+
+        for (const row of result.rows || []) {
+          lastLogSeenAt = new Date(row.timestamp);
+          res.write(
+            `data: ${JSON.stringify({
+              type: 'text',
+              data: formatLogStreamText(row),
+              viewerCount: agentViewerCount,
+              timestamp: Date.now(),
+            })}\n\n`
+          );
+        }
+      } catch {
+        // Shared worker logs are best-effort here; status pulses still keep the rail honest.
+      }
+    }, 5000);
     
     // Send heartbeat every 10 seconds
     const heartbeat = setInterval(() => {
       try {
         res.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: Date.now(), viewerCount: agentViewerCount })}\n\n`);
       } catch (e) {
+        clearInterval(statusPulse);
         clearInterval(heartbeat);
       }
     }, 10000);
@@ -685,13 +919,66 @@ Live context:
       agentViewerCount--;
       console.log(`[AGENT] Viewer disconnected (total: ${agentViewerCount})`);
       agentEvents.off('chunk', onChunk);
+      clearInterval(statusPulse);
       clearInterval(heartbeat);
+      clearInterval(sharedLogPoll);
     });
   });
   
   // Get agent status
-  app.get('/api/agent/status', (req, res) => {
-    res.json(buildAgentStatusPayload());
+  // When running as web, proxy agent status to the worker so the frontend
+  // sees live task/run state from the container that's actually doing work.
+  // Worker is reachable over Railway's private network at the internal domain.
+  const WORKER_INTERNAL_URL =
+    process.env.WORKER_INTERNAL_URL ||
+    'http://hermeschain-worker.railway.internal:4000';
+
+  app.get('/api/agent/status', async (req, res) => {
+    if (process.env.AGENT_ROLE !== 'worker') {
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 4000);
+        const upstream = await fetch(`${WORKER_INTERNAL_URL}/status`, {
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+        if (upstream.ok) {
+          const workerData: any = await upstream.json();
+          // Merge worker runtime state into the web's own payload shape so
+          // frontend components keep working without changes.
+          const localPayload = await buildAgentStatusPayload();
+          res.json({
+            ...localPayload,
+            mode: workerData.agentMode || localPayload.mode,
+            streamMode: workerData.agentMode || localPayload.streamMode,
+            runStatus: workerData.runStatus || localPayload.runStatus,
+            verificationStatus:
+              workerData.verificationStatus || localPayload.verificationStatus,
+            isWorking: workerData.isWorking ?? localPayload.isWorking,
+            currentTask: workerData.currentTask || localPayload.currentTask,
+            lastFailure: workerData.lastFailure || localPayload.lastFailure,
+            blockedReason:
+              workerData.blockedReason || localPayload.blockedReason,
+            recentTasks: (workerData.recentSuccessful || []).slice(0, 5).map(
+              (r: any) => ({
+                title: r.title,
+                agent: r.agent || 'HERMES',
+                completedAt: r.completedAt,
+              })
+            ),
+            recentRuns: workerData.recentRuns || [],
+            completedTaskCount: (workerData.recentSuccessful || []).length,
+            agentEnabled: true,
+            capabilities: workerData.capabilities || localPayload.capabilities,
+            blockHeight: workerData.blockHeight ?? localPayload.blockHeight,
+          });
+          return;
+        }
+      } catch {
+        // Fall through to local payload when the worker is unreachable.
+      }
+    }
+    res.json(await buildAgentStatusPayload());
   });
 
   // Get persisted task runs (plus legacy completed-task alias)
@@ -754,6 +1041,7 @@ Live context:
   
   // Get recent blocks
   app.get('/api/chain/blocks', async (req, res) => {
+    await syncSharedReadState();
     const limit = parseInt(req.query.limit as string) || 20;
     const blocks = chain.getAllBlocks().slice(-limit).reverse();
     
@@ -776,6 +1064,7 @@ Live context:
   
   // Get block by height
   app.get('/api/chain/block/:height', async (req, res) => {
+    await syncSharedReadState();
     const height = parseInt(req.params.height);
     const block = chain.getBlockByHeight(height);
     
@@ -808,52 +1097,99 @@ Live context:
   app.get('/api/chain/transactions', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 40, 200);
     const query = String(req.query.query || '').trim().toLowerCase();
+    try {
+      const conditions: string[] = [];
+      const params: any[] = [];
 
-    const transactions = chain
-      .getAllBlocks()
-      .flatMap((block) =>
-        block.transactions.map((tx) => ({
-          hash: tx.hash,
-          from: tx.from,
-          to: tx.to,
-          value: tx.value.toString(),
-          gasPrice: tx.gasPrice.toString(),
-          gasLimit: tx.gasLimit.toString(),
-          nonce: tx.nonce,
-          timestamp: block.header.timestamp,
-          blockHeight: block.header.height,
-          blockHash: block.header.hash,
-          producer: block.header.producer,
-        }))
-      )
-      .reverse();
+      if (query) {
+        params.push(`%${query}%`);
+        params.push(query);
+        conditions.push(`
+          (
+            LOWER(t.hash) LIKE LOWER($${params.length - 1}) OR
+            LOWER(t.from_address) LIKE LOWER($${params.length - 1}) OR
+            LOWER(t.to_address) LIKE LOWER($${params.length - 1}) OR
+            LOWER(COALESCE(b.hash, '')) LIKE LOWER($${params.length - 1}) OR
+            CAST(COALESCE(t.block_height, -1) AS TEXT) = $${params.length}
+          )
+        `);
+      }
 
-    const filtered = query
-      ? transactions.filter(
-          (tx) =>
-            tx.hash.toLowerCase().includes(query) ||
-            tx.from.toLowerCase().includes(query) ||
-            tx.to.toLowerCase().includes(query) ||
-            String(tx.blockHeight) === query ||
-            tx.blockHash.toLowerCase().includes(query)
-        )
-      : transactions;
+      params.push(limit);
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const countParams = params.slice(0, params.length - 1);
+      const countResult = await db.query(
+        `
+        SELECT COUNT(*)::int AS count
+        FROM transactions t
+        LEFT JOIN blocks b ON b.height = t.block_height
+        ${where}
+        `,
+        countParams
+      );
+      const result = await db.query(
+        `
+        SELECT
+          t.hash,
+          t.from_address,
+          t.to_address,
+          t.value,
+          t.gas_price,
+          t.gas_limit,
+          t.nonce,
+          t.status,
+          t.created_at,
+          t.block_height,
+          b.hash AS block_hash,
+          b.producer
+        FROM transactions t
+        LEFT JOIN blocks b ON b.height = t.block_height
+        ${where}
+        ORDER BY t.created_at DESC
+        LIMIT $${params.length}
+        `,
+        params
+      );
 
-    res.json({
-      transactions: filtered.slice(0, limit),
-      total: filtered.length,
-      query,
-    });
+      const transactions = (result.rows || []).map((row) => ({
+        hash: row.hash,
+        from: row.from_address,
+        to: row.to_address,
+        value: String(Number(row.value) / 1e18),
+        gasPrice: row.gas_price?.toString?.() || '0',
+        gasLimit: row.gas_limit?.toString?.() || '0',
+        nonce: Number(row.nonce || 0),
+        timestamp: new Date(row.created_at).getTime(),
+        blockHeight: row.block_height === null ? null : Number(row.block_height),
+        blockHash: row.block_hash || null,
+        producer: row.producer || null,
+        status: row.status || 'confirmed',
+      }));
+
+      res.json({
+        transactions,
+        total: Number(countResult.rows?.[0]?.count || transactions.length),
+        query,
+      });
+    } catch (error) {
+      res.json({
+        transactions: [],
+        total: 0,
+        query,
+        error: 'Transaction index is unavailable right now.',
+      });
+    }
   });
   
   // Get chain stats
   app.get('/api/chain/stats', async (req, res) => {
+    await syncSharedReadState();
     const stats = chain.getStats();
     res.json({
       height: stats.height,
       totalTransactions: stats.totalTransactions,
       storedTransactions: stats.storedTransactions,
-      timeBasedTransactions: stats.totalTransactions,
+      timeBasedTransactions: stats.storedTransactions,
       genesisTime: stats.genesisTime,
       latestBlockTime: stats.latestBlockTime,
       avgBlockTime: stats.avgBlockTime
@@ -862,6 +1198,7 @@ Live context:
   
   // Get latest block
   app.get('/api/chain/latest', async (req, res) => {
+    await syncSharedReadState();
     const block = chain.getLatestBlock();
     if (!block) {
       return res.status(404).json({ error: 'No blocks found' });
@@ -877,19 +1214,26 @@ Live context:
 
   // Git status endpoint
   app.get('/api/git/status', async (req, res) => {
-    const { gitIntegration } = await import('../agent/GitIntegration');
-    const status = gitIntegration.getStatus();
-    const commits = gitIntegration.getRecentCommits(5);
-    const summary = gitIntegration.getSummary();
-    
-    res.json({
-      branch: status.branch,
-      clean: status.clean,
-      changes: status.changes,
-      staged: status.staged,
-      recentCommits: commits,
-      summary
-    });
+    if (agentConfig.gitAvailable) {
+      const { gitIntegration } = await import('../agent/GitIntegration');
+      const status = gitIntegration.getStatus();
+      const commits = gitIntegration.getRecentCommits(5);
+      const summary = gitIntegration.getSummary();
+
+      return res.json({
+        role: agentConfig.role,
+        gitAvailable: agentConfig.gitAvailable,
+        pushAvailable: agentConfig.pushAvailable,
+        branch: status.branch,
+        clean: status.clean,
+        changes: status.changes,
+        staged: status.staged,
+        recentCommits: commits,
+        summary,
+      });
+    }
+
+    res.json(await getSharedGitSnapshot(5));
   });
 
   // CI status endpoint
@@ -972,12 +1316,20 @@ Live context:
   });
   
   // Start the autonomous agent worker by default unless explicitly disabled.
-  if (agentConfig.autorunEnabled && agentConfig.effectiveMode !== 'disabled') {
-    await agentWorker.start();
-    console.log(`[AGENT] Autonomous agent worker started in ${agentConfig.effectiveMode} mode`);
+  if (
+    agentConfig.role === 'worker' &&
+    agentConfig.autorunEnabled &&
+    agentConfig.effectiveMode !== 'disabled'
+  ) {
+    void agentWorker.start().catch((error) => {
+      console.error('[AGENT] Worker failed to start:', error);
+    });
+    console.log(
+      `[AGENT] Autonomous agent worker started in ${agentConfig.effectiveMode} mode (${agentConfig.role} role)`
+    );
   } else {
     console.log(
-      `[AGENT] Worker not started (autorun=${agentConfig.autorunEnabled}, effectiveMode=${agentConfig.effectiveMode})`
+      `[AGENT] Worker not started (role=${agentConfig.role}, autorun=${agentConfig.autorunEnabled}, effectiveMode=${agentConfig.effectiveMode})`
     );
   }
   
@@ -1145,16 +1497,27 @@ Live context:
   console.log('[SOCKET] Socket.io server initialized');
 
   const PORT = process.env.PORT || 4000;
-  server.listen(PORT, () => {
-    console.log(`[SERVER] Running on http://localhost:${PORT}\n`);
+  server.on('error', (error) => {
+    console.error('[SERVER] Failed to bind HTTP server:', error);
+    blockProducer.stop();
+    agentWorker.stop();
+    stopNetworkHeartbeat();
+    process.exitCode = 1;
+    setTimeout(() => process.exit(1), 0);
   });
 
-  blockProducer.start();
+  server.listen(PORT, () => {
+    console.log(`[SERVER] Running on http://localhost:${PORT}\n`);
+    if (agentConfig.role === 'worker') {
+      blockProducer.start();
+    }
+  });
 
   process.on('SIGINT', () => {
     console.log('\n[SHUTDOWN] Stopping services...');
     blockProducer.stop();
     agentWorker.stop();
+    stopNetworkHeartbeat();
     db.end();
     process.exit(0);
   });
