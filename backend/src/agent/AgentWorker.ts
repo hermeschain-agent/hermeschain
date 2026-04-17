@@ -387,8 +387,48 @@ class AgentWorker {
     this.currentAbortController = new AbortController();
     agentExecutor.setExecutionScopes(selection.editScopes);
 
+    // Track whether the agent has actually called write_file yet. If not
+    // by the halfway point, inject an explicit reminder; if still not by
+    // the final iteration, inject a last-chance imperative.
+    const writeReminderAt = Math.floor(maxIterations / 2);
+    const writeImperativeAt = maxIterations - 2;
+    let writeReminderInjected = false;
+    let writeImperativeInjected = false;
+    const hasWritten = () => changedFiles.size > 0;
+
     try {
       for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+        // If we're halfway and no files have been written, kick the agent.
+        if (
+          iteration >= writeReminderAt &&
+          !writeReminderInjected &&
+          !hasWritten()
+        ) {
+          messages.push({
+            role: 'user',
+            content:
+              `REMINDER: You have used ${iteration}/${maxIterations} iterations without writing any files. ` +
+              `Stop reading and planning — call write_file with the required output artifact now. ` +
+              `If the task description says "Write your findings to backend/src/hermes-generated/...", ` +
+              `that file MUST be created via write_file this turn.`,
+          });
+          writeReminderInjected = true;
+        }
+        if (
+          iteration >= writeImperativeAt &&
+          !writeImperativeInjected &&
+          !hasWritten()
+        ) {
+          messages.push({
+            role: 'user',
+            content:
+              `FINAL NOTICE: You have ${maxIterations - iteration} iteration(s) left and still have not called write_file. ` +
+              `Call write_file with a valid path inside the allowed scopes right now. ` +
+              `Do not read any more files. Do not explain. Just write.`,
+          });
+          writeImperativeInjected = true;
+        }
+
         const response = await hermesChat({
           messages,
           tools: AGENT_TOOLS_OAI,
