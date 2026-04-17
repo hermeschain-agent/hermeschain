@@ -337,11 +337,17 @@ class AgentWorker {
       'If the task cannot be completed safely inside the allowed edit scopes, stop and say why.',
       'Do not invent file changes, commits, or successful verification.',
       '',
+      '## You MUST produce real file changes',
+      '- Every task is expected to end with at least one successful write_file tool call inside the allowed scopes.',
+      '- "Investigating" or "analyzing" without writing is a FAILURE. Plan briefly, then write.',
+      '- Spend at most 1-2 tool calls on reads/searches before calling write_file.',
+      '- If you genuinely cannot write (e.g. scope forbids it), say exactly why in one sentence, do NOT silently skip.',
+      '',
       '## Working Rules',
       '- Base every action on the provided evidence and repository context.',
       '- Stay strictly inside the allowed edit scopes.',
-      '- Use tools to inspect files before changing them.',
-      '- After editing, help the operator understand what changed and what still failed.',
+      '- Prefer small, self-contained edits that a single commit can cover.',
+      '- After editing, briefly summarize what changed and what risks remain.',
       '',
       '## Verification Contract',
       `- Verification mode: ${verificationPlan.type}`,
@@ -373,10 +379,10 @@ class AgentWorker {
 
     const changedFiles = new Set<string>();
     let fullOutput = '';
-    // Anti-guzzler: tighten the per-task LLM budget. Was 10 iterations × 1800
-    // tokens. Now 6 × 1024, configurable via env so we can tune without redeploy.
-    const maxIterations = Number(process.env.AGENT_MAX_ITERATIONS) || 6;
-    const maxTokensPerCall = Number(process.env.AGENT_MAX_TOKENS) || 1024;
+    // Haiku-friendly budget. 6 iterations was too tight for Haiku to plan +
+    // write. 10 still costs very little on Haiku. Configurable via env.
+    const maxIterations = Number(process.env.AGENT_MAX_ITERATIONS) || 10;
+    const maxTokensPerCall = Number(process.env.AGENT_MAX_TOKENS) || 1500;
 
     this.currentAbortController = new AbortController();
     agentExecutor.setExecutionScopes(selection.editScopes);
@@ -940,10 +946,9 @@ class AgentWorker {
         if (verification.passed && completionResult.success) {
           await this.waitForCommitWindow(runStartedAtMs);
         } else {
-          // Anti-guzzler: bumped from 30s to 5min after a failed task so
-          // we don't burn through the credit-exhausted circuit-breaker
-          // window with a fresh failed task every 30 seconds.
-          await this.delay(5 * 60 * 1000);
+          // Short pause between failed tasks — Haiku is cheap and the
+          // circuit breaker handles the real billing/auth failures.
+          await this.delay(60 * 1000);
         }
       } catch (error: any) {
         console.error('[AGENT] Error in worker loop:', error);
