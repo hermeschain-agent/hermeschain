@@ -104,8 +104,25 @@ export class TaskSources {
     this.listenerDisposers.push(() => eventBus.off(event, listener));
   }
 
+  // Per-event-type cooldown — avoid enqueuing 50 "investigate consensus
+  // failure" tasks when the underlying problem fires the same event every
+  // 10 seconds. One investigation per cooldown window is plenty.
+  private eventCooldowns = new Map<string, number>();
+  private readonly EVENT_COOLDOWN_MS = Number(
+    process.env.EVENT_COOLDOWN_MS
+  ) || 30 * 60 * 1000;
+
+  private isEventOnCooldown(eventKey: string): boolean {
+    const now = Date.now();
+    const until = this.eventCooldowns.get(eventKey) || 0;
+    if (until > now) return true;
+    this.eventCooldowns.set(eventKey, now + this.EVENT_COOLDOWN_MS);
+    return false;
+  }
+
   private setupEventListeners(): void {
     this.on('consensus_failed', (data: any) => {
+      if (this.isEventOnCooldown('consensus_failed')) return;
       const height = data?.block?.header?.height || data?.timestamp || Date.now();
       void this.enqueueSourceTask({
         id: `consensus-${height}`,
@@ -146,6 +163,7 @@ export class TaskSources {
     });
 
     this.on('ci_failure', (data: any) => {
+      if (this.isEventOnCooldown('ci_failure')) return;
       const scopes = this.extractScopesFromCiFailure(data);
       const evidence = [
         {
@@ -172,6 +190,7 @@ export class TaskSources {
 
     this.on('new_log', (entry: any) => {
       if (entry?.type !== 'error') return;
+      if (this.isEventOnCooldown('runtime_error')) return;
       void this.enqueueSourceTask({
         id: `runtime-${entry.id}`,
         source: 'runtime_error',
@@ -205,6 +224,7 @@ export class TaskSources {
     this.on('block_produced', (payload: any) => {
       const blockTime = Number(payload?.blockTime || 0);
       if (!Number.isFinite(blockTime) || blockTime <= 15000) return;
+      if (this.isEventOnCooldown('slow_block')) return;
 
       const height = payload?.block?.header?.height || Date.now();
       void this.enqueueSourceTask({
