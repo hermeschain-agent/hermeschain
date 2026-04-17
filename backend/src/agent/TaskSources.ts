@@ -106,11 +106,28 @@ export class TaskSources {
 
   private setupEventListeners(): void {
     this.on('consensus_failed', (data: any) => {
+      const height = data?.block?.header?.height || data?.timestamp || Date.now();
       void this.enqueueSourceTask({
-        id: `consensus-${data?.block?.header?.height || data?.timestamp || Date.now()}`,
+        id: `consensus-${height}`,
         source: 'chain_event',
         title: 'Investigate consensus failure',
-        description: `Consensus failed while producing a block.\n\n${JSON.stringify(data, null, 2)}`,
+        description: [
+          'Consensus failed while producing a block.',
+          '',
+          `## Required Output`,
+          `Write your investigation findings as a new file at:`,
+          `  backend/src/hermes-generated/consensus-investigation-${height}.md`,
+          '',
+          `The file MUST include:`,
+          `- A one-paragraph summary of the failure mode`,
+          `- Likely root cause based on the event payload below`,
+          `- At least one concrete next step (file path + what to change)`,
+          '',
+          '## Event Payload',
+          '```json',
+          JSON.stringify(data, null, 2).slice(0, 3000),
+          '```',
+        ].join('\n'),
         priority: 'critical',
         context: {
           event: data,
@@ -121,7 +138,7 @@ export class TaskSources {
               detail: data?.reason || 'Consensus failure emitted by block production.',
             },
           ],
-          scopes: ['backend/src/blockchain/'],
+          scopes: ['backend/src/blockchain/', 'backend/src/hermes-generated/'],
           objectiveTags: ['consensus', 'chain', 'security'],
         },
         createdAt: new Date(),
@@ -159,10 +176,19 @@ export class TaskSources {
         id: `runtime-${entry.id}`,
         source: 'runtime_error',
         title: `Investigate runtime error${entry.taskTitle ? ` in ${entry.taskTitle}` : ''}`,
-        description: entry.content || 'Runtime error emitted to agent logs.',
+        description: [
+          'A runtime error was logged by the agent.',
+          '',
+          '## Required Output',
+          `Write your findings to backend/src/hermes-generated/runtime-error-${entry.id}.md`,
+          'with: summary, likely cause, one concrete fix candidate.',
+          '',
+          '## Error Content',
+          entry.content || 'Runtime error emitted to agent logs.',
+        ].join('\n'),
         priority: 'high',
         context: {
-          scopes: ['backend/src/'],
+          scopes: ['backend/src/', 'backend/src/hermes-generated/'],
           objectiveTags: ['runtime', 'quality'],
           evidence: [
             {
@@ -180,14 +206,22 @@ export class TaskSources {
       const blockTime = Number(payload?.blockTime || 0);
       if (!Number.isFinite(blockTime) || blockTime <= 15000) return;
 
+      const height = payload?.block?.header?.height || Date.now();
       void this.enqueueSourceTask({
-        id: `block-time-${payload?.block?.header?.height || Date.now()}`,
+        id: `block-time-${height}`,
         source: 'chain_event',
         title: 'Investigate slow block production',
-        description: `Block production exceeded the expected target.\n\nObserved block time: ${blockTime}ms`,
+        description: [
+          'Block production exceeded the expected target.',
+          `Observed block time: ${blockTime}ms`,
+          '',
+          '## Required Output',
+          `Write your findings to backend/src/hermes-generated/slow-block-${height}.md`,
+          'with: profile of the slow path, suspect file + line, one fix candidate.',
+        ].join('\n'),
         priority: blockTime > 30000 ? 'high' : 'medium',
         context: {
-          scopes: ['backend/src/blockchain/'],
+          scopes: ['backend/src/blockchain/', 'backend/src/hermes-generated/'],
           objectiveTags: ['performance', 'chain'],
           evidence: [
             {
