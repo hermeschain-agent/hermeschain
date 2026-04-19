@@ -1,1 +1,0 @@
-{"version":3,"sources":["../../src/v1/index.ts"],"sourcesContent":["/**\n * V1 exports for the SVM mechanism\n */\nexport { ExactSvmSchemeV1 } from \"../exact/v1\";\n\nexport const NETWORKS: string[] = [\"solana\", \"solana-devnet\", \"solana-testnet\"];\n"],"mappings":";AAKO,IAAM,WAAqB,CAAC,UAAU,iBAAiB,gBAAgB;","names":[]}

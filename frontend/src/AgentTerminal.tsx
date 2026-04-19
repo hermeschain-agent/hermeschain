@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE, apiUrl } from './api';
-import { runAmbientStream } from './landingStream';
+import { startLiveAgentFeed } from './liveAgentFeed';
 
 interface Task {
   id: string;
@@ -270,10 +270,10 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
   const textBufferRef = useRef('');
   const displayIndexRef = useRef(0);
   const animationFrameRef = useRef<number>();
-  const ambientHandleRef = useRef<{ stop: () => void; pause: () => void } | null>(null);
-  // Yield the landing showcase loop whenever a real SSE chunk arrives.
-  const pauseAmbient = useCallback(() => {
-    ambientHandleRef.current?.pause();
+  const feedHandleRef = useRef<{ stop: () => void; pause: () => void } | null>(null);
+  // Yield the live agent feed whenever a real SSE chunk arrives.
+  const pauseFeed = useCallback(() => {
+    feedHandleRef.current?.pause();
   }, []);
 
   const typewriterEffect = useCallback(() => {
@@ -339,19 +339,19 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
     void loadPersistedTasks();
   }, []);
 
-  // Landing-page showcase loop. Only runs for the hero (rail) variant and
-  // yields any time a real SSE event arrives.
+  // Surface Hermes's live workstream into the hero terminal. Yields to any
+  // real SSE chunk for the duration of that task.
   useEffect(() => {
     if (variant !== 'rail') return;
-    const handle = runAmbientStream({
+    const handle = startLiveAgentFeed({
       appendText,
       resetOutput,
       patchState: (updater) => setState((prev) => updater(prev) as AgentState),
     });
-    ambientHandleRef.current = handle;
+    feedHandleRef.current = handle;
     return () => {
       handle.stop();
-      ambientHandleRef.current = null;
+      feedHandleRef.current = null;
     };
   }, [variant, appendText, resetOutput]);
 
@@ -370,9 +370,9 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
         try {
           const payload = JSON.parse(event.data);
 
-          // Real worker stream takes priority — pause the landing loop.
+          // Live worker stream takes priority — pause the hero feed.
           if (payload.type !== 'ping' && payload.type !== 'heartbeat') {
-            pauseAmbient();
+            pauseFeed();
           }
 
           switch (payload.type) {
