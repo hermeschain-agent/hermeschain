@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE, apiUrl } from './api';
+import { runAmbientStream } from './landingStream';
 
 interface Task {
   id: string;
@@ -269,6 +270,11 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
   const textBufferRef = useRef('');
   const displayIndexRef = useRef(0);
   const animationFrameRef = useRef<number>();
+  const ambientHandleRef = useRef<{ stop: () => void; pause: () => void } | null>(null);
+  // Yield the landing showcase loop whenever a real SSE chunk arrives.
+  const pauseAmbient = useCallback(() => {
+    ambientHandleRef.current?.pause();
+  }, []);
 
   const typewriterEffect = useCallback(() => {
     const buffer = textBufferRef.current;
@@ -333,6 +339,22 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
     void loadPersistedTasks();
   }, []);
 
+  // Landing-page showcase loop. Only runs for the hero (rail) variant and
+  // yields any time a real SSE event arrives.
+  useEffect(() => {
+    if (variant !== 'rail') return;
+    const handle = runAmbientStream({
+      appendText,
+      resetOutput,
+      patchState: (updater) => setState((prev) => updater(prev) as AgentState),
+    });
+    ambientHandleRef.current = handle;
+    return () => {
+      handle.stop();
+      ambientHandleRef.current = null;
+    };
+  }, [variant, appendText, resetOutput]);
+
   useEffect(() => {
     let eventSource: EventSource | null = null;
     let reconnectTimeout: number | undefined;
@@ -347,6 +369,11 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+
+          // Real worker stream takes priority — pause the landing loop.
+          if (payload.type !== 'ping' && payload.type !== 'heartbeat') {
+            pauseAmbient();
+          }
 
           switch (payload.type) {
             case 'init':
