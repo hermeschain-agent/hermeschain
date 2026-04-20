@@ -796,6 +796,56 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
     });
   };
 
+  // ─── Terminal-vibe helpers ──────────────────────────────────────
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(tick);
+  }, []);
+  const clockParts = new Date(nowMs).toISOString().substring(11, 19);
+  const heartbeatChar = Math.floor(nowMs / 1000) % 2 === 0 ? '♥' : '♡';
+
+  const stageLabel = (() => {
+    if (!connected) return 'OFFLINE';
+    if (state.mode === 'disabled') return 'HALTED';
+    if (state.runStatus === 'verifying') return 'VERIFY';
+    if (state.runStatus === 'executing') return 'EXEC';
+    if (state.runStatus === 'analyzing') return 'ANALYZE';
+    if (state.isWorking) return 'RUN';
+    return 'IDLE';
+  })();
+
+  // 10-cell block-drawing progress bar. Drives off runStatus + a heartbeat
+  // so it always moves when the agent is working.
+  const progressCells = (() => {
+    const stageToCells: Record<string, number> = {
+      IDLE: 0,
+      ANALYZE: 3,
+      EXEC: 6,
+      VERIFY: 9,
+      RUN: 4,
+      HALTED: 0,
+      OFFLINE: 0,
+    };
+    const base = stageToCells[stageLabel] ?? 0;
+    if (base === 0) return '▱▱▱▱▱▱▱▱▱▱';
+    // bob ±1 cell with the clock
+    const bob = Math.floor(nowMs / 800) % 2;
+    const filled = Math.max(1, Math.min(10, base + bob));
+    return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
+  })();
+
+  const scopePath =
+    (state.currentTask && (state.currentTask as any).scope) ||
+    (state.mode === 'real' ? 'backend/src/' : '—');
+  // Box-drawn header for the active task. Kept width constant so the
+  // characters line up inside the monospaced viewport.
+  const BOX_W = 58;
+  const padBox = (text: string) => {
+    const trimmed = text.length > BOX_W - 4 ? text.slice(0, BOX_W - 7) + '...' : text;
+    return trimmed + ' '.repeat(Math.max(0, BOX_W - 4 - trimmed.length));
+  };
+
   const connectionLabel = summarizeStatus(state, connected);
   const questBadge = state.currentTask?.agent || state.mode.toUpperCase();
   const questTitle =
@@ -902,6 +952,14 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
 
       <div ref={outputRef} className="agent-terminal__viewport">
         <div className="agent-terminal__viewport-inner">
+          {state.currentTask ? (
+            <pre className="agent-terminal__box">
+{`╔${'═'.repeat(BOX_W - 2)}╗
+║ ${padBox(`HERMES :: ${state.currentTask.title}`)} ║
+║ ${padBox(`scope: ${scopePath}`)} ║
+╚${'═'.repeat(BOX_W - 2)}╝`}
+            </pre>
+          ) : null}
           {displayedText ? (
             <div className="agent-terminal__stream">
               {renderOutput(displayedText)}
@@ -914,6 +972,23 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
               {buildIdleMessage(state, connected)}
             </div>
           )}
+        </div>
+      </div>
+
+      <div
+        className={`agent-terminal__statusline agent-terminal__statusline--${stageLabel.toLowerCase()}`}
+        aria-hidden="true"
+      >
+        <div className="agent-terminal__statusline-left">
+          <span className="agent-terminal__statusline-tag">[{stageLabel}]</span>
+          <span className="agent-terminal__statusline-host">hermes@hermeschain</span>
+        </div>
+        <div className="agent-terminal__statusline-center">
+          <span className="agent-terminal__statusline-bar">{progressCells}</span>
+        </div>
+        <div className="agent-terminal__statusline-right">
+          <span className="agent-terminal__statusline-clock">{clockParts} UTC</span>
+          <span className="agent-terminal__statusline-heart">{heartbeatChar}</span>
         </div>
       </div>
 

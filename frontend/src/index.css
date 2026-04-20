@@ -3810,3 +3810,150 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   color: var(--fg-faint);
   text-transform: uppercase;
 }
+
+/* ─── Terminal: CRT bezel around the whole shell ──────────────────── */
+
+.agent-terminal {
+  position: relative;
+  border: 2px solid var(--cream-mid);
+  box-shadow:
+    6px 6px 0 0 var(--cream-dim),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 0 rgba(255, 230, 203, 0.08);
+  background:
+    radial-gradient(ellipse at 50% 120%, rgba(112, 255, 173, 0.04) 0%, transparent 60%),
+    rgba(2, 18, 18, 0.96);
+  border-radius: 0;
+}
+.agent-terminal::after {
+  /* subtle CRT vignette on the edges */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgba(0, 0, 0, 0.35) 100%
+  );
+}
+
+/* ─── Terminal: box-drawn task header inside the viewport ─────────── */
+
+.agent-terminal__box {
+  margin: 0 0 12px 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  color: rgba(112, 255, 173, 0.9);
+  font-size: 11.5px;
+  line-height: 1.2;
+  white-space: pre;
+  letter-spacing: 0;
+  text-shadow: 0 0 5px rgba(112, 255, 173, 0.35);
+  animation: boxIn 240ms steps(4, end);
+}
+@keyframes boxIn {
+  from { opacity: 0; clip-path: inset(0 100% 0 0); }
+  to   { opacity: 1; clip-path: inset(0 0 0 0); }
+}
+
+/* ─── Terminal: bottom statusline (tmux-style) ───────────────────── */
+
+.agent-terminal__statusline {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 6px 14px;
+  border-top: 1px solid var(--cream-dim);
+  background:
+    linear-gradient(180deg, rgba(112, 255, 173, 0.06), rgba(0, 0, 0, 0.25)),
+    rgba(2, 18, 18, 0.92);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: rgba(255, 230, 203, 0.7);
+  text-transform: uppercase;
+}
+
+.agent-terminal__statusline-left,
+.agent-terminal__statusline-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.agent-terminal__statusline-right {
+  justify-content: flex-end;
+}
+.agent-terminal__statusline-tag {
+  padding: 2px 8px;
+  font-weight: 400;
+  color: var(--bg);
+  background: rgba(112, 255, 173, 0.85);
+  letter-spacing: 0.12em;
+  box-shadow: 1px 1px 0 0 rgba(0, 0, 0, 0.4);
+}
+.agent-terminal__statusline--offline .agent-terminal__statusline-tag,
+.agent-terminal__statusline--halted  .agent-terminal__statusline-tag {
+  background: rgba(255, 130, 130, 0.85);
+}
+.agent-terminal__statusline--verify .agent-terminal__statusline-tag,
+.agent-terminal__statusline--analyze .agent-terminal__statusline-tag {
+  background: rgba(255, 200, 114, 0.85);
+}
+.agent-terminal__statusline-host {
+  color: var(--cream);
+}
+.agent-terminal__statusline-center {
+  display: flex;
+  align-items: center;
+}
+.agent-terminal__statusline-bar {
+  font-family: var(--font-mono);
+  color: rgba(112, 255, 173, 0.85);
+  text-shadow: 0 0 4px rgba(112, 255, 173, 0.4);
+  letter-spacing: 2px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.agent-terminal__statusline-clock {
+  color: rgba(255, 230, 203, 0.9);
+  letter-spacing: 0.12em;
+}
+.agent-terminal__statusline-heart {
+  color: #ff7a7a;
+  font-size: 13px;
+  text-shadow: 0 0 5px rgba(255, 122, 122, 0.45);
+  animation: pulse 1.2s steps(2, end) infinite;
+}
+
+/* ─── Terminal: timestamp prefix styling in rows ─────────────────── */
+
+/* Timestamps inside tool/command/thought rows get a subdued treatment
+ * so the important event text still reads first. Selects the leading
+ * [HH:MM:SS] we prepend from liveAgentFeed. */
+.agent-row__body {
+  /* keep: structural */
+}
+
+/* ─── Terminal: thicker block cursor ─────────────────────────────── */
+
+.agent-terminal__cursor {
+  display: inline-block;
+  width: 10px;
+  height: 18px;
+  margin-left: 4px;
+  margin-top: 4px;
+  background: rgba(112, 255, 173, 0.95);
+  box-shadow: 0 0 6px rgba(112, 255, 173, 0.6);
+  animation: cursorBlink 0.8s steps(2, end) infinite;
+  vertical-align: bottom;
+}
+
+/* ─── Terminal: tighten viewport background toward classic phosphor */
+
+.agent-terminal__viewport {
+  background:
+    linear-gradient(180deg, rgba(2, 19, 19, 0.4), rgba(0, 0, 0, 0.55)),
+    rgba(0, 8, 8, 0.98);
+}

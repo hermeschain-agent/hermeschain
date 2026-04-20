@@ -494,6 +494,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Timestamp prefix in HH:MM:SS form — matches the syslog/tmux conventions the
+ * rest of the terminal surfaces lean on.
+ */
+function stamp(): string {
+  return new Date().toISOString().substring(11, 19);
+}
+
+/**
  * Start driving the hero terminal with Hermes's live workstream. Returns a
  * handle with `stop()` to tear down and `pause()` to yield the channel to
  * an incoming live SSE event for the next YIELD_WINDOW_MS.
@@ -571,18 +579,22 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
               : '';
           await typeOut(
             callbacks,
-            `\n> [TOOL] ${event.tool}${args}\n`,
+            `\n[${stamp()}] > [TOOL] ${event.tool}${args}\n`,
             shouldStop,
           );
           break;
         }
         case 'result':
-          await typeOut(callbacks, `> [RESULT] ${event.text}\n`, shouldStop);
+          await typeOut(
+            callbacks,
+            `[${stamp()}] > [RESULT] ${event.text}\n`,
+            shouldStop,
+          );
           break;
         case 'analysis':
           await typeOut(
             callbacks,
-            `\n> [ANALYSIS] ${event.text}\n`,
+            `\n[${stamp()}] > [ANALYSIS] ${event.text}\n`,
             shouldStop,
           );
           break;
@@ -603,14 +615,22 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
             runStatus: 'verifying',
             verificationStatus: 'running',
           }));
-          await typeOut(callbacks, `\n> [VERIFY] ${event.label}\n`, shouldStop);
+          await typeOut(
+            callbacks,
+            `\n[${stamp()}] > [VERIFY] ${event.label}\n`,
+            shouldStop,
+          );
           break;
         case 'pass':
           callbacks.patchState((prev: AgentFeedState) => ({
             ...prev,
             verificationStatus: 'passed',
           }));
-          await typeOut(callbacks, `> [PASS] ${event.label}\n`, shouldStop);
+          await typeOut(
+            callbacks,
+            `[${stamp()}] > [PASS] ${event.label}\n`,
+            shouldStop,
+          );
           break;
         case 'done':
           callbacks.patchState((prev: AgentFeedState) => ({
@@ -618,7 +638,11 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
             runStatus: 'succeeded',
             isWorking: false,
           }));
-          await typeOut(callbacks, `\n> [DONE] ${event.text}\n`, shouldStop);
+          await typeOut(
+            callbacks,
+            `\n[${stamp()}] > [DONE] ${event.text}\n`,
+            shouldStop,
+          );
           break;
         case 'pause':
           // just wait
