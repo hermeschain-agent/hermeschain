@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28" shape-rendering="crispEdges">
+  <rect width="28" height="28" fill="none"/>
+  <g fill="#ffe6cb" stroke="#041C1C" stroke-width="1">
+    <!-- wings -->
+    <rect x="8"  y="4" width="2" height="1"/>
+    <rect x="6"  y="5" width="2" height="1"/>
+    <rect x="4"  y="6" width="2" height="1"/>
+    <rect x="10" y="5" width="2" height="1"/>
+    <rect x="18" y="4" width="2" height="1"/>
+    <rect x="20" y="5" width="2" height="1"/>
+    <rect x="22" y="6" width="2" height="1"/>
+    <rect x="16" y="5" width="2" height="1"/>
+    <!-- orb at top -->
+    <rect x="13" y="2" width="2" height="2"/>
+    <!-- staff -->
+    <rect x="13" y="4"  width="2" height="22"/>
+    <!-- serpents coiling (simplified cross bars) -->
+    <rect x="10" y="10" width="8" height="1"/>
+    <rect x="9"  y="13" width="10" height="1"/>
+    <rect x="10" y="16" width="8" height="1"/>
+    <rect x="11" y="19" width="6" height="1"/>
+  </g>
+</svg>

@@ -6,6 +6,9 @@ import BlockExplorer from './BlockExplorer';
 import HermesDock from './HermesDock';
 import RitualActions from './RitualActions';
 import Wallet from './Wallet';
+import BootSequence from './BootSequence';
+import GreekChorus from './GreekChorus';
+import AmbientBackground from './AmbientBackground';
 import { API_BASE } from './api';
 import useHermesDockState, {
   RitualKind,
@@ -783,11 +786,27 @@ export default function App() {
 
   const renderTerminal = () => (
     <div className="landing route-frame">
-      <section className="hero">
+      <section
+        className="hero"
+        onMouseMove={(event) => {
+          const mark = event.currentTarget.querySelector<HTMLImageElement>(
+            '.hero-logo .hermes-mark'
+          );
+          if (!mark) return;
+          const rect = mark.getBoundingClientRect();
+          const cx = rect.left + rect.width / 2;
+          const cy = rect.top + rect.height / 2;
+          const dx = (event.clientX - cx) / window.innerWidth;
+          const dy = (event.clientY - cy) / window.innerHeight;
+          mark.style.setProperty('--hermes-tilt-x', `${dx * 8}deg`);
+          mark.style.setProperty('--hermes-tilt-y', `${-dy * 6}deg`);
+        }}
+      >
+        <AmbientBackground />
         <div className="hero-logo">
           <Logo />
         </div>
-        <p className="tagline">Open Source · MIT License</p>
+        <GreekChorus />
         <h1>A Chain That Writes Itself.</h1>
         <p className="subtitle">
           Not a testnet toy. Not a smart-contract wrapper. An autonomous Hermes agent
@@ -1600,6 +1619,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <BootSequence />
       <header className="app-topband">
         <div className="logo" onClick={() => handleTab('terminal')} style={{ cursor: 'pointer' }}>
           <span className="logo-mark" aria-hidden="true"><Logo /></span>
