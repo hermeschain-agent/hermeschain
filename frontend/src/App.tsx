@@ -9,6 +9,10 @@ import Wallet from './Wallet';
 import BootSequence from './BootSequence';
 import GreekChorus from './GreekChorus';
 import AmbientBackground from './AmbientBackground';
+import CommitMarquee from './CommitMarquee';
+import ManifestoSection from './ManifestoSection';
+import HermesDossier from './HermesDossier';
+import CommandPalette, { PaletteAction } from './CommandPalette';
 import { API_BASE } from './api';
 import useHermesDockState, {
   RitualKind,
@@ -823,6 +827,28 @@ export default function App() {
         </div>
       </section>
 
+      <CommitMarquee
+        commits={gitStatus?.recentCommits || []}
+        loading={commitsLoading}
+      />
+
+      <ManifestoSection />
+
+      <section className="section">
+        <div className="inner" style={{ display: 'flex', justifyContent: 'center' }}>
+          <HermesDossier
+            blockHeight={liveState.chainStats.blockHeight}
+            uptime={uptime}
+            commitsShipped={gitStatus?.recentCommits.length || 0}
+            lastFile={
+              gitStatus?.recentCommits[0]?.message.split('\n')[0] || null
+            }
+            lastTaskTitle={liveState.currentTask?.title || null}
+            mode={liveState.mode}
+          />
+        </div>
+      </section>
+
       <section className="install-strip">
         <div className="inner">
           <span className="label">Get started</span>
@@ -1617,9 +1643,23 @@ export default function App() {
     }
   };
 
+  const paletteActions: PaletteAction[] = [
+    { id: 'goto-terminal', label: 'goto :: terminal', hint: 'landing feed', keywords: ['home','landing','feed'], run: () => handleTab('terminal') },
+    { id: 'goto-hermes',   label: 'summon :: hermes', hint: 'ask the agent', keywords: ['chat','ask','hermes','oracle'], run: () => handleTab('hermes') },
+    { id: 'goto-explorer', label: 'goto :: explorer', hint: 'blocks + txs', keywords: ['blocks','chain','tx','transactions'], run: () => handleTab('explorer') },
+    { id: 'goto-faucet',   label: 'goto :: faucet', hint: 'claim testnet tokens', keywords: ['drip','tokens','claim'], run: () => handleTab('faucet') },
+    { id: 'goto-wallet',   label: 'goto :: wallet', hint: 'create / import', keywords: ['keys','account'], run: () => handleTab('wallet') },
+    { id: 'goto-network',  label: 'goto :: network', hint: 'peer mesh', keywords: ['peers','agents','p2p'], run: () => handleTab('network') },
+    { id: 'goto-updates',  label: 'tail :: commits', hint: 'live git log', keywords: ['commits','updates','changelog','git'], run: () => handleTab('updates') },
+    { id: 'goto-logs',     label: 'tail :: logs', hint: 'agent activity', keywords: ['activity','stream','hermes'], run: () => handleTab('logs') },
+    { id: 'goto-admin',    label: 'goto :: admin', hint: 'operator console', keywords: ['ops','health'], run: () => handleTab('admin') },
+    { id: 'open-github',   label: 'open :: github', hint: 'repo tab', keywords: ['source','repo','code'], run: () => window.open('https://github.com/hermeschain-agent/hermeschain','_blank','noopener') },
+  ];
+
   return (
     <div className="app-shell">
       <BootSequence />
+      <CommandPalette actions={paletteActions} />
       <header className="app-topband">
         <div className="logo" onClick={() => handleTab('terminal')} style={{ cursor: 'pointer' }}>
           <span className="logo-mark" aria-hidden="true"><Logo /></span>
