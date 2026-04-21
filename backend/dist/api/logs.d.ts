@@ -2,7 +2,7 @@ declare const logsRouter: import("express-serve-static-core").Router;
 export interface LogEntry {
     id: string;
     timestamp: Date;
-    type: 'task_start' | 'task_complete' | 'output' | 'tool_use' | 'git_commit' | 'error' | 'system';
+    type: string;
     taskId?: string;
     taskTitle?: string;
     content: string;

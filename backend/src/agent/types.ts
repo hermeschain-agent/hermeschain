@@ -114,6 +114,22 @@ export interface TaskSelection {
   verificationPlan: VerificationPlan;
 }
 
+export type AgentRole = 'web' | 'worker';
+
+export interface AgentRuntimeSnapshot {
+  mode?: string;
+  streamMode?: string;
+  runStatus?: string;
+  verificationStatus?: string;
+  isWorking?: boolean;
+  currentTask?: unknown;
+  currentOutput?: string;
+  lastFailure?: string | null;
+  blockedReason?: string | null;
+  capabilities?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface AgentConfig {
   autorunEnabled: boolean;
   requestedMode: AgentMode;
@@ -127,4 +143,10 @@ export interface AgentConfig {
   modelConfigured: boolean;
   canWriteScopes: string[];
   startupIssues: string[];
+  // Populated by createAgentConfig — the downstream web/worker code keys
+  // several health/capability checks off these.
+  role: AgentRole;
+  workspaceReady: boolean;
+  gitAvailable: boolean;
+  pushAvailable: boolean;
 }

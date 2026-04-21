@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.authRouter = void 0;
+exports.requireApiKey = exports.authRouter = void 0;
 exports.initializeAuthTables = initializeAuthTables;
 exports.apiKeyAuth = apiKeyAuth;
 exports.ipRateLimit = ipRateLimit;
@@ -375,4 +375,6 @@ authRouter.get('/rate-limit', (req, res) => {
         resetIn: defaultRateLimit.windowMs / 1000
     });
 });
+/** Alias — preferred name used by server.ts. */
+exports.requireApiKey = apiKeyAuth;
 //# sourceMappingURL=auth.js.map

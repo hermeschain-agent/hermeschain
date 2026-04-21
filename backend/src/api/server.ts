@@ -758,7 +758,7 @@ Live context:
     const workerHeartbeatAt =
       observedRuntime.workerHeartbeatAt || observedRuntime.updatedAt || null;
     const workerActive = workerHeartbeatAt
-      ? Date.now() - new Date(workerHeartbeatAt).getTime() < 90_000
+      ? Date.now() - new Date(workerHeartbeatAt as string | number | Date).getTime() < 90_000
       : false;
     const currentRun = agentTaskStore.getCurrentRun();
     const recentRuns = agentTaskStore.getRecentRuns(20);

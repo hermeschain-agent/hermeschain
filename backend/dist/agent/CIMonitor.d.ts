@@ -1,3 +1,4 @@
+import { AgentConfig } from './config';
 export interface TestResult {
     passed: boolean;
     total: number;
@@ -34,9 +35,14 @@ export interface LintIssue {
 }
 export declare class CIMonitor {
     private projectRoot;
+    private config;
     private isRunning;
     private checkInterval;
+    private lastCheckAt;
     constructor(projectRoot?: string);
+    configure(config: AgentConfig): void;
+    private getPackageTargets;
+    private runPackageScript;
     runAllChecks(): Promise<{
         tests: TestResult;
         build: BuildResult;

@@ -472,3 +472,6 @@ authRouter.get('/rate-limit', (req, res) => {
 });
 
 export { authRouter };
+
+/** Alias — preferred name used by server.ts. */
+export const requireApiKey = apiKeyAuth;

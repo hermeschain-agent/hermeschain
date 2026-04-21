@@ -38,6 +38,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.postClawMessage = postClawMessage;
+exports.initializeNetworkStore = initializeNetworkStore;
+exports.startNetworkHeartbeat = startNetworkHeartbeat;
+exports.stopNetworkHeartbeat = stopNetworkHeartbeat;
 const express_1 = require("express");
 const EventBus_1 = require("../events/EventBus");
 const fs = __importStar(require("fs"));
@@ -454,6 +457,30 @@ function postClawMessage(message) {
     if (claw && !isDuplicate(message)) {
         markAsPosted(message);
         postAgentMessage(claw, message, 'chat');
+    }
+}
+/**
+ * Idempotent store initialization used by the worker at startup. The legacy
+ * entry-point calls the old initializeAgents() internally and is safe to
+ * call repeatedly.
+ */
+async function initializeNetworkStore() {
+    initializeAgents();
+}
+/**
+ * Public alias for the heartbeat scheduler. The worker drives the heartbeat
+ * explicitly rather than relying on the module-side setTimeout.
+ */
+function startNetworkHeartbeat() {
+    startHeartbeat();
+}
+/**
+ * Tears down the running heartbeat. No-op if the heartbeat never started.
+ */
+function stopNetworkHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
     }
 }
 exports.default = router;

@@ -5,7 +5,9 @@ export declare class Chain {
     private genesisTime;
     private totalTransactions;
     private orphanedBlocks;
+    private loadPersistedBlocks;
     initialize(): Promise<void>;
+    refreshFromDb(): Promise<void>;
     private rowToBlock;
     private createGenesisBlock;
     addBlock(block: Block): Promise<boolean>;

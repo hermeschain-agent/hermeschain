@@ -4,6 +4,11 @@
  * Allows the agent to set, track, and achieve its own objectives.
  * Goals can be short-term (tasks), medium-term (projects), or long-term (visions).
  */
+export interface GoalSubgoal {
+    id: string;
+    title: string;
+    status: 'pending' | 'active' | 'done' | 'blocked';
+}
 export interface Goal {
     id: string;
     type: 'short' | 'medium' | 'long';
@@ -15,8 +20,9 @@ export interface Goal {
     createdAt: Date;
     updatedAt: Date;
     completedAt?: Date;
-    subgoals: string[];
+    subgoals: GoalSubgoal[];
     blockers: string[];
+    objectiveTags: string[];
     reasoning: string;
 }
 export declare const GOAL_TEMPLATES: {
@@ -26,6 +32,7 @@ export declare const GOAL_TEMPLATES: {
         type: "long";
         priority: number;
         subgoals: string[];
+        objectiveTags: string[];
     };
     security: {
         title: string;
@@ -33,6 +40,7 @@ export declare const GOAL_TEMPLATES: {
         type: "long";
         priority: number;
         subgoals: string[];
+        objectiveTags: string[];
     };
     tooling: {
         title: string;
@@ -40,6 +48,7 @@ export declare const GOAL_TEMPLATES: {
         type: "medium";
         priority: number;
         subgoals: string[];
+        objectiveTags: string[];
     };
     optimization: {
         title: string;
@@ -47,6 +56,7 @@ export declare const GOAL_TEMPLATES: {
         type: "medium";
         priority: number;
         subgoals: string[];
+        objectiveTags: string[];
     };
     governance: {
         title: string;
@@ -54,6 +64,7 @@ export declare const GOAL_TEMPLATES: {
         type: "long";
         priority: number;
         subgoals: string[];
+        objectiveTags: string[];
     };
     documentation: {
         title: string;
@@ -61,23 +72,25 @@ export declare const GOAL_TEMPLATES: {
         type: "short";
         priority: number;
         subgoals: string[];
+        objectiveTags: string[];
     };
 };
 declare class AgentGoalsSystem {
     private goals;
     private initialized;
+    private normalizeSubgoals;
     initialize(): Promise<void>;
     private loadGoals;
     private setDefaultGoals;
-    createGoal(title: string, description: string, type: Goal['type'], reasoning: string, priority?: number, subgoals?: string[]): Promise<Goal>;
+    createGoal(title: string, description: string, type: Goal['type'], reasoning: string, priority?: number, subgoals?: Array<string | GoalSubgoal>, objectiveTags?: string[]): Promise<Goal>;
     updateProgress(goalId: string, progress: number, note?: string): Promise<void>;
     addBlocker(goalId: string, blocker: string): Promise<void>;
     removeBlocker(goalId: string, blocker: string): Promise<void>;
     getActiveGoals(): Goal[];
     getCurrentFocus(): Goal | null;
     getGoalsByType(type: Goal['type']): Goal[];
+    getGoalForObjectiveTags(objectiveTags: string[]): Goal | null;
     taskContributesToGoal(taskTitle: string): Goal | null;
-    private extractKeywords;
     proposeGoal(context: string): Promise<Goal | null>;
     getSummary(): string;
     private makeProgressBar;
@@ -85,6 +98,7 @@ declare class AgentGoalsSystem {
         goal: Goal;
         action: string;
     } | null;
+    recordVerifiedProgressByTags(objectiveTags: string[], note: string): Promise<Goal | null>;
 }
 export declare const agentGoals: AgentGoalsSystem;
 export {};

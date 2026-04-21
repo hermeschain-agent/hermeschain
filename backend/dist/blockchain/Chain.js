@@ -8,52 +8,125 @@ const EventBus_1 = require("../events/EventBus");
 const GENESIS_PARENT_HASH = 'OPENChainGenesisBlock00000000000000000000000';
 // Fork resolution configuration
 const MAX_REORG_DEPTH = 100;
-// =====================================================
-// FIXED GENESIS - Block height is calculated from time
-// This NEVER resets across deployments
-// =====================================================
-const FIXED_GENESIS_TIMESTAMP = 1773043200000; // Mar 7, 2026 00:00:00 UTC
-const BLOCK_INTERVAL_MS = 10000; // 10 seconds per block
+const DEFAULT_BLOCK_INTERVAL_MS = 10000;
+const MIGRATION_CHAIN_AGE_MS = 72 * 60 * 60 * 1000;
 class Chain {
     constructor() {
         this.blocks = [];
         this.difficulty = 1;
-        this.genesisTime = FIXED_GENESIS_TIMESTAMP;
+        this.genesisTime = Date.now() - MIGRATION_CHAIN_AGE_MS;
         this.totalTransactions = 0;
         this.orphanedBlocks = []; // Blocks waiting for parent
     }
+    async loadPersistedBlocks() {
+        const [blockRows, txRows, txCountResult] = await Promise.all([
+            db_1.db.query('SELECT * FROM blocks ORDER BY height ASC'),
+            db_1.db.query(`
+        SELECT hash, block_height, from_address, to_address, value, gas_price, gas_limit, nonce, data, signature
+        FROM transactions
+        WHERE block_height IS NOT NULL AND status = 'confirmed'
+        ORDER BY block_height ASC, created_at ASC
+      `),
+            db_1.db.query(`SELECT COUNT(*)::int AS count FROM transactions WHERE status = 'confirmed'`),
+        ]);
+        const transactionsByHeight = new Map();
+        for (const row of txRows.rows) {
+            const transaction = {
+                hash: row.hash,
+                from: row.from_address,
+                to: row.to_address,
+                value: BigInt(row.value),
+                gasPrice: BigInt(row.gas_price),
+                gasLimit: BigInt(row.gas_limit),
+                nonce: Number(row.nonce),
+                data: row.data || undefined,
+                signature: row.signature,
+            };
+            const items = transactionsByHeight.get(Number(row.block_height)) || [];
+            items.push(transaction);
+            transactionsByHeight.set(Number(row.block_height), items);
+        }
+        if (blockRows.rows.length === 0) {
+            return false;
+        }
+        this.blocks = blockRows.rows.map((row) => this.rowToBlock(row, transactionsByHeight.get(Number(row.height)) || []));
+        this.totalTransactions = Number(txCountResult.rows[0]?.count || 0);
+        return true;
+    }
     async initialize() {
-        // ALWAYS use fixed genesis - this makes block height time-based and persistent
-        this.genesisTime = FIXED_GENESIS_TIMESTAMP;
-        const timeBasedHeight = this.getChainLength();
-        console.log(`[CHAIN] ========================================`);
-        console.log(`[CHAIN] FIXED GENESIS: ${new Date(FIXED_GENESIS_TIMESTAMP).toISOString()}`);
-        console.log(`[CHAIN] TIME-BASED HEIGHT: ${timeBasedHeight} blocks`);
-        console.log(`[CHAIN] This NEVER resets on deploy!`);
-        console.log(`[CHAIN] ========================================`);
         try {
-            // Reset chain data for fresh start
-            console.log('[CHAIN] Resetting chain data for fresh genesis...');
-            await db_1.db.query('DELETE FROM transactions').catch(() => { });
-            await db_1.db.query('DELETE FROM blocks').catch(() => { });
-            this.totalTransactions = 0;
-            // Create fresh genesis block
-            const genesis = this.createGenesisBlock();
-            this.blocks.push(genesis);
-            console.log('[CHAIN] Created fresh genesis block');
-            // Update cache with time-based values
-            await db_1.chainState.saveChainStartTime(FIXED_GENESIS_TIMESTAMP);
-            await db_1.chainState.saveBlockHeight(timeBasedHeight);
+            const metadataResult = await db_1.db.query(`SELECT key, value FROM chain_state WHERE key IN ('genesis_time', 'chain_id', 'network_name')`);
+            const metadata = new Map(metadataResult.rows.map((row) => [row.key, row.value]));
+            const persistedGenesis = Number(metadata.get('genesis_time') || 0);
+            this.genesisTime =
+                Number.isFinite(persistedGenesis) && persistedGenesis > 0
+                    ? persistedGenesis
+                    : Date.now() - MIGRATION_CHAIN_AGE_MS;
+            await db_1.db.query(`INSERT INTO chain_state (key, value)
+         VALUES ('genesis_time', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`, [String(this.genesisTime)]).catch(() => { });
+            await db_1.db.query(`INSERT INTO chain_state (key, value)
+         VALUES ('chain_id', '1337')
+         ON CONFLICT (key) DO NOTHING`).catch(() => { });
+            await db_1.db.query(`INSERT INTO chain_state (key, value)
+         VALUES ('network_name', 'Hermeschain Mainnet')
+         ON CONFLICT (key) DO NOTHING`).catch(() => { });
+            const loadedExistingBlocks = await this.loadPersistedBlocks();
+            if (loadedExistingBlocks) {
+                console.log(`[CHAIN] Loaded ${this.blocks.length} stored blocks and ${this.totalTransactions} stored transactions`);
+            }
+            else {
+                const genesis = this.createGenesisBlock();
+                this.blocks = [genesis];
+                this.totalTransactions = 0;
+                await db_1.db.query(`
+          INSERT INTO blocks (
+            height, hash, parent_hash, producer, timestamp, nonce, difficulty,
+            gas_used, gas_limit, state_root, transactions_root, receipts_root
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          ON CONFLICT (height) DO NOTHING
+          `, [
+                    genesis.header.height,
+                    genesis.header.hash,
+                    genesis.header.parentHash,
+                    genesis.header.producer,
+                    genesis.header.timestamp,
+                    genesis.header.nonce,
+                    genesis.header.difficulty,
+                    genesis.header.gasUsed.toString(),
+                    genesis.header.gasLimit.toString(),
+                    genesis.header.stateRoot,
+                    genesis.header.transactionsRoot,
+                    genesis.header.receiptsRoot,
+                ]).catch(() => { });
+                console.log('[CHAIN] Created persistent genesis block');
+            }
+            await db_1.chainState.saveChainStartTime(this.genesisTime);
+            await db_1.chainState.saveBlockHeight(this.getChainLength());
+            await db_1.chainState.saveTotalTransactions(this.totalTransactions);
         }
         catch (error) {
             console.error('[CHAIN] DB error, using in-memory:', error);
             const genesis = this.createGenesisBlock();
             this.blocks = [genesis];
+            this.totalTransactions = 0;
         }
     }
-    rowToBlock(row) {
-        const block = new Block_1.Block(row.height, row.parent_hash, row.producer, [], // Transactions loaded separately if needed
-        row.difficulty);
+    async refreshFromDb() {
+        try {
+            const loadedExistingBlocks = await this.loadPersistedBlocks();
+            if (!loadedExistingBlocks && this.blocks.length === 0) {
+                const genesis = this.createGenesisBlock();
+                this.blocks = [genesis];
+                this.totalTransactions = 0;
+            }
+        }
+        catch (error) {
+            console.error('[CHAIN] Failed to refresh from DB:', error);
+        }
+    }
+    rowToBlock(row, transactions = []) {
+        const block = new Block_1.Block(row.height, row.parent_hash, row.producer, transactions, row.difficulty);
         // Override header with actual values from DB
         block.header.hash = row.hash;
         block.header.timestamp = parseInt(row.timestamp, 10);
@@ -67,7 +140,7 @@ class Chain {
     }
     createGenesisBlock() {
         const genesis = new Block_1.Block(0, GENESIS_PARENT_HASH, 'HermesGenesisValidator', [], this.difficulty);
-        genesis.header.timestamp = FIXED_GENESIS_TIMESTAMP;
+        genesis.header.timestamp = this.genesisTime;
         return genesis;
     }
     async addBlock(block) {
@@ -117,7 +190,7 @@ class Chain {
                 ]);
             }
             // Update Redis cache
-            await db_1.chainState.saveBlockHeight(this.blocks.length);
+            await db_1.chainState.saveBlockHeight(this.getChainLength());
             await db_1.chainState.saveTotalTransactions(this.totalTransactions);
             await db_1.chainState.saveBlock(block.toJSON());
         }
@@ -139,22 +212,19 @@ class Chain {
     getAllBlocks() {
         return [...this.blocks];
     }
-    // TIME-BASED BLOCK HEIGHT - calculated from fixed genesis, NEVER resets
     getChainLength() {
-        const elapsed = Date.now() - FIXED_GENESIS_TIMESTAMP;
-        return Math.max(1, Math.floor(elapsed / BLOCK_INTERVAL_MS));
+        const latestBlock = this.getLatestBlock();
+        return latestBlock ? latestBlock.header.height + 1 : this.blocks.length;
     }
     // Get actual stored block count (different from time-based height)
     getStoredBlockCount() {
         return this.blocks.length;
     }
     getGenesisTime() {
-        return FIXED_GENESIS_TIMESTAMP;
+        return this.genesisTime;
     }
-    // TIME-BASED TRANSACTION COUNT
     getTotalTransactions() {
-        // ~2 transactions per block average + stored
-        return (this.getChainLength() * 2) + this.totalTransactions;
+        return this.totalTransactions;
     }
     getStoredTransactionCount() {
         return this.totalTransactions;
@@ -257,15 +327,19 @@ class Chain {
         this.orphanedBlocks = this.orphanedBlocks.filter(b => b.header.timestamp > cutoff);
         return before - this.orphanedBlocks.length;
     }
-    // Get chain statistics - TIME-BASED VALUES
     getStats() {
+        const latestBlock = this.getLatestBlock();
+        const avgBlockTime = this.blocks.length > 1
+            ? Math.max(0, Math.round((this.blocks[this.blocks.length - 1].header.timestamp - this.blocks[0].header.timestamp) /
+                (this.blocks.length - 1)))
+            : DEFAULT_BLOCK_INTERVAL_MS;
         return {
-            height: this.getChainLength(), // TIME-BASED
-            totalTransactions: this.getTotalTransactions(), // TIME-BASED
-            genesisTime: FIXED_GENESIS_TIMESTAMP,
+            height: this.getChainLength(),
+            totalTransactions: this.getTotalTransactions(),
+            genesisTime: this.genesisTime,
             orphanedBlocks: this.orphanedBlocks.length,
-            latestBlockTime: Date.now(),
-            avgBlockTime: BLOCK_INTERVAL_MS, // Fixed 10s
+            latestBlockTime: latestBlock?.header.timestamp || this.genesisTime,
+            avgBlockTime,
             storedBlocks: this.blocks.length,
             storedTransactions: this.totalTransactions
         };

@@ -134,11 +134,22 @@ exports.BROWSER_TOOLS = [
 class BrowserAutomation {
     constructor(projectRoot) {
         this.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        this.projectRoot = projectRoot || path.resolve(__dirname, '../../../../');
+        this.config = null;
+        this.projectRoot = projectRoot || process.cwd();
         this.screenshotDir = path.join(this.projectRoot, 'screenshots');
         // Ensure screenshot directory exists
         if (!fs.existsSync(this.screenshotDir)) {
             fs.mkdirSync(this.screenshotDir, { recursive: true });
+        }
+    }
+    configure(config) {
+        this.config = config;
+        if (config.repoRoot) {
+            this.projectRoot = config.repoRoot;
+            this.screenshotDir = path.join(this.projectRoot, 'screenshots');
+            if (!fs.existsSync(this.screenshotDir)) {
+                fs.mkdirSync(this.screenshotDir, { recursive: true });
+            }
         }
     }
     // Fetch a URL and extract content using curl + basic parsing

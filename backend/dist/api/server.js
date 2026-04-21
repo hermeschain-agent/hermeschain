@@ -51,17 +51,21 @@ const EventBus_1 = require("../events/EventBus");
 const StateManager_1 = require("../blockchain/StateManager");
 const db_1 = require("../database/db");
 const schema_1 = require("../database/schema");
+const hermesClient_1 = require("../llm/hermesClient");
 const dotenv = __importStar(require("dotenv"));
 dotenv.config();
 // Global Socket.io instance for real-time updates
 exports.io = null;
 async function main() {
+    const hermesConfig = (0, hermesClient_1.getHermesConfigStatus)();
     console.log('[INIT] Starting HERMESCHAIN — powered by Nous Hermes\n');
     console.log('[ENV] Environment check:');
     console.log(`   DATABASE_URL:       ${process.env.DATABASE_URL ? '[OK]' : '[--]'}`);
     console.log(`   REDIS_URL:          ${process.env.REDIS_URL ? '[OK]' : '[--]'}`);
-    console.log(`   OPENROUTER_API_KEY: ${process.env.OPENROUTER_API_KEY ? '[OK]' : '[--]'}`);
-    console.log(`   HERMES_MODEL:       ${process.env.HERMES_MODEL || 'nousresearch/hermes-4-405b (default)'}\n`);
+    console.log(`   LLM_PROVIDER:       ${hermesConfig.provider}`);
+    console.log(`   ANTHROPIC_API_KEY:  ${hermesConfig.configured ? '[OK]' : '[--]'}`);
+    console.log(`   HERMES_MODEL:       ${hermesConfig.model}`);
+    console.log(`   AGENT_ROLE:         ${process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web'}\n`);
     try {
         // Connect to database
         const connected = await db_1.db.connect();
@@ -87,6 +91,7 @@ async function main() {
     await txPool.initialize();
     await StateManager_1.stateManager.initialize();
     await validatorManager.initialize();
+    global.transactionPool = txPool;
     console.log('[STATE] Initial state loaded:');
     console.log(`   State Root: ${StateManager_1.stateManager.getStateRoot().substring(0, 20)}...`);
     console.log(`   Total Supply: ${StateManager_1.stateManager.formatBalance(StateManager_1.stateManager.getTotalSupply())}`);
@@ -94,26 +99,48 @@ async function main() {
     const app = (0, express_1.default)();
     app.use((0, cors_1.default)());
     app.use(express_1.default.json());
+    const syncSharedReadState = async () => {
+        if (process.env.AGENT_ROLE === 'worker')
+            return;
+        await chain.refreshFromDb();
+        await StateManager_1.stateManager.refreshAllAccounts();
+        await txPool.getPendingTransactions(200);
+    };
+    const { authRouter, initializeAuthTables, ipRateLimit, requireApiKey } = await Promise.resolve().then(() => __importStar(require('./auth')));
+    await initializeAuthTables();
+    app.use('/api/auth', authRouter);
+    console.log('[AUTH] Authentication system ready');
     // Health check endpoint for Railway
     app.get('/health', (req, res) => {
         res.status(200).json({ status: 'ok' });
     });
     // API status check (no key exposure)
     app.get('/api/config/status', (req, res) => {
+        const role = process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web';
         res.json({
-            openrouterKey: process.env.OPENROUTER_API_KEY ? 'configured' : 'not_set'
+            llmProvider: hermesConfig.provider,
+            llmConfigured: hermesConfig.configured,
+            model: hermesConfig.model,
+            baseUrl: hermesConfig.baseUrl,
+            agentRole: role,
+            serviceRole: role,
+            agentRepoRootConfigured: !!process.env.AGENT_REPO_ROOT,
+            autoGitPush: process.env.AUTO_GIT_PUSH === 'true',
         });
     });
-    app.get('/api/status', (req, res) => {
+    app.get('/api/status', async (req, res) => {
+        await syncSharedReadState();
         res.json({
             status: 'online',
             chainLength: chain.getChainLength(),
             pendingTransactions: txPool.getPendingCount(),
             validators: validatorManager.getAllValidators().length,
             genesisTime: chain.getGenesisTime(),
+            chainAgeMs: Date.now() - chain.getGenesisTime(),
             totalTransactions: chain.getTotalTransactions(),
             storedTransactions: chain.getStoredTransactionCount(),
-            uptime: Date.now() - chain.getGenesisTime(),
+            uptime: process.uptime() * 1000,
+            serverUptimeMs: process.uptime() * 1000,
             redisConnected: db_1.cache.isConnected(),
             stateRoot: StateManager_1.stateManager.getStateRoot(),
             totalSupply: StateManager_1.stateManager.getTotalSupply().toString(),
@@ -121,7 +148,8 @@ async function main() {
         });
     });
     // State endpoints
-    app.get('/api/state', (req, res) => {
+    app.get('/api/state', async (req, res) => {
+        await syncSharedReadState();
         res.json({
             stateRoot: StateManager_1.stateManager.getStateRoot(),
             totalSupply: StateManager_1.stateManager.formatBalance(StateManager_1.stateManager.getTotalSupply()),
@@ -129,7 +157,8 @@ async function main() {
             accounts: StateManager_1.stateManager.getAccountsSummary().slice(0, 20)
         });
     });
-    app.get('/api/state/account/:address', (req, res) => {
+    app.get('/api/state/account/:address', async (req, res) => {
+        await StateManager_1.stateManager.refreshAccount(req.params.address);
         const account = StateManager_1.stateManager.getAccount(req.params.address);
         if (account) {
             res.json({
@@ -148,7 +177,8 @@ async function main() {
             });
         }
     });
-    app.get('/api/state/balance/:address', (req, res) => {
+    app.get('/api/state/balance/:address', async (req, res) => {
+        await StateManager_1.stateManager.refreshAccount(req.params.address);
         const balance = StateManager_1.stateManager.getBalance(req.params.address);
         res.json({
             address: req.params.address,
@@ -157,10 +187,12 @@ async function main() {
         });
     });
     app.get('/api/blocks', async (req, res) => {
+        await syncSharedReadState();
         const blocks = chain.getAllBlocks();
         res.json(blocks.map(b => b.toJSON()));
     });
-    app.get('/api/blocks/:height', (req, res) => {
+    app.get('/api/blocks/:height', async (req, res) => {
+        await syncSharedReadState();
         const block = chain.getBlockByHeight(parseInt(req.params.height));
         if (block) {
             res.json(block.toJSON());
@@ -243,7 +275,7 @@ async function main() {
         }
     });
     // Terminal chat endpoint — powered by Nous Hermes
-    app.post('/api/personality/:validator', async (req, res) => {
+    app.post('/api/personality/:validator', ipRateLimit(20), async (req, res) => {
         try {
             // Accept both 'message' and 'command' for flexibility
             const userMessage = req.body.message || req.body.command;
@@ -270,14 +302,17 @@ async function main() {
             res.json({ message: response, response });
         }
         catch (error) {
+            const providerError = (0, hermesClient_1.getPublicHermesError)(error);
             console.error('Terminal chat error:', error);
-            res.status(500).json({
-                error: error.message,
-                message: 'I encountered an error processing your request. Please try again.'
+            res.status(providerError.status).json({
+                error: providerError.message,
+                code: providerError.code,
+                providerError,
+                message: providerError.message,
             });
         }
     });
-    app.post('/api/personality/hermes/ritual', async (req, res) => {
+    app.post('/api/personality/hermes/ritual', ipRateLimit(20), async (req, res) => {
         try {
             const ritual = req.body.ritual;
             const page = String(req.body.page || 'landing');
@@ -421,10 +456,13 @@ Live context:
             });
         }
         catch (error) {
+            const providerError = (0, hermesClient_1.getPublicHermesError)(error);
             console.error('Ritual error:', error);
-            res.status(500).json({
+            res.status(providerError.status).json({
                 title: 'Ritual interrupted',
-                message: 'Hermes could not complete that ritual right now. Please try again.',
+                message: providerError.message,
+                code: providerError.code,
+                providerError,
                 sourceRefs: [],
             });
         }
@@ -442,8 +480,9 @@ Live context:
     app.use('/api/wallet', walletRouter);
     console.log('[WALLET] Wallet & faucet system ready');
     // ========== AGENT NETWORK ==========
-    const networkRouter = await Promise.resolve().then(() => __importStar(require('./network')));
-    app.use('/api/network', networkRouter.default);
+    const { default: networkRouter, initializeNetworkStore, startNetworkHeartbeat, stopNetworkHeartbeat, } = await Promise.resolve().then(() => __importStar(require('./network')));
+    await initializeNetworkStore();
+    app.use('/api/network', networkRouter);
     console.log('[NETWORK] Multi-agent network ready');
     console.log('[x402] Payment protocol routes mounted at /api/network/x402/*');
     // Listen for network events and broadcast via Socket.io
@@ -474,10 +513,6 @@ Live context:
             exports.io.to('network').emit('new_topic', data);
         }
     });
-    // ========== ADMIN DASHBOARD ==========
-    const { adminRouter } = await Promise.resolve().then(() => __importStar(require('./admin')));
-    app.use('/api/admin', adminRouter);
-    console.log('[ADMIN] Admin dashboard API ready');
     // ========== LOGS SYSTEM ==========
     const { logsRouter, initializeLogsTable, addLog } = await Promise.resolve().then(() => __importStar(require('./logs')));
     await initializeLogsTable();
@@ -485,14 +520,23 @@ Live context:
     // Make addLog available globally for agent logging
     global.addLog = addLog;
     console.log('[LOGS] Logs system ready');
-    // ========== AUTH SYSTEM ==========
-    const { authRouter, initializeAuthTables } = await Promise.resolve().then(() => __importStar(require('./auth')));
-    await initializeAuthTables();
-    app.use('/api/auth', authRouter);
-    console.log('[AUTH] Authentication system ready');
-    // ========== SKILLS SYSTEM ==========
-    const { skillManager } = await Promise.resolve().then(() => __importStar(require('../agent/SkillManager')));
+    // ========== SKILLS + AGENT CONFIG ==========
+    const { createAgentConfig, configureAgentSubsystems, skillManager, agentWorker, agentEvents, agentMemory, agentTaskStore, agentRuntimeStore, taskSources, gitIntegration, } = await Promise.resolve().then(() => __importStar(require('../agent')));
+    const agentConfig = createAgentConfig(process.cwd());
+    configureAgentSubsystems(agentConfig);
     await skillManager.initialize();
+    await agentTaskStore.initialize();
+    await agentRuntimeStore.initialize();
+    if (agentConfig.role === 'worker') {
+        await startNetworkHeartbeat();
+    }
+    else {
+        stopNetworkHeartbeat();
+    }
+    // ========== ADMIN DASHBOARD ==========
+    const { adminRouter } = await Promise.resolve().then(() => __importStar(require('./admin')));
+    app.use('/api/admin', requireApiKey('admin'), adminRouter);
+    console.log('[ADMIN] Admin dashboard API ready');
     // Skills API endpoints
     app.get('/api/skills', (req, res) => {
         res.json({ skills: skillManager.listSkills() });
@@ -521,9 +565,176 @@ Live context:
     console.log('[WORKSHOP] Playground system ready');
     // ========== END PLAYGROUND SYSTEM ==========
     // ========== AUTONOMOUS AGENT WORKER SYSTEM ==========
-    const { agentWorker, agentEvents, agentMemory } = await Promise.resolve().then(() => __importStar(require('../agent')));
     // Track connected SSE clients
     let agentViewerCount = 0;
+    const parseGitLogEntry = (row) => {
+        const metadata = row.metadata || {};
+        const shortHash = metadata.commit ||
+            row.content?.match(/commit\s+([a-f0-9]{7,40})/i)?.[1] ||
+            'unknown';
+        return {
+            hash: metadata.fullHash || shortHash,
+            shortHash,
+            message: metadata.message || row.content || 'Recent git activity',
+            author: metadata.author || 'Hermes',
+            date: typeof row.timestamp === 'string'
+                ? row.timestamp
+                : new Date(row.timestamp || Date.now()).toISOString(),
+        };
+    };
+    const getSharedGitSnapshot = async (limit = 5) => {
+        const sharedRuntime = agentRuntimeStore.getLatestSnapshot();
+        const result = await db_1.db
+            .query(`
+        SELECT timestamp, content, metadata
+        FROM agent_logs
+        WHERE type = 'git_commit'
+        ORDER BY timestamp DESC
+        LIMIT $1
+        `, [limit])
+            .catch(() => ({ rows: [] }));
+        return {
+            role: agentConfig.role,
+            gitAvailable: sharedRuntime?.capabilities?.git === 'ready' || agentConfig.gitAvailable,
+            pushAvailable: sharedRuntime?.capabilities?.push === 'ready' || agentConfig.pushAvailable,
+            branch: agentConfig.gitAvailable ? gitIntegration.getCurrentBranch() : 'unavailable',
+            clean: agentConfig.gitAvailable ? gitIntegration.getStatus().clean : true,
+            changes: agentConfig.gitAvailable ? gitIntegration.getStatus().changes : [],
+            staged: agentConfig.gitAvailable ? gitIntegration.getStatus().staged : [],
+            recentCommits: (result.rows || []).map(parseGitLogEntry),
+            summary: agentConfig.gitAvailable
+                ? gitIntegration.getSummary()
+                : sharedRuntime?.capabilities?.push === 'unavailable'
+                    ? 'Worker runtime is active, but git push is unavailable in this environment.'
+                    : 'Git activity is being observed from the shared worker runtime.',
+        };
+    };
+    const formatLogStreamText = (row) => {
+        switch (row.type) {
+            case 'task_start':
+                return `$ begin_task :: ${row.content}\n`;
+            case 'analysis_start':
+                return `> [ANALYSIS] ${row.content}\n`;
+            case 'tool_use':
+                return `> [TOOL] ${row.content.replace(/^Using tool:\s*/i, '')}\n`;
+            case 'tool_result':
+                return `> [RESULT] ${row.content}\n`;
+            case 'verification_start':
+                return `> [VERIFY] ${row.content}\n`;
+            case 'verification_result':
+                return `> [PASS] ${row.content}\n`;
+            case 'task_complete':
+                return `> [DONE] ${row.content}\n`;
+            case 'task_blocked':
+                return `> [BLOCKED] ${row.content}\n`;
+            case 'git_commit':
+                return `> [RESULT] ${row.content}\n`;
+            case 'error':
+                return `> [ERROR] ${row.content}\n`;
+            default:
+                return `${row.content}\n`;
+        }
+    };
+    const buildAgentStatusPayload = async () => {
+        await syncSharedReadState();
+        const state = agentWorker.getState();
+        const sharedRuntime = agentRuntimeStore.getLatestSnapshot();
+        const observedRuntime = agentConfig.role === 'web' && sharedRuntime
+            ? sharedRuntime
+            : {
+                role: agentConfig.role,
+                mode: state.mode,
+                isWorking: state.isWorking,
+                runStatus: state.runStatus,
+                verificationStatus: state.verificationStatus,
+                blockedReason: state.blockedReason,
+                lastFailure: state.lastFailure,
+                repoRoot: state.repoRoot,
+                repoRootHealth: state.repoRootHealth,
+                canWriteScopes: state.canWriteScopes,
+                currentTask: state.currentTask
+                    ? {
+                        id: state.currentTask.id,
+                        title: state.currentTask.title,
+                        type: state.currentTask.type,
+                        agent: state.currentTask.agent,
+                    }
+                    : null,
+                currentOutput: state.currentOutput,
+                currentDecision: state.currentDecision,
+                heartbeatCount: state.heartbeatCount,
+                brainActive: state.brainActive,
+                agentEnabled: agentConfig.effectiveMode !== 'disabled',
+                startupIssues: agentConfig.startupIssues,
+                capabilities: {
+                    workspace: agentConfig.workspaceReady ? 'ready' : 'unavailable',
+                    git: agentConfig.gitAvailable ? 'ready' : 'unavailable',
+                    push: agentConfig.pushAvailable ? 'ready' : 'unavailable',
+                    llm: agentConfig.modelConfigured ? 'ready' : 'unavailable',
+                },
+                updatedAt: new Date().toISOString(),
+                workerHeartbeatAt: agentConfig.role === 'worker' ? new Date().toISOString() : null,
+            };
+        const workerHeartbeatAt = observedRuntime.workerHeartbeatAt || observedRuntime.updatedAt || null;
+        const workerActive = workerHeartbeatAt
+            ? Date.now() - new Date(workerHeartbeatAt).getTime() < 90000
+            : false;
+        const currentRun = agentTaskStore.getCurrentRun();
+        const recentRuns = agentTaskStore.getRecentRuns(20);
+        const recentSuccessfulRuns = recentRuns.filter((run) => run.status === 'succeeded').slice(0, 5);
+        return {
+            role: agentConfig.role,
+            serviceRole: agentConfig.role,
+            observedWorkerRole: observedRuntime.role,
+            statusSource: agentConfig.role === 'web' && sharedRuntime ? 'shared' : 'local',
+            mode: observedRuntime.mode,
+            streamMode: observedRuntime.mode,
+            isWorking: observedRuntime.isWorking,
+            runStatus: observedRuntime.runStatus,
+            verificationStatus: observedRuntime.verificationStatus,
+            blockedReason: observedRuntime.blockedReason,
+            lastFailure: observedRuntime.lastFailure,
+            repoRoot: observedRuntime.repoRoot,
+            repoRootHealth: observedRuntime.repoRootHealth,
+            canWriteScopes: observedRuntime.canWriteScopes,
+            currentTask: observedRuntime.currentTask,
+            currentOutput: observedRuntime.currentOutput,
+            currentDecision: observedRuntime.currentDecision,
+            completedTaskCount: recentSuccessfulRuns.length,
+            recentTasks: recentSuccessfulRuns.map((run) => ({
+                title: run.title,
+                agent: run.agent,
+                completedAt: run.completedAt || run.updatedAt,
+            })),
+            recentRuns: recentRuns.map((run) => ({
+                id: run.id,
+                sourceTaskId: run.sourceTaskId,
+                title: run.title,
+                type: run.taskType,
+                mode: run.mode,
+                status: run.status,
+                verificationStatus: run.verificationStatus,
+                changedFiles: run.changedFiles,
+                failureReason: run.failureReason,
+                blockedReason: run.blockedReason,
+                startedAt: run.startedAt,
+                completedAt: run.completedAt,
+            })),
+            currentRunId: currentRun?.id || null,
+            viewerCount: agentViewerCount,
+            agentEnabled: observedRuntime.agentEnabled,
+            workerActive,
+            workerHeartbeatAt,
+            startupIssues: observedRuntime.startupIssues,
+            capabilities: observedRuntime.capabilities,
+            genesisTimestamp: chain.getGenesisTime(),
+            chainAgeMs: Date.now() - chain.getGenesisTime(),
+            lastBlockTimestamp: chain.getLatestBlock()?.header.timestamp || null,
+            blockHeight: chain.getChainLength(),
+            transactionCount: chain.getStoredTransactionCount(),
+            storedTransactionCount: chain.getStoredTransactionCount(),
+        };
+    };
     // SSE endpoint for live agent work streaming
     app.get('/api/agent/stream', (req, res) => {
         // Set up SSE headers
@@ -534,30 +745,21 @@ Live context:
         res.flushHeaders();
         agentViewerCount++;
         console.log(`[AGENT] New viewer connected (total: ${agentViewerCount})`);
-        // Send current state to new connection
-        const state = agentWorker.getState();
-        // Get persisted tasks from memory (survives restarts)
-        const persistedTasks = agentMemory.getCompletedTasks(5);
-        res.write(`data: ${JSON.stringify({
-            type: 'init',
-            data: {
-                isWorking: state.isWorking,
-                currentTask: state.currentTask ? {
-                    id: state.currentTask.id,
-                    title: state.currentTask.title,
-                    type: state.currentTask.type,
-                    agent: state.currentTask.agent,
-                } : null,
-                currentOutput: state.currentOutput,
-                completedTasks: persistedTasks.map(t => ({
-                    title: t.title,
-                    agent: t.agent,
-                    completedAt: t.completedAt,
-                })),
-                viewerCount: agentViewerCount,
-            },
-            timestamp: Date.now()
-        })}\n\n`);
+        void buildAgentStatusPayload().then((payload) => {
+            res.write(`data: ${JSON.stringify({
+                type: 'init',
+                data: payload,
+                timestamp: Date.now()
+            })}\n\n`);
+        }).catch(() => {
+            res.write(`data: ${JSON.stringify({
+                type: 'init',
+                data: {
+                    error: 'Failed to build shared agent status payload.',
+                },
+                timestamp: Date.now()
+            })}\n\n`);
+        });
         // Subscribe to agent events
         const onChunk = (chunk) => {
             try {
@@ -568,12 +770,53 @@ Live context:
             }
         };
         agentEvents.on('chunk', onChunk);
+        let lastLogSeenAt = new Date(Date.now() - 60 * 1000);
+        const statusPulse = setInterval(() => {
+            void buildAgentStatusPayload()
+                .then((payload) => {
+                res.write(`data: ${JSON.stringify({
+                    type: 'status',
+                    data: payload,
+                    viewerCount: agentViewerCount,
+                    timestamp: Date.now()
+                })}\n\n`);
+            })
+                .catch(() => {
+                clearInterval(statusPulse);
+            });
+        }, 5000);
+        const sharedLogPoll = setInterval(async () => {
+            if (agentConfig.role !== 'web')
+                return;
+            try {
+                const result = await db_1.db.query(`
+          SELECT id, timestamp, type, content, metadata
+          FROM agent_logs
+          WHERE timestamp > $1
+          ORDER BY timestamp ASC
+          LIMIT 50
+          `, [lastLogSeenAt]);
+                for (const row of result.rows || []) {
+                    lastLogSeenAt = new Date(row.timestamp);
+                    res.write(`data: ${JSON.stringify({
+                        type: 'text',
+                        data: formatLogStreamText(row),
+                        viewerCount: agentViewerCount,
+                        timestamp: Date.now(),
+                    })}\n\n`);
+                }
+            }
+            catch {
+                // Shared worker logs are best-effort here; status pulses still keep the rail honest.
+            }
+        }, 5000);
         // Send heartbeat every 10 seconds
         const heartbeat = setInterval(() => {
             try {
                 res.write(`data: ${JSON.stringify({ type: 'heartbeat', timestamp: Date.now(), viewerCount: agentViewerCount })}\n\n`);
             }
             catch (e) {
+                clearInterval(statusPulse);
                 clearInterval(heartbeat);
             }
         }, 10000);
@@ -582,55 +825,119 @@ Live context:
             agentViewerCount--;
             console.log(`[AGENT] Viewer disconnected (total: ${agentViewerCount})`);
             agentEvents.off('chunk', onChunk);
+            clearInterval(statusPulse);
             clearInterval(heartbeat);
+            clearInterval(sharedLogPoll);
         });
     });
     // Get agent status
-    app.get('/api/agent/status', (req, res) => {
-        const state = agentWorker.getState();
-        // Get persisted completed tasks from memory
-        const persistedTasks = agentMemory.getCompletedTasks(10);
-        res.json({
-            isWorking: state.isWorking,
-            currentTask: state.currentTask ? {
-                id: state.currentTask.id,
-                title: state.currentTask.title,
-                type: state.currentTask.type,
-                agent: state.currentTask.agent,
-            } : null,
-            completedTaskCount: persistedTasks.length,
-            recentTasks: persistedTasks.slice(0, 5).map(t => ({
-                title: t.title,
-                agent: t.agent,
-                completedAt: t.completedAt,
-            })),
-            viewerCount: agentViewerCount,
-            // Chain stats
-            blockHeight: chain.getChainLength(),
-            transactionCount: chain.getTotalTransactions(),
-            storedTransactionCount: chain.getStoredTransactionCount(),
-        });
+    // When running as web, proxy agent status to the worker so the frontend
+    // sees live task/run state from the container that's actually doing work.
+    // Worker is reachable over Railway's private network at the internal domain.
+    // Prefer explicit WORKER_INTERNAL_URL; fall back to the public Railway
+    // domain since private-network DNS+port assumptions aren't guaranteed.
+    const WORKER_INTERNAL_URL = process.env.WORKER_INTERNAL_URL ||
+        'https://hermeschain-worker-production.up.railway.app';
+    app.get('/api/agent/status', async (req, res) => {
+        if (process.env.AGENT_ROLE !== 'worker') {
+            try {
+                const controller = new AbortController();
+                const t = setTimeout(() => controller.abort(), 4000);
+                const upstream = await fetch(`${WORKER_INTERNAL_URL}/status`, {
+                    signal: controller.signal,
+                });
+                clearTimeout(t);
+                if (upstream.ok) {
+                    const workerData = await upstream.json();
+                    // Merge worker runtime state into the web's own payload shape so
+                    // frontend components keep working without changes.
+                    const localPayload = await buildAgentStatusPayload();
+                    res.json({
+                        ...localPayload,
+                        mode: workerData.agentMode || localPayload.mode,
+                        streamMode: workerData.agentMode || localPayload.streamMode,
+                        runStatus: workerData.runStatus || localPayload.runStatus,
+                        verificationStatus: workerData.verificationStatus || localPayload.verificationStatus,
+                        isWorking: workerData.isWorking ?? localPayload.isWorking,
+                        currentTask: workerData.currentTask || localPayload.currentTask,
+                        lastFailure: workerData.lastFailure || localPayload.lastFailure,
+                        blockedReason: workerData.blockedReason || localPayload.blockedReason,
+                        recentTasks: (workerData.recentSuccessful || []).slice(0, 5).map((r) => ({
+                            title: r.title,
+                            agent: r.agent || 'HERMES',
+                            completedAt: r.completedAt,
+                        })),
+                        recentRuns: workerData.recentRuns || [],
+                        completedTaskCount: (workerData.recentSuccessful || []).length,
+                        agentEnabled: true,
+                        capabilities: workerData.capabilities || localPayload.capabilities,
+                        blockHeight: workerData.blockHeight ?? localPayload.blockHeight,
+                    });
+                    return;
+                }
+            }
+            catch (e) {
+                console.error('[PROXY] worker /status fetch failed:', e?.message || e);
+            }
+        }
+        res.json(await buildAgentStatusPayload());
     });
-    // Get persisted completed tasks
+    // Get persisted task runs (plus legacy completed-task alias)
     app.get('/api/agent/history', (req, res) => {
         const limit = parseInt(req.query.limit) || 20;
-        const tasks = agentMemory.getCompletedTasks(limit);
+        const runs = agentTaskStore.getRecentRuns(limit);
+        const successfulRuns = runs.filter((run) => run.status === 'succeeded');
         res.json({
-            tasks: tasks.map(t => ({
-                id: t.id,
-                taskId: t.taskId,
-                title: t.title,
-                type: t.taskType,
-                agent: t.agent,
-                output: t.output.substring(0, 500), // Truncate output
-                completedAt: t.completedAt,
+            runs: runs.map((run) => ({
+                id: run.id,
+                sourceTaskId: run.sourceTaskId,
+                source: agentTaskStore.getSourceTask(run.sourceTaskId)?.source || 'unknown',
+                title: run.title,
+                type: run.taskType,
+                agent: run.agent,
+                mode: run.mode,
+                status: run.status,
+                verificationStatus: run.verificationStatus,
+                changedFiles: run.changedFiles,
+                failureReason: run.failureReason,
+                blockedReason: run.blockedReason,
+                output: run.output.substring(0, 1000),
+                startedAt: run.startedAt,
+                completedAt: run.completedAt,
             })),
-            total: tasks.length
+            tasks: successfulRuns.map((run) => ({
+                id: run.id,
+                taskId: run.sourceTaskId,
+                title: run.title,
+                type: run.taskType,
+                agent: run.agent,
+                output: run.output.substring(0, 500),
+                completedAt: run.completedAt,
+            })),
+            total: runs.length
         });
+    });
+    app.post('/api/agent/tasks/:id/requeue', async (req, res) => {
+        const task = await taskSources.requeueTask(req.params.id);
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+        res.json({ success: true, task });
+    });
+    app.post('/api/agent/tasks/:id/discard', async (req, res) => {
+        const reason = typeof req.body?.reason === 'string' && req.body.reason.trim().length > 0
+            ? req.body.reason.trim()
+            : 'Discarded by operator';
+        const task = await taskSources.discardTask(req.params.id, reason);
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+        res.json({ success: true, task });
     });
     // ==================== CHAIN EXPLORER API ====================
     // Get recent blocks
     app.get('/api/chain/blocks', async (req, res) => {
+        await syncSharedReadState();
         const limit = parseInt(req.query.limit) || 20;
         const blocks = chain.getAllBlocks().slice(-limit).reverse();
         res.json({
@@ -651,6 +958,7 @@ Live context:
     });
     // Get block by height
     app.get('/api/chain/block/:height', async (req, res) => {
+        await syncSharedReadState();
         const height = parseInt(req.params.height);
         const block = chain.getBlockByHeight(height);
         if (!block) {
@@ -680,43 +988,89 @@ Live context:
     app.get('/api/chain/transactions', async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit) || 40, 200);
         const query = String(req.query.query || '').trim().toLowerCase();
-        const transactions = chain
-            .getAllBlocks()
-            .flatMap((block) => block.transactions.map((tx) => ({
-            hash: tx.hash,
-            from: tx.from,
-            to: tx.to,
-            value: tx.value.toString(),
-            gasPrice: tx.gasPrice.toString(),
-            gasLimit: tx.gasLimit.toString(),
-            nonce: tx.nonce,
-            timestamp: block.header.timestamp,
-            blockHeight: block.header.height,
-            blockHash: block.header.hash,
-            producer: block.header.producer,
-        })))
-            .reverse();
-        const filtered = query
-            ? transactions.filter((tx) => tx.hash.toLowerCase().includes(query) ||
-                tx.from.toLowerCase().includes(query) ||
-                tx.to.toLowerCase().includes(query) ||
-                String(tx.blockHeight) === query ||
-                tx.blockHash.toLowerCase().includes(query))
-            : transactions;
-        res.json({
-            transactions: filtered.slice(0, limit),
-            total: filtered.length,
-            query,
-        });
+        try {
+            const conditions = [];
+            const params = [];
+            if (query) {
+                params.push(`%${query}%`);
+                params.push(query);
+                conditions.push(`
+          (
+            LOWER(t.hash) LIKE LOWER($${params.length - 1}) OR
+            LOWER(t.from_address) LIKE LOWER($${params.length - 1}) OR
+            LOWER(t.to_address) LIKE LOWER($${params.length - 1}) OR
+            LOWER(COALESCE(b.hash, '')) LIKE LOWER($${params.length - 1}) OR
+            CAST(COALESCE(t.block_height, -1) AS TEXT) = $${params.length}
+          )
+        `);
+            }
+            params.push(limit);
+            const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+            const countParams = params.slice(0, params.length - 1);
+            const countResult = await db_1.db.query(`
+        SELECT COUNT(*)::int AS count
+        FROM transactions t
+        LEFT JOIN blocks b ON b.height = t.block_height
+        ${where}
+        `, countParams);
+            const result = await db_1.db.query(`
+        SELECT
+          t.hash,
+          t.from_address,
+          t.to_address,
+          t.value,
+          t.gas_price,
+          t.gas_limit,
+          t.nonce,
+          t.status,
+          t.created_at,
+          t.block_height,
+          b.hash AS block_hash,
+          b.producer
+        FROM transactions t
+        LEFT JOIN blocks b ON b.height = t.block_height
+        ${where}
+        ORDER BY t.created_at DESC
+        LIMIT $${params.length}
+        `, params);
+            const transactions = (result.rows || []).map((row) => ({
+                hash: row.hash,
+                from: row.from_address,
+                to: row.to_address,
+                value: String(Number(row.value) / 1e18),
+                gasPrice: row.gas_price?.toString?.() || '0',
+                gasLimit: row.gas_limit?.toString?.() || '0',
+                nonce: Number(row.nonce || 0),
+                timestamp: new Date(row.created_at).getTime(),
+                blockHeight: row.block_height === null ? null : Number(row.block_height),
+                blockHash: row.block_hash || null,
+                producer: row.producer || null,
+                status: row.status || 'confirmed',
+            }));
+            res.json({
+                transactions,
+                total: Number(countResult.rows?.[0]?.count || transactions.length),
+                query,
+            });
+        }
+        catch (error) {
+            res.json({
+                transactions: [],
+                total: 0,
+                query,
+                error: 'Transaction index is unavailable right now.',
+            });
+        }
     });
     // Get chain stats
     app.get('/api/chain/stats', async (req, res) => {
+        await syncSharedReadState();
         const stats = chain.getStats();
         res.json({
             height: stats.height,
             totalTransactions: stats.totalTransactions,
             storedTransactions: stats.storedTransactions,
-            timeBasedTransactions: stats.totalTransactions,
+            timeBasedTransactions: stats.storedTransactions,
             genesisTime: stats.genesisTime,
             latestBlockTime: stats.latestBlockTime,
             avgBlockTime: stats.avgBlockTime
@@ -724,6 +1078,7 @@ Live context:
     });
     // Get latest block
     app.get('/api/chain/latest', async (req, res) => {
+        await syncSharedReadState();
         const block = chain.getLatestBlock();
         if (!block) {
             return res.status(404).json({ error: 'No blocks found' });
@@ -738,18 +1093,24 @@ Live context:
     });
     // Git status endpoint
     app.get('/api/git/status', async (req, res) => {
-        const { gitIntegration } = await Promise.resolve().then(() => __importStar(require('../agent/GitIntegration')));
-        const status = gitIntegration.getStatus();
-        const commits = gitIntegration.getRecentCommits(5);
-        const summary = gitIntegration.getSummary();
-        res.json({
-            branch: status.branch,
-            clean: status.clean,
-            changes: status.changes,
-            staged: status.staged,
-            recentCommits: commits,
-            summary
-        });
+        if (agentConfig.gitAvailable) {
+            const { gitIntegration } = await Promise.resolve().then(() => __importStar(require('../agent/GitIntegration')));
+            const status = gitIntegration.getStatus();
+            const commits = gitIntegration.getRecentCommits(5);
+            const summary = gitIntegration.getSummary();
+            return res.json({
+                role: agentConfig.role,
+                gitAvailable: agentConfig.gitAvailable,
+                pushAvailable: agentConfig.pushAvailable,
+                branch: status.branch,
+                clean: status.clean,
+                changes: status.changes,
+                staged: status.staged,
+                recentCommits: commits,
+                summary,
+            });
+        }
+        res.json(await getSharedGitSnapshot(5));
     });
     // CI status endpoint
     app.get('/api/ci/status', async (req, res) => {
@@ -780,27 +1141,54 @@ Live context:
     });
     // Task backlog status
     app.get('/api/tasks/backlog', async (req, res) => {
-        const { TASK_BACKLOG, getBacklogProgress, getTotalEstimatedTime, getTasksByPriority } = await Promise.resolve().then(() => __importStar(require('../agent/TaskBacklog')));
-        const progress = getBacklogProgress();
+        const { TASK_BACKLOG, BACKLOG_PHASES, COMMIT_WINDOW_MINUTES, getRuntimeCommitWindowMinutes, TARGET_COMMIT_HOURS, TARGET_COMMIT_WINDOWS, getOrderedBacklog, getTotalEstimatedTime, } = await Promise.resolve().then(() => __importStar(require('../agent/TaskBacklog')));
+        const progress = agentTaskStore.getBacklogProgress(TASK_BACKLOG.length);
         const time = getTotalEstimatedTime();
-        const tasks = getTasksByPriority();
+        const orderedTasks = getOrderedBacklog();
+        const nextTasks = orderedTasks
+            .filter((task) => agentTaskStore.getSourceTask(task.id)?.status !== 'succeeded')
+            .slice(0, 10);
         res.json({
             progress,
+            cadence: {
+                commitWindowMinutes: COMMIT_WINDOW_MINUTES,
+                runtimeCommitWindowMinutes: getRuntimeCommitWindowMinutes(),
+                targetHours: TARGET_COMMIT_HOURS,
+                targetCommitWindows: TARGET_COMMIT_WINDOWS,
+            },
             estimatedTime: time,
             totalTasks: TASK_BACKLOG.length,
-            nextTasks: tasks.slice(progress.completed, progress.completed + 10).map(t => ({
+            phases: BACKLOG_PHASES,
+            nextTasks: nextTasks.map(t => ({
                 id: t.id,
                 title: t.title,
                 type: t.type,
                 priority: t.priority,
                 estimatedMinutes: t.estimatedMinutes,
-                tags: t.tags
+                commitWindowMinutes: t.commitWindowMinutes,
+                phaseId: t.phaseId,
+                phaseTitle: t.phaseTitle,
+                workstreamId: t.workstreamId,
+                workstreamTitle: t.workstreamTitle,
+                allowedScopes: t.allowedScopes,
+                expectedOutcome: t.expectedOutcome,
+                verification: t.verification,
+                tags: t.tags,
             }))
         });
     });
-    // Start the autonomous agent worker
-    agentWorker.start();
-    console.log('[AGENT] Autonomous agent worker started');
+    // Start the autonomous agent worker by default unless explicitly disabled.
+    if (agentConfig.role === 'worker' &&
+        agentConfig.autorunEnabled &&
+        agentConfig.effectiveMode !== 'disabled') {
+        void agentWorker.start().catch((error) => {
+            console.error('[AGENT] Worker failed to start:', error);
+        });
+        console.log(`[AGENT] Autonomous agent worker started in ${agentConfig.effectiveMode} mode (${agentConfig.role} role)`);
+    }
+    else {
+        console.log(`[AGENT] Worker not started (role=${agentConfig.role}, autorun=${agentConfig.autorunEnabled}, effectiveMode=${agentConfig.effectiveMode})`);
+    }
     // Set up logging for agent events
     let currentTaskId;
     let currentTaskTitle;
@@ -825,6 +1213,23 @@ Live context:
                     break;
                 case 'tool_start':
                     addLog('tool_use', `Using tool: ${chunk.data?.tool}`, currentTaskId, currentTaskTitle, chunk.data);
+                    break;
+                case 'tool_result':
+                    addLog('tool_result', `Tool finished: ${chunk.data?.tool}`, currentTaskId, currentTaskTitle, chunk.data);
+                    break;
+                case 'analysis_start':
+                    addLog('analysis_start', `Analyzing: ${currentTaskTitle || chunk.data?.taskId || 'task'}`, currentTaskId, currentTaskTitle, chunk.data);
+                    break;
+                case 'verification_start':
+                    addLog('verification_start', `Verifying: ${currentTaskTitle || chunk.data?.sourceTaskId || 'task'}`, currentTaskId, currentTaskTitle, chunk.data);
+                    break;
+                case 'verification_result':
+                    addLog('verification_result', chunk.data?.summary || chunk.data?.failureReason || chunk.data?.step || 'Verification update', currentTaskId, currentTaskTitle, chunk.data);
+                    break;
+                case 'task_blocked':
+                    addLog('task_blocked', chunk.data?.reason || 'Task blocked', chunk.data?.taskId || currentTaskId, currentTaskTitle, chunk.data);
+                    currentTaskId = undefined;
+                    currentTaskTitle = undefined;
                     break;
                 case 'git_deploy':
                     addLog('git_commit', `Deployed commit ${chunk.data?.commit} to ${chunk.data?.branch || 'main'}`, chunk.data?.taskId, currentTaskTitle, chunk.data);
@@ -928,14 +1333,25 @@ Live context:
     });
     console.log('[SOCKET] Socket.io server initialized');
     const PORT = process.env.PORT || 4000;
+    server.on('error', (error) => {
+        console.error('[SERVER] Failed to bind HTTP server:', error);
+        blockProducer.stop();
+        agentWorker.stop();
+        stopNetworkHeartbeat();
+        process.exitCode = 1;
+        setTimeout(() => process.exit(1), 0);
+    });
     server.listen(PORT, () => {
         console.log(`[SERVER] Running on http://localhost:${PORT}\n`);
+        if (agentConfig.role === 'worker') {
+            blockProducer.start();
+        }
     });
-    blockProducer.start();
     process.on('SIGINT', () => {
         console.log('\n[SHUTDOWN] Stopping services...');
         blockProducer.stop();
         agentWorker.stop();
+        stopNetworkHeartbeat();
         db_1.db.end();
         process.exit(0);
     });

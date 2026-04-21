@@ -1,3 +1,4 @@
+import { AgentConfig } from './config';
 export interface Skill {
     id: string;
     name: string;
@@ -40,7 +41,11 @@ export declare class SkillManager {
     private skills;
     private skillsDir;
     private projectRoot;
+    private initialized;
+    private config;
+    private triggerDisposers;
     constructor(projectRoot?: string);
+    configure(config: AgentConfig): void;
     initialize(): Promise<void>;
     private loadCustomSkills;
     private parseSkillMarkdown;

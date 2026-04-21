@@ -16,6 +16,7 @@ exports.GOAL_TEMPLATES = {
             'Optimize transaction throughput',
             'Ensure validator availability',
         ],
+        objectiveTags: ['chain', 'consensus', 'performance'],
     },
     security: {
         title: 'Strengthen Security',
@@ -28,6 +29,7 @@ exports.GOAL_TEMPLATES = {
             'Check for vulnerabilities',
             'Document security practices',
         ],
+        objectiveTags: ['security', 'audit', 'consensus'],
     },
     tooling: {
         title: 'Build Developer Tools',
@@ -40,6 +42,7 @@ exports.GOAL_TEMPLATES = {
             'Develop testing frameworks',
             'Write documentation',
         ],
+        objectiveTags: ['tooling', 'api', 'wallet'],
     },
     optimization: {
         title: 'Optimize Performance',
@@ -52,6 +55,7 @@ exports.GOAL_TEMPLATES = {
             'Improve block production',
             'Reduce latency',
         ],
+        objectiveTags: ['performance', 'chain'],
     },
     governance: {
         title: 'Improve Governance',
@@ -64,6 +68,7 @@ exports.GOAL_TEMPLATES = {
             'Analyze voting patterns',
             'Document governance processes',
         ],
+        objectiveTags: ['governance', 'feature'],
     },
     documentation: {
         title: 'Improve Documentation',
@@ -76,6 +81,7 @@ exports.GOAL_TEMPLATES = {
             'Create architecture docs',
             'Add code comments',
         ],
+        objectiveTags: ['documentation'],
     },
 };
 const CREATE_GOALS_TABLE = `
@@ -92,6 +98,7 @@ CREATE TABLE IF NOT EXISTS agent_goals (
   completed_at TIMESTAMP,
   subgoals JSONB DEFAULT '[]',
   blockers JSONB DEFAULT '[]',
+  objective_tags JSONB DEFAULT '[]',
   reasoning TEXT
 );
 
@@ -102,6 +109,22 @@ class AgentGoalsSystem {
     constructor() {
         this.goals = new Map();
         this.initialized = false;
+    }
+    normalizeSubgoals(subgoals) {
+        return subgoals.map((subgoal, index) => {
+            if (typeof subgoal === 'string') {
+                return {
+                    id: `subgoal_${index}`,
+                    title: subgoal,
+                    status: index === 0 ? 'active' : 'pending',
+                };
+            }
+            return {
+                id: subgoal.id || `subgoal_${index}`,
+                title: subgoal.title,
+                status: subgoal.status || (index === 0 ? 'active' : 'pending'),
+            };
+        });
     }
     async initialize() {
         if (this.initialized)
@@ -141,8 +164,9 @@ class AgentGoalsSystem {
                     createdAt: new Date(row.created_at),
                     updatedAt: new Date(row.updated_at),
                     completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
-                    subgoals: row.subgoals || [],
+                    subgoals: this.normalizeSubgoals(row.subgoals || []),
                     blockers: row.blockers || [],
+                    objectiveTags: row.objective_tags || [],
                     reasoning: row.reasoning || '',
                 };
                 this.goals.set(goal.id, goal);
@@ -155,14 +179,14 @@ class AgentGoalsSystem {
     async setDefaultGoals() {
         console.log('[GOALS] Setting up default goals...');
         // Always have chain health as a goal
-        await this.createGoal(exports.GOAL_TEMPLATES.chain_health.title, exports.GOAL_TEMPLATES.chain_health.description, 'long', 'Core responsibility: Keep Hermeschain running smoothly', exports.GOAL_TEMPLATES.chain_health.priority, exports.GOAL_TEMPLATES.chain_health.subgoals);
+        await this.createGoal(exports.GOAL_TEMPLATES.chain_health.title, exports.GOAL_TEMPLATES.chain_health.description, 'long', 'Core responsibility: Keep Hermeschain running smoothly', exports.GOAL_TEMPLATES.chain_health.priority, exports.GOAL_TEMPLATES.chain_health.subgoals, exports.GOAL_TEMPLATES.chain_health.objectiveTags);
         // Security is always important
-        await this.createGoal(exports.GOAL_TEMPLATES.security.title, exports.GOAL_TEMPLATES.security.description, 'long', 'Security is foundational to blockchain trust', exports.GOAL_TEMPLATES.security.priority, exports.GOAL_TEMPLATES.security.subgoals);
+        await this.createGoal(exports.GOAL_TEMPLATES.security.title, exports.GOAL_TEMPLATES.security.description, 'long', 'Security is foundational to blockchain trust', exports.GOAL_TEMPLATES.security.priority, exports.GOAL_TEMPLATES.security.subgoals, exports.GOAL_TEMPLATES.security.objectiveTags);
         // Start with a tooling goal
-        await this.createGoal(exports.GOAL_TEMPLATES.tooling.title, exports.GOAL_TEMPLATES.tooling.description, 'medium', 'Better tools make the chain more accessible', exports.GOAL_TEMPLATES.tooling.priority, exports.GOAL_TEMPLATES.tooling.subgoals);
+        await this.createGoal(exports.GOAL_TEMPLATES.tooling.title, exports.GOAL_TEMPLATES.tooling.description, 'medium', 'Better tools make the chain more accessible', exports.GOAL_TEMPLATES.tooling.priority, exports.GOAL_TEMPLATES.tooling.subgoals, exports.GOAL_TEMPLATES.tooling.objectiveTags);
     }
     // Create a new goal
-    async createGoal(title, description, type, reasoning, priority = 0.5, subgoals = []) {
+    async createGoal(title, description, type, reasoning, priority = 0.5, subgoals = [], objectiveTags = []) {
         const id = `goal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const goal = {
             id,
@@ -174,17 +198,28 @@ class AgentGoalsSystem {
             progress: 0,
             createdAt: new Date(),
             updatedAt: new Date(),
-            subgoals,
+            subgoals: this.normalizeSubgoals(subgoals),
             blockers: [],
+            objectiveTags,
             reasoning,
         };
         this.goals.set(id, goal);
         // Persist
         try {
             await db_1.db.query(`
-        INSERT INTO agent_goals (id, type, title, description, status, priority, subgoals, reasoning)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [id, type, title, description, 'active', priority, JSON.stringify(subgoals), reasoning]);
+        INSERT INTO agent_goals (id, type, title, description, status, priority, subgoals, objective_tags, reasoning)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `, [
+                id,
+                type,
+                title,
+                description,
+                'active',
+                priority,
+                JSON.stringify(goal.subgoals),
+                JSON.stringify(objectiveTags),
+                reasoning,
+            ]);
         }
         catch (error) {
             console.error('[GOALS] Failed to persist goal:', error);
@@ -261,38 +296,29 @@ class AgentGoalsSystem {
         return Array.from(this.goals.values())
             .filter(g => g.type === type && (g.status === 'active' || g.status === 'in_progress'));
     }
-    // Check if a task contributes to any goal
-    taskContributesToGoal(taskTitle) {
-        const titleLower = taskTitle.toLowerCase();
+    getGoalForObjectiveTags(objectiveTags) {
+        const normalizedTags = new Set(objectiveTags.map((tag) => tag.toLowerCase()));
+        if (normalizedTags.size === 0)
+            return null;
+        let bestMatch = null;
+        let bestScore = 0;
         for (const goal of this.goals.values()) {
             if (goal.status !== 'active' && goal.status !== 'in_progress')
                 continue;
-            // Check if task matches goal title or description
-            if (goal.title.toLowerCase().includes(titleLower) ||
-                goal.description.toLowerCase().includes(titleLower)) {
-                return goal;
-            }
-            // Check subgoals
-            for (const subgoal of goal.subgoals) {
-                if (titleLower.includes(subgoal.toLowerCase()) ||
-                    subgoal.toLowerCase().includes(titleLower)) {
-                    return goal;
-                }
-            }
-            // Keyword matching
-            const goalKeywords = this.extractKeywords(goal);
-            const taskKeywords = titleLower.split(/\s+/);
-            const overlap = taskKeywords.filter(k => goalKeywords.has(k)).length;
-            if (overlap >= 2) {
-                return goal;
+            const overlap = goal.objectiveTags.filter((tag) => normalizedTags.has(tag.toLowerCase())).length;
+            if (overlap > bestScore) {
+                bestScore = overlap;
+                bestMatch = goal;
             }
         }
-        return null;
+        return bestScore > 0 ? bestMatch : null;
     }
-    extractKeywords(goal) {
-        const text = `${goal.title} ${goal.description} ${goal.subgoals.join(' ')}`.toLowerCase();
-        const words = text.split(/\s+/).filter(w => w.length > 3);
-        return new Set(words);
+    taskContributesToGoal(taskTitle) {
+        const objectiveTags = taskTitle
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter((token) => token.length > 2);
+        return this.getGoalForObjectiveTags(objectiveTags);
     }
     // Agent can propose a new goal
     async proposeGoal(context) {
@@ -306,7 +332,7 @@ class AgentGoalsSystem {
             // Simple keyword matching
             if (contextLower.includes(key) ||
                 contextLower.includes(template.title.toLowerCase())) {
-                return this.createGoal(template.title, template.description, template.type, `Proposed based on context: ${context.substring(0, 100)}`, template.priority, template.subgoals);
+                return this.createGoal(template.title, template.description, template.type, `Proposed based on context: ${context.substring(0, 100)}`, template.priority, template.subgoals, template.objectiveTags);
             }
         }
         return null;
@@ -337,14 +363,12 @@ class AgentGoalsSystem {
         const focus = this.getCurrentFocus();
         if (!focus)
             return null;
-        // Find an incomplete subgoal
-        const completedSubgoals = focus.subgoals.filter(s => focus.description.toLowerCase().includes('completed') ||
-            focus.progress >= 100);
-        const nextSubgoal = focus.subgoals.find(s => !completedSubgoals.includes(s));
+        const nextSubgoal = focus.subgoals.find((subgoal) => subgoal.status === 'active') ||
+            focus.subgoals.find((subgoal) => subgoal.status === 'pending');
         if (nextSubgoal) {
             return {
                 goal: focus,
-                action: nextSubgoal,
+                action: nextSubgoal.title,
             };
         }
         // Otherwise suggest based on goal type
@@ -352,6 +376,37 @@ class AgentGoalsSystem {
             goal: focus,
             action: `Work on: ${focus.title}`,
         };
+    }
+    async recordVerifiedProgressByTags(objectiveTags, note) {
+        const goal = this.getGoalForObjectiveTags(objectiveTags);
+        if (!goal)
+            return null;
+        const nextSubgoal = goal.subgoals.find((subgoal) => subgoal.status === 'active') ||
+            goal.subgoals.find((subgoal) => subgoal.status === 'pending');
+        if (nextSubgoal) {
+            nextSubgoal.status = 'done';
+            const pending = goal.subgoals.find((subgoal) => subgoal.status === 'pending');
+            if (pending) {
+                pending.status = 'active';
+            }
+            const completedCount = goal.subgoals.filter((subgoal) => subgoal.status === 'done').length;
+            const progress = Math.round((completedCount / Math.max(goal.subgoals.length, 1)) * 100);
+            await this.updateProgress(goal.id, progress, note);
+        }
+        else {
+            await this.updateProgress(goal.id, Math.min(100, goal.progress + 10), note);
+        }
+        try {
+            await db_1.db.query(`
+          UPDATE agent_goals
+          SET subgoals = $1, updated_at = NOW()
+          WHERE id = $2
+        `, [JSON.stringify(goal.subgoals), goal.id]);
+        }
+        catch (error) {
+            console.error('[GOALS] Failed to persist subgoal progress:', error);
+        }
+        return goal;
     }
 }
 exports.agentGoals = new AgentGoalsSystem();

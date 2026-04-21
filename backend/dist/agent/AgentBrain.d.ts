@@ -5,7 +5,9 @@ import { Task } from './TaskGenerator';
  * AgentBrain - The decision-making core
  *
  * Combines memory, goals, and chain observations to decide what to work on.
- * This is what makes the agent feel autonomous and intelligent.
+ * This is a legacy planning prototype and is not used by the grounded
+ * AgentWorker task-run pipeline. Keep it isolated until it is rebuilt on top
+ * of SourceTaskRecord/TaskRunRecord.
  */
 export interface Decision {
     action: 'work_on_task' | 'investigate_issue' | 'pursue_opportunity' | 'reflect' | 'propose_goal';

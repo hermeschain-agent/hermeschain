@@ -48,13 +48,25 @@ async function validateBlockWithAI(block, previousBlock) {
     }
     // If no API key, use heuristic validation
     if (!(0, hermesClient_1.isConfigured)()) {
-        console.log('[AI] No OPENROUTER_API_KEY — using heuristic validation');
+        console.log('[AI] No ANTHROPIC_API_KEY — using heuristic validation');
         return heuristicValidation(block, previousBlock);
     }
     try {
         const txAnalysis = analyzeTransactions(block.transactions);
         const stateRoot = StateManager_1.stateManager.getStateRoot();
-        const prompt = `You are an AI validator for Hermeschain, a Solana-style blockchain. Analyze this block and determine if it should be accepted.
+        const prompt = `You are the AI validator for Hermeschain. Decide if the given block should be accepted.
+
+IMPORTANT CONTEXT — do NOT flag these as suspicious:
+- The genesis block's timestamp is fixed at chain creation time and can be days or weeks before the next block. A large gap between Block 0 (genesis) and Block 1 is NORMAL for a fresh or restarted chain.
+- Time-of-day, restart gaps, and historical timestamps are not attack vectors.
+- Block heights always increase by 1 per block. "Block 1 referencing Block 0 as parent" is the correct structure of every blockchain on earth — this is NOT invalid.
+- Block producer is always the Hermes system account on this chain; that is by design.
+- Empty blocks (no transactions) are expected during low-activity periods.
+
+ONLY flag a block as INVALID if you detect ONE of these:
+- Parent hash does not match the previous block's hash (only when previous block is supplied).
+- State root is malformed (empty or structurally wrong).
+- Transaction data contains an obvious exploit signature (double-spend, reentrancy, impossible signature).
 
 BLOCK DATA:
 - Height: ${block.header.height}
@@ -66,16 +78,18 @@ BLOCK DATA:
 - State Root: ${block.header.stateRoot}
 - Transaction Summary: ${txAnalysis.summary}
 
-ANALYSIS CONCERNS:
+ANALYSIS CONCERNS (from static analysis, may be informational):
 ${txAnalysis.concerns.length > 0 ? txAnalysis.concerns.join('\n') : 'None detected'}
 
 ${previousBlock ? `PREVIOUS BLOCK:
 - Height: ${previousBlock.header.height}
 - Hash: ${previousBlock.header.hash}
 - Timestamp: ${new Date(previousBlock.header.timestamp).toISOString()}
-- Time since last block: ${block.header.timestamp - previousBlock.header.timestamp}ms` : 'This is the first block after genesis.'}
+- Time since last block: ${block.header.timestamp - previousBlock.header.timestamp}ms (informational — do NOT reject purely on time gap)` : 'This is the first block after genesis. DO NOT reject based on the time gap from genesis.'}
 
 CURRENT STATE ROOT: ${stateRoot}
+
+Default to valid:true unless you have concrete evidence of one of the three INVALID conditions above.
 
 Respond with a JSON object (no markdown):
 {
@@ -196,5 +210,5 @@ function getValidationStats() {
         invalidBlocks: results.filter(r => !r.valid).length
     };
 }
-console.log('[AI] AI Validator loaded', (0, hermesClient_1.isConfigured)() ? '(Hermes via OpenRouter)' : '(heuristic mode)');
+console.log('[AI] AI Validator loaded', (0, hermesClient_1.isConfigured)() ? '(Hermes via Anthropic)' : '(heuristic mode)');
 //# sourceMappingURL=AIValidator.js.map

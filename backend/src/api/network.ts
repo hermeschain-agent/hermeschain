@@ -471,4 +471,31 @@ export function postClawMessage(message: string): void {
   }
 }
 
+/**
+ * Idempotent store initialization used by the worker at startup. The legacy
+ * entry-point calls the old initializeAgents() internally and is safe to
+ * call repeatedly.
+ */
+export async function initializeNetworkStore(): Promise<void> {
+  initializeAgents();
+}
+
+/**
+ * Public alias for the heartbeat scheduler. The worker drives the heartbeat
+ * explicitly rather than relying on the module-side setTimeout.
+ */
+export function startNetworkHeartbeat(): void {
+  startHeartbeat();
+}
+
+/**
+ * Tears down the running heartbeat. No-op if the heartbeat never started.
+ */
+export function stopNetworkHeartbeat(): void {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+}
+
 export default router;

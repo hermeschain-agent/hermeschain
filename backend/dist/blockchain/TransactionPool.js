@@ -14,11 +14,12 @@ class TransactionPool {
         this.pendingTransactions = new Map();
         this.knownHashes = new Set(); // Replay protection
     }
-    async initialize() {
+    async syncPendingTransactionsFromDb() {
         try {
             const result = await db_1.db.query(`
-        SELECT * FROM transactions WHERE status = 'pending' ORDER BY gas_price DESC
+        SELECT * FROM transactions WHERE status = 'pending' ORDER BY created_at ASC
       `);
+            this.pendingTransactions.clear();
             for (const row of result.rows) {
                 const tx = {
                     hash: row.hash,
@@ -29,11 +30,19 @@ class TransactionPool {
                     gasLimit: BigInt(row.gas_limit),
                     nonce: row.nonce,
                     data: row.data,
-                    signature: row.signature
+                    signature: row.signature,
                 };
                 this.pendingTransactions.set(tx.hash, tx);
                 this.knownHashes.add(tx.hash);
             }
+        }
+        catch (error) {
+            console.error('[POOL] Pending transaction sync error:', error);
+        }
+    }
+    async initialize() {
+        try {
+            await this.syncPendingTransactionsFromDb();
             // Also load confirmed transaction hashes for replay protection
             const confirmedResult = await db_1.db.query(`
         SELECT hash FROM transactions WHERE status = 'confirmed' ORDER BY id DESC LIMIT 10000
@@ -84,6 +93,7 @@ class TransactionPool {
         return { valid: true };
     }
     async getPendingTransactions(limit = 100) {
+        await this.syncPendingTransactionsFromDb();
         const sorted = Array.from(this.pendingTransactions.values())
             .sort((a, b) => Number(b.gasPrice - a.gasPrice))
             .slice(0, limit);

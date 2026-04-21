@@ -1,3 +1,5 @@
+import { AgentConfig } from './config';
+import { ExecutionScope } from './types';
 export interface ExecutionResult {
     success: boolean;
     output: string;
@@ -141,14 +143,12 @@ export declare const AGENT_TOOLS: ({
             content?: undefined;
             command?: undefined;
             timeout?: undefined;
+            cwd?: undefined;
             recursive?: undefined;
             pattern?: undefined;
             file_pattern?: undefined;
             message?: undefined;
             files?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
             thought?: undefined;
         };
         required: string[];
@@ -169,14 +169,12 @@ export declare const AGENT_TOOLS: ({
             };
             command?: undefined;
             timeout?: undefined;
+            cwd?: undefined;
             recursive?: undefined;
             pattern?: undefined;
             file_pattern?: undefined;
             message?: undefined;
             files?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
             thought?: undefined;
         };
         required: string[];
@@ -195,6 +193,10 @@ export declare const AGENT_TOOLS: ({
                 type: string;
                 description: string;
             };
+            cwd: {
+                type: string;
+                description: string;
+            };
             path?: undefined;
             content?: undefined;
             recursive?: undefined;
@@ -202,9 +204,6 @@ export declare const AGENT_TOOLS: ({
             file_pattern?: undefined;
             message?: undefined;
             files?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
             thought?: undefined;
         };
         required: string[];
@@ -226,16 +225,14 @@ export declare const AGENT_TOOLS: ({
             content?: undefined;
             command?: undefined;
             timeout?: undefined;
+            cwd?: undefined;
             pattern?: undefined;
             file_pattern?: undefined;
             message?: undefined;
             files?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
             thought?: undefined;
         };
-        required: any[];
+        required: never[];
     };
 } | {
     name: string;
@@ -255,12 +252,10 @@ export declare const AGENT_TOOLS: ({
             content?: undefined;
             command?: undefined;
             timeout?: undefined;
+            cwd?: undefined;
             recursive?: undefined;
             message?: undefined;
             files?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
             thought?: undefined;
         };
         required: string[];
@@ -275,17 +270,15 @@ export declare const AGENT_TOOLS: ({
             content?: undefined;
             command?: undefined;
             timeout?: undefined;
+            cwd?: undefined;
             recursive?: undefined;
             pattern?: undefined;
             file_pattern?: undefined;
             message?: undefined;
             files?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
             thought?: undefined;
         };
-        required: any[];
+        required: never[];
     };
 } | {
     name: string;
@@ -308,65 +301,10 @@ export declare const AGENT_TOOLS: ({
             content?: undefined;
             command?: undefined;
             timeout?: undefined;
+            cwd?: undefined;
             recursive?: undefined;
             pattern?: undefined;
             file_pattern?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
-            thought?: undefined;
-        };
-        required: string[];
-    };
-} | {
-    name: string;
-    description: string;
-    input_schema: {
-        type: string;
-        properties: {
-            name: {
-                type: string;
-                description: string;
-            };
-            path?: undefined;
-            content?: undefined;
-            command?: undefined;
-            timeout?: undefined;
-            recursive?: undefined;
-            pattern?: undefined;
-            file_pattern?: undefined;
-            message?: undefined;
-            files?: undefined;
-            title?: undefined;
-            body?: undefined;
-            thought?: undefined;
-        };
-        required: string[];
-    };
-} | {
-    name: string;
-    description: string;
-    input_schema: {
-        type: string;
-        properties: {
-            title: {
-                type: string;
-                description: string;
-            };
-            body: {
-                type: string;
-                description: string;
-            };
-            path?: undefined;
-            content?: undefined;
-            command?: undefined;
-            timeout?: undefined;
-            recursive?: undefined;
-            pattern?: undefined;
-            file_pattern?: undefined;
-            message?: undefined;
-            files?: undefined;
-            name?: undefined;
             thought?: undefined;
         };
         required: string[];
@@ -385,14 +323,12 @@ export declare const AGENT_TOOLS: ({
             content?: undefined;
             command?: undefined;
             timeout?: undefined;
+            cwd?: undefined;
             recursive?: undefined;
             pattern?: undefined;
             file_pattern?: undefined;
             message?: undefined;
             files?: undefined;
-            name?: undefined;
-            title?: undefined;
-            body?: undefined;
         };
         required: string[];
     };
@@ -409,14 +345,22 @@ export declare class AgentExecutor {
     private projectRoot;
     private maxOutputLength;
     private commandTimeout;
+    private config;
+    private currentWriteScopes;
     constructor(projectRoot?: string);
+    configure(config: AgentConfig): void;
+    setExecutionScopes(scopes: ExecutionScope[]): void;
+    clearExecutionScopes(): void;
     private isPathSafe;
+    private normalizeToRelative;
+    private isWithinScope;
     private isWritePathSafe;
     private isCommandSafe;
     private getFullPath;
     readFile(filePath: string): Promise<FileResult>;
     writeFile(filePath: string, content: string): Promise<FileResult>;
-    runCommand(command: string, timeout?: number): Promise<ExecutionResult>;
+    private resolveCommandCwd;
+    runCommand(command: string, timeout?: number, cwd?: string): Promise<ExecutionResult>;
     listFiles(dirPath?: string, recursive?: boolean): Promise<string[]>;
     private listFilesRecursive;
     searchCode(pattern: string, filePattern?: string): Promise<{

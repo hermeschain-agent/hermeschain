@@ -52,7 +52,7 @@ declare class AgentMemorySystem {
         search?: string;
     }): Promise<Memory[]>;
     getRelevantContext(topic: string, limit?: number): Promise<string>;
-    recordTaskCompletion(taskTitle: string, taskType: string, output: string, success: boolean): Promise<void>;
+    recordTaskCompletion(taskTitle: string, taskType: string, output: string, success: boolean, metadata?: Record<string, any>): Promise<void>;
     recordObservation(observation: string, metadata?: Record<string, any>): Promise<void>;
     recordLearning(learning: string, importance?: number): Promise<void>;
     recordError(error: string, context?: Record<string, any>): Promise<void>;

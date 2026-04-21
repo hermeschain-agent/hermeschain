@@ -1,6 +1,31 @@
-export declare const OPENROUTER_API_KEY: string;
+export type LLMProvider = 'anthropic';
+export declare const LLM_PROVIDER: LLMProvider;
 export declare const HERMES_MODEL: string;
 export declare const HERMES_BASE_URL: string;
+export declare const ANTHROPIC_API_KEY: string;
+export type HermesErrorCode = 'missing_key' | 'provider_error' | 'timeout' | 'bad_response' | 'disabled_by_config';
+export interface HermesPublicError {
+    code: HermesErrorCode;
+    message: string;
+    status: number;
+    retryable: boolean;
+    provider: LLMProvider;
+}
+export interface HermesConfigStatus {
+    provider: LLMProvider;
+    configured: boolean;
+    model: string;
+    baseUrl: string;
+}
+export interface HermesChatResult {
+    ok: boolean;
+    text: string | null;
+    error?: HermesPublicError;
+}
+export declare class HermesApiError extends Error {
+    readonly details: HermesPublicError;
+    constructor(details: HermesPublicError, cause?: unknown);
+}
 export type HermesRole = 'system' | 'user' | 'assistant' | 'tool';
 export interface HermesMessage {
     role: HermesRole;
@@ -59,27 +84,17 @@ export type HermesStreamEvent = {
         finishReason: string | null;
     };
 };
+export declare function getHermesConfigStatus(): HermesConfigStatus;
 export declare function isConfigured(): boolean;
-/**
- * One-shot chat completion. Drop-in replacement for the old
- * anthropicChatCompletion(systemPrompt, userMessage) signature.
- * Never throws — returns a user-safe fallback string on error so
- * chat surfaces degrade gracefully.
- */
+export declare function getPublicHermesError(error: unknown): HermesPublicError;
 export declare function hermesChatCompletion(systemPrompt: string, userMessage: string, opts?: {
     temperature?: number;
     maxTokens?: number;
 }): Promise<string>;
-/**
- * Low-level single-shot call. Returns the full OpenAI-compatible response.
- * Throws on HTTP error so agent loops can react.
- */
+export declare function safeHermesChatCompletion(systemPrompt: string, userMessage: string, opts?: {
+    temperature?: number;
+    maxTokens?: number;
+}): Promise<HermesChatResult>;
 export declare function hermesChat(params: HermesChatParams): Promise<HermesResponse>;
-/**
- * Streaming chat. Yields text deltas as they arrive and a single
- * tool_call event once the assistant's tool_calls array is complete.
- * The caller should accumulate text and handle tool_call events before
- * feeding results back into a new hermesChat/hermesChatStream call.
- */
 export declare function hermesChatStream(params: HermesChatParams): AsyncGenerator<HermesStreamEvent, void, unknown>;
 //# sourceMappingURL=hermesClient.d.ts.map

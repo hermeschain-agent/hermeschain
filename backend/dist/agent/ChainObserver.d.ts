@@ -38,6 +38,10 @@ declare class ChainObserverSystem {
     private blockTimes;
     private transactionCounts;
     private isRunning;
+    private analysisInterval;
+    private readonly boundOnBlockProduced;
+    private readonly boundOnTransactionAdded;
+    private readonly boundOnConsensusFailed;
     constructor();
     start(): Promise<void>;
     stop(): void;

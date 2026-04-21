@@ -6,6 +6,7 @@ export interface ValidationResult {
 export declare class TransactionPool {
     private pendingTransactions;
     private knownHashes;
+    private syncPendingTransactionsFromDb;
     initialize(): Promise<void>;
     addTransaction(tx: Transaction): Promise<ValidationResult>;
     getPendingTransactions(limit?: number): Promise<Transaction[]>;

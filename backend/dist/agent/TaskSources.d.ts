@@ -1,5 +1,6 @@
-import { Task } from './TaskGenerator';
-export type TaskSourceType = 'chain_event' | 'code_error' | 'github_issue' | 'cip_proposal' | 'todo_comment' | 'dependency' | 'performance' | 'security' | 'scheduled';
+import { AgentConfig } from './config';
+import { SourceTaskRecord, TaskSelection } from './types';
+export type TaskSourceType = 'backlog' | 'chain_event' | 'code_error' | 'github_issue' | 'cip_proposal' | 'todo_comment' | 'dependency' | 'runtime_error';
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
 export interface SourceTask {
     id: string;
@@ -9,26 +10,38 @@ export interface SourceTask {
     priority: TaskPriority;
     context: Record<string, any>;
     createdAt: Date;
-    expiresAt?: Date;
 }
 export declare class TaskSources {
+    private config;
     private projectRoot;
-    private pendingTasks;
-    private processedIds;
-    constructor(projectRoot?: string);
+    private initialized;
+    private backlogSynced;
+    private listenerDisposers;
+    configure(config: AgentConfig): void;
+    initialize(): Promise<void>;
+    dispose(): void;
+    private on;
+    private eventCooldowns;
+    private readonly EVENT_COOLDOWN_MS;
+    private isEventOnCooldown;
     private setupEventListeners;
-    private addChainEventTask;
-    scanTodoComments(): Promise<SourceTask[]>;
-    scanLintErrors(): Promise<SourceTask[]>;
-    scanTestFailures(): Promise<SourceTask[]>;
-    scanDependencies(): Promise<SourceTask[]>;
-    scanGitHubIssues(): Promise<SourceTask[]>;
-    scanCipProposals(): Promise<SourceTask[]>;
-    collectAllTasks(): Promise<SourceTask[]>;
-    getNextTask(): Promise<Task | null>;
-    private convertBacklogTask;
-    private convertToAgentTask;
-    markCompleted(taskId: string): void;
+    private extractScopesFromCiFailure;
+    private getRecentChangedFiles;
+    private getRetryDelayMs;
+    private buildVerificationPlan;
+    private backlogCreatedAt;
+    private buildBacklogVerificationPlan;
+    private syncBacklogTasks;
+    private enqueueSourceTask;
+    private mapTaskType;
+    scanTodoComments(): Promise<void>;
+    scanDependencies(): Promise<void>;
+    scanGitHubIssues(): Promise<void>;
+    scanCipProposals(): Promise<void>;
+    collectAllTasks(): Promise<SourceTaskRecord[]>;
+    getNextTask(): Promise<TaskSelection | null>;
+    requeueTask(taskId: string): Promise<SourceTaskRecord | null>;
+    discardTask(taskId: string, reason: string): Promise<SourceTaskRecord | null>;
     getPendingCount(): number;
 }
 export declare const taskSources: TaskSources;

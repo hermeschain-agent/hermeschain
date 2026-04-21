@@ -1,1893 +1,1644 @@
 "use strict";
-/**
- * Task Backlog - A massive list of real development tasks for Hermes to work through
- * These tasks will keep the agent building and committing for 24+ hours
- */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getBacklogProgress = exports.markBacklogTaskComplete = exports.getNextBacklogTask = exports.getTasksByType = exports.getTasksByPriority = exports.getTotalEstimatedTime = exports.TASK_BACKLOG = void 0;
-// Comprehensive task backlog - organized by category
-exports.TASK_BACKLOG = [
-    // ============ FAUCET & WALLET ============
-    {
-        id: 'faucet-001',
-        title: 'Build testnet faucet backend',
-        description: 'Create a faucet API endpoint that dispenses testnet OPEN tokens. Rate limit to 1 request per address per day. Track dispensed addresses in database. Mint 10 OPEN per request.',
-        type: 'feature',
-        priority: 10,
-        estimatedMinutes: 45,
-        tags: ['faucet', 'api', 'economics']
-    },
-    {
-        id: 'faucet-002',
-        title: 'Add faucet rate limiting and anti-abuse',
-        description: 'Implement rate limiting for faucet requests. Track by IP and address. Add cooldown period. Prevent abuse with captcha or proof-of-work.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 30,
-        tags: ['faucet', 'security']
-    },
-    {
-        id: 'wallet-001',
-        title: 'Build wallet keypair generation',
-        description: 'Create Ed25519 keypair generation for wallets. Support seed phrase (BIP39) for recovery. Derive addresses from public keys in base58 format.',
-        type: 'feature',
-        priority: 10,
-        estimatedMinutes: 40,
-        tags: ['wallet', 'crypto', 'security']
-    },
-    {
-        id: 'wallet-002',
-        title: 'Implement wallet transaction signing',
-        description: 'Add transaction signing with Ed25519 private keys. Build transaction serialization. Create signed transaction broadcast to network.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 35,
-        tags: ['wallet', 'crypto', 'blockchain']
-    },
-    {
-        id: 'wallet-003',
-        title: 'Add wallet balance and transaction history',
-        description: 'Fetch account balance from chain state. Display transaction history for address. Show pending and confirmed transactions.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 30,
-        tags: ['wallet', 'api']
-    },
-    // ============ BLOCKCHAIN CORE ============
-    {
-        id: 'bc-001',
-        title: 'Implement transaction signature verification',
-        description: 'Add Ed25519 signature verification to all transactions. Verify signatures before adding to mempool and before block inclusion.',
-        type: 'build',
-        priority: 10,
-        estimatedMinutes: 45,
-        tags: ['blockchain', 'security', 'crypto']
-    },
-    {
-        id: 'bc-002',
-        title: 'Add transaction nonce tracking',
-        description: 'Implement nonce tracking per account to prevent replay attacks. Each transaction must have a nonce greater than the last.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 30,
-        tags: ['blockchain', 'security']
-    },
-    {
-        id: 'bc-003',
-        title: 'Build transaction fee calculation system',
-        description: 'Implement gas-like fee system. Calculate fees based on transaction size and complexity. Add fee to block rewards.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 40,
-        tags: ['blockchain', 'economics']
-    },
-    {
-        id: 'bc-004',
-        title: 'Create block finality mechanism',
-        description: 'Implement finality after N confirmations. Track finalized vs pending blocks. Add API endpoint for finality status.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['blockchain', 'consensus']
-    },
-    {
-        id: 'bc-005',
-        title: 'Add uncle/ommer block handling',
-        description: 'Implement handling for blocks that arrive late but are still valid. Give partial rewards for uncle blocks.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['blockchain', 'consensus']
-    },
-    {
-        id: 'bc-006',
-        title: 'Implement chain reorganization logic',
-        description: 'Handle chain reorgs when a longer valid chain is discovered. Revert transactions and replay on new chain.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 60,
-        tags: ['blockchain', 'consensus']
-    },
-    {
-        id: 'bc-007',
-        title: 'Build checkpoint system for fast sync',
-        description: 'Create hardcoded checkpoints at regular intervals. Allow new nodes to skip verification before checkpoints.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 35,
-        tags: ['blockchain', 'performance']
-    },
-    {
-        id: 'bc-008',
-        title: 'Add block size limits and validation',
-        description: 'Implement maximum block size. Reject blocks that exceed limit. Add dynamic block size adjustment.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 25,
-        tags: ['blockchain', 'validation']
-    },
-    {
-        id: 'bc-009',
-        title: 'Create genesis block configuration system',
-        description: 'Build system to configure genesis block with initial allocations, parameters, and chain ID.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 30,
-        tags: ['blockchain', 'config']
-    },
-    {
-        id: 'bc-010',
-        title: 'Implement transaction receipt generation',
-        description: 'Generate receipts for all transactions with status, gas used, logs, and bloom filter.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 40,
-        tags: ['blockchain', 'api']
-    },
-    // ============ STATE MANAGEMENT ============
-    {
-        id: 'sm-001',
-        title: 'Implement proper Merkle Patricia Trie',
-        description: 'Replace simple state root with full Merkle Patricia Trie. Enable state proofs and light client verification.',
-        type: 'build',
-        priority: 10,
-        estimatedMinutes: 90,
-        tags: ['state', 'crypto', 'data-structure']
-    },
-    {
-        id: 'sm-002',
-        title: 'Add state pruning for old blocks',
-        description: 'Implement state pruning to remove old state data. Keep only recent state and archived checkpoints.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['state', 'performance', 'storage']
-    },
-    {
-        id: 'sm-003',
-        title: 'Build state snapshot system',
-        description: 'Create periodic state snapshots for fast sync. Compress and store efficiently.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 50,
-        tags: ['state', 'sync', 'storage']
-    },
-    {
-        id: 'sm-004',
-        title: 'Implement account storage slots',
-        description: 'Add key-value storage for each account. Enable smart contract state storage.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 45,
-        tags: ['state', 'smart-contracts']
-    },
-    {
-        id: 'sm-005',
-        title: 'Add state diff tracking',
-        description: 'Track changes between blocks as diffs. Enable efficient state sync and debugging.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 35,
-        tags: ['state', 'sync']
-    },
-    // ============ SMART CONTRACTS ============
-    {
-        id: 'sc-001',
-        title: 'Design OPEN token standard (ORC-20)',
-        description: 'Create fungible token standard similar to ERC-20. Define interface for transfer, approve, transferFrom.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 40,
-        tags: ['smart-contracts', 'token', 'standard']
-    },
-    {
-        id: 'sc-002',
-        title: 'Implement NFT standard (ORC-721)',
-        description: 'Create non-fungible token standard. Support minting, burning, transfers, and metadata.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['smart-contracts', 'nft', 'standard']
-    },
-    {
-        id: 'sc-003',
-        title: 'Build basic VM for contract execution',
-        description: 'Implement simple stack-based VM for executing contract bytecode. Support basic operations.',
-        type: 'build',
-        priority: 10,
-        estimatedMinutes: 120,
-        tags: ['smart-contracts', 'vm']
-    },
-    {
-        id: 'sc-004',
-        title: 'Add gas metering to VM',
-        description: 'Implement gas costs for each VM operation. Halt execution when gas runs out.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 45,
-        tags: ['smart-contracts', 'vm', 'gas']
-    },
-    {
-        id: 'sc-005',
-        title: 'Create contract deployment system',
-        description: 'Build system to deploy contracts via transactions. Generate contract addresses deterministically.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 40,
-        tags: ['smart-contracts', 'deployment']
-    },
-    {
-        id: 'sc-006',
-        title: 'Implement contract storage CRUD',
-        description: 'Add read/write operations for contract storage. Support mappings and arrays.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['smart-contracts', 'storage']
-    },
-    {
-        id: 'sc-007',
-        title: 'Build event emission system',
-        description: 'Allow contracts to emit events. Store in transaction receipts with bloom filters.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 30,
-        tags: ['smart-contracts', 'events']
-    },
-    {
-        id: 'sc-008',
-        title: 'Add contract-to-contract calls',
-        description: 'Implement CALL opcode for contracts to call other contracts. Handle gas forwarding.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 55,
-        tags: ['smart-contracts', 'vm']
-    },
-    // ============ API & RPC ============
-    {
-        id: 'api-001',
-        title: 'Implement JSON-RPC 2.0 server',
-        description: 'Build proper JSON-RPC server. Support batch requests, proper error codes.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 50,
-        tags: ['api', 'rpc']
-    },
-    {
-        id: 'api-002',
-        title: 'Add getBalance RPC method',
-        description: 'Implement Solana-style balance query. Return lamports for account pubkey.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 20,
-        tags: ['api', 'rpc', 'solana']
-    },
-    {
-        id: 'api-003',
-        title: 'Add getTransaction RPC method',
-        description: 'Query transaction by signature. Return full transaction with metadata or null.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 20,
-        tags: ['api', 'rpc', 'solana']
-    },
-    {
-        id: 'api-004',
-        title: 'Add getBlock RPC method',
-        description: 'Query block by slot number. Support transaction details and encoding options.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 25,
-        tags: ['api', 'rpc', 'solana']
-    },
-    {
-        id: 'api-005',
-        title: 'Implement sendTransaction RPC',
-        description: 'Accept base64-encoded signed transactions, validate, and broadcast to network.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 30,
-        tags: ['api', 'rpc', 'solana']
-    },
-    {
-        id: 'api-006',
-        title: 'Add simulateTransaction RPC',
-        description: 'Simulate transaction execution without submitting. Return logs and compute units.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['api', 'rpc', 'solana', 'programs']
-    },
-    {
-        id: 'api-007',
-        title: 'Implement getAccountInfo RPC',
-        description: 'Return account data, lamports, owner, and executable flag for pubkey.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 30,
-        tags: ['api', 'rpc', 'solana']
-    },
-    {
-        id: 'api-008',
-        title: 'Add getSignaturesForAddress RPC',
-        description: 'Query transaction signatures for an address with pagination support.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['api', 'rpc', 'solana']
-    },
-    {
-        id: 'api-009',
-        title: 'Build WebSocket subscription system',
-        description: 'Support newHeads, logs, and pendingTransactions subscriptions via WebSocket.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 55,
-        tags: ['api', 'websocket']
-    },
-    {
-        id: 'api-010',
-        title: 'Add GraphQL API layer',
-        description: 'Build GraphQL schema for blockchain queries. Support nested queries for blocks, transactions.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 60,
-        tags: ['api', 'graphql']
-    },
-    // ============ WALLET & CRYPTO ============
-    {
-        id: 'wallet-001',
-        title: 'Implement HD wallet derivation',
-        description: 'Add BIP-32/44 hierarchical deterministic wallet support. Generate addresses from seed.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 45,
-        tags: ['wallet', 'crypto']
-    },
-    {
-        id: 'wallet-002',
-        title: 'Add mnemonic phrase generation',
-        description: 'Implement BIP-39 mnemonic phrases for wallet backup. Support 12/24 word phrases.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['wallet', 'crypto']
-    },
-    {
-        id: 'wallet-003',
-        title: 'Build encrypted keypair storage',
-        description: 'Implement encrypted keypair files using Solana CLI format. Use argon2 for key derivation.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['wallet', 'security']
-    },
-    {
-        id: 'wallet-004',
-        title: 'Create transaction signing library',
-        description: 'Build library for signing transactions client-side. Support different signature schemes.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 35,
-        tags: ['wallet', 'crypto']
-    },
-    {
-        id: 'wallet-005',
-        title: 'Add multi-signature wallet support',
-        description: 'Implement M-of-N multisig transactions. Aggregate signatures for verification.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 60,
-        tags: ['wallet', 'security']
-    },
-    {
-        id: 'wallet-006',
-        title: 'Build hardware wallet integration',
-        description: 'Add support for Ledger/Trezor signing via USB. Implement transport layer.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 70,
-        tags: ['wallet', 'hardware']
-    },
-    // ============ NETWORKING ============
-    {
-        id: 'net-001',
-        title: 'Implement peer discovery protocol',
-        description: 'Build Kademlia-like DHT for peer discovery. Support bootstrap nodes.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 60,
-        tags: ['networking', 'p2p']
-    },
-    {
-        id: 'net-002',
-        title: 'Add block propagation system',
-        description: 'Broadcast new blocks to peers efficiently. Use compact block relay.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 45,
-        tags: ['networking', 'sync']
-    },
-    {
-        id: 'net-003',
-        title: 'Build transaction gossip protocol',
-        description: 'Propagate transactions to peers. Prevent duplicate broadcasts.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 40,
-        tags: ['networking', 'mempool']
-    },
-    {
-        id: 'net-004',
-        title: 'Implement block sync protocol',
-        description: 'Request missing blocks from peers. Handle parallel downloads.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 55,
-        tags: ['networking', 'sync']
-    },
-    {
-        id: 'net-005',
-        title: 'Add peer reputation system',
-        description: 'Track peer behavior. Ban misbehaving peers. Prefer reliable peers.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 35,
-        tags: ['networking', 'security']
-    },
-    // ============ FRONTEND ============
-    {
-        id: 'fe-001',
-        title: 'Build block explorer page',
-        description: 'Create page showing all blocks with height, hash, tx count, timestamp.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 45,
-        tags: ['frontend', 'explorer']
-    },
-    {
-        id: 'fe-002',
-        title: 'Add transaction explorer',
-        description: 'Show transaction details including sender, receiver, amount, status.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 40,
-        tags: ['frontend', 'explorer']
-    },
-    {
-        id: 'fe-003',
-        title: 'Create address page',
-        description: 'Show address balance, transaction history, and token holdings.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 45,
-        tags: ['frontend', 'explorer']
-    },
-    {
-        id: 'fe-004',
-        title: 'Build network stats dashboard',
-        description: 'Display TPS, block time, difficulty, hashrate, active addresses.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 35,
-        tags: ['frontend', 'analytics']
-    },
-    {
-        id: 'fe-005',
-        title: 'Add real-time transaction feed',
-        description: 'Show live stream of transactions as they enter mempool and get confirmed.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 30,
-        tags: ['frontend', 'realtime']
-    },
-    {
-        id: 'fe-006',
-        title: 'Create token tracker page',
-        description: 'List all ORC-20 tokens with supply, holders, and recent transfers.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 40,
-        tags: ['frontend', 'tokens']
-    },
-    {
-        id: 'fe-007',
-        title: 'Build contract verification UI',
-        description: 'Allow users to submit source code for contract verification.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['frontend', 'smart-contracts']
-    },
-    {
-        id: 'fe-008',
-        title: 'Add dark/light theme toggle',
-        description: 'Implement theme switching with proper CSS variables. Save preference.',
-        type: 'build',
-        priority: 4,
-        estimatedMinutes: 25,
-        tags: ['frontend', 'ux']
-    },
-    {
-        id: 'fe-009',
-        title: 'Create mobile-responsive navigation',
-        description: 'Improve mobile experience with hamburger menu and touch-friendly UI.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 30,
-        tags: ['frontend', 'mobile']
-    },
-    {
-        id: 'fe-010',
-        title: 'Build wallet connection flow',
-        description: 'Add MetaMask-style connection modal. Handle account switching.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['frontend', 'wallet']
-    },
-    // ============ TESTING ============
-    {
-        id: 'test-001',
-        title: 'Write unit tests for Block class',
-        description: 'Test block creation, validation, serialization, hash calculation.',
-        type: 'test',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['testing', 'blockchain']
-    },
-    {
-        id: 'test-002',
-        title: 'Add integration tests for StateManager',
-        description: 'Test balance updates, state root calculation, transaction application.',
-        type: 'test',
-        priority: 8,
-        estimatedMinutes: 40,
-        tags: ['testing', 'state']
-    },
-    {
-        id: 'test-003',
-        title: 'Create API endpoint tests',
-        description: 'Test all RPC endpoints with valid and invalid inputs.',
-        type: 'test',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['testing', 'api']
-    },
-    {
-        id: 'test-004',
-        title: 'Write transaction validation tests',
-        description: 'Test signature verification, nonce validation, balance checks.',
-        type: 'test',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['testing', 'validation']
-    },
-    {
-        id: 'test-005',
-        title: 'Add stress tests for block production',
-        description: 'Test block production under high transaction load.',
-        type: 'test',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['testing', 'performance']
-    },
-    {
-        id: 'test-006',
-        title: 'Create chain reorganization tests',
-        description: 'Test reorg scenarios with competing chains.',
-        type: 'test',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['testing', 'consensus']
-    },
-    // ============ DOCUMENTATION ============
-    {
-        id: 'docs-001',
-        title: 'Write API documentation',
-        description: 'Document all RPC methods with examples, parameters, return values.',
-        type: 'docs',
-        priority: 7,
-        estimatedMinutes: 60,
-        tags: ['documentation', 'api']
-    },
-    {
-        id: 'docs-002',
-        title: 'Create architecture overview',
-        description: 'Document system architecture with diagrams showing component interactions.',
-        type: 'docs',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['documentation', 'architecture']
-    },
-    {
-        id: 'docs-003',
-        title: 'Write smart contract developer guide',
-        description: 'Guide for writing and deploying contracts on Hermeschain.',
-        type: 'docs',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['documentation', 'smart-contracts']
-    },
-    {
-        id: 'docs-004',
-        title: 'Document token standards (ORC-20/721)',
-        description: 'Specification documents for Hermeschain token standards.',
-        type: 'docs',
-        priority: 5,
-        estimatedMinutes: 40,
-        tags: ['documentation', 'standards']
-    },
-    {
-        id: 'docs-005',
-        title: 'Create node operator guide',
-        description: 'Instructions for running a Hermeschain node. Hardware requirements, configuration.',
-        type: 'docs',
-        priority: 5,
-        estimatedMinutes: 35,
-        tags: ['documentation', 'operations']
-    },
-    // ============ SECURITY & AUDITING ============
-    {
-        id: 'sec-001',
-        title: 'Audit StateManager for race conditions',
-        description: 'Review concurrent access patterns. Add proper locking where needed.',
-        type: 'audit',
-        priority: 9,
-        estimatedMinutes: 40,
-        tags: ['security', 'audit']
-    },
-    {
-        id: 'sec-002',
-        title: 'Review transaction validation logic',
-        description: 'Check for integer overflows, replay attacks, signature malleability.',
-        type: 'audit',
-        priority: 9,
-        estimatedMinutes: 45,
-        tags: ['security', 'audit']
-    },
-    {
-        id: 'sec-003',
-        title: 'Audit API input validation',
-        description: 'Check all user inputs for injection, overflow, type confusion.',
-        type: 'audit',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['security', 'api']
-    },
-    {
-        id: 'sec-004',
-        title: 'Review cryptographic implementations',
-        description: 'Verify correct use of crypto primitives. Check for timing attacks.',
-        type: 'audit',
-        priority: 9,
-        estimatedMinutes: 50,
-        tags: ['security', 'crypto']
-    },
-    {
-        id: 'sec-005',
-        title: 'Add rate limiting to public endpoints',
-        description: 'Implement rate limits to prevent DoS. Track by IP and API key.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 30,
-        tags: ['security', 'api']
-    },
-    // ============ PERFORMANCE ============
-    {
-        id: 'perf-001',
-        title: 'Optimize block validation',
-        description: 'Profile and optimize block validation. Use parallel verification.',
-        type: 'refactor',
-        priority: 7,
-        estimatedMinutes: 45,
-        tags: ['performance', 'blockchain']
-    },
-    {
-        id: 'perf-002',
-        title: 'Add database query caching',
-        description: 'Cache frequent queries. Implement LRU eviction.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 35,
-        tags: ['performance', 'database']
-    },
-    {
-        id: 'perf-003',
-        title: 'Implement bloom filters for log queries',
-        description: 'Use bloom filters to quickly filter blocks for event queries.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['performance', 'events']
-    },
-    {
-        id: 'perf-004',
-        title: 'Optimize state trie operations',
-        description: 'Cache trie nodes. Batch database writes. Use lazy loading.',
-        type: 'refactor',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['performance', 'state']
-    },
-    {
-        id: 'perf-005',
-        title: 'Add connection pooling for database',
-        description: 'Implement proper connection pooling. Handle connection failures.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 25,
-        tags: ['performance', 'database']
-    },
-    // ============ DEVOPS & TOOLING ============
-    {
-        id: 'ops-001',
-        title: 'Create Docker multi-stage build',
-        description: 'Optimize Docker image size with multi-stage builds.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 30,
-        tags: ['devops', 'docker']
-    },
-    {
-        id: 'ops-002',
-        title: 'Add Prometheus metrics',
-        description: 'Export metrics for block production, transactions, peers, etc.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['devops', 'monitoring']
-    },
-    {
-        id: 'ops-003',
-        title: 'Create Grafana dashboard',
-        description: 'Build dashboard showing chain health, performance, alerts.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['devops', 'monitoring']
-    },
-    {
-        id: 'ops-004',
-        title: 'Add health check endpoints',
-        description: 'Implement /health and /ready for container orchestration.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 20,
-        tags: ['devops', 'api']
-    },
-    {
-        id: 'ops-005',
-        title: 'Set up CI/CD pipeline',
-        description: 'Configure GitHub Actions for build, test, deploy.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['devops', 'ci']
-    },
-    // ============ ADVANCED FEATURES ============
-    {
-        id: 'adv-001',
-        title: 'Implement state channels',
-        description: 'Build layer 2 state channel system for instant off-chain transactions.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 90,
-        tags: ['layer2', 'scaling']
-    },
-    {
-        id: 'adv-002',
-        title: 'Add Wormhole bridge integration',
-        description: 'Design bridge architecture for cross-chain messaging via Wormhole protocol.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 80,
-        tags: ['wormhole', 'interoperability', 'solana']
-    },
-    {
-        id: 'adv-003',
-        title: 'Build governance voting system',
-        description: 'Implement on-chain voting for protocol upgrades. Use token-weighted voting.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 60,
-        tags: ['governance', 'voting']
-    },
-    {
-        id: 'adv-004',
-        title: 'Add zk-SNARK verification',
-        description: 'Implement verifier for zero-knowledge proofs. Enable private transactions.',
-        type: 'build',
-        priority: 4,
-        estimatedMinutes: 100,
-        tags: ['crypto', 'privacy']
-    },
-    {
-        id: 'adv-005',
-        title: 'Build oracle system',
-        description: 'Create oracle for bringing external data on-chain. Use commit-reveal.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 55,
-        tags: ['oracle', 'data']
-    },
-    {
-        id: 'adv-006',
-        title: 'Implement account abstraction',
-        description: 'Allow smart contract wallets with custom validation logic.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 70,
-        tags: ['wallet', 'abstraction']
-    },
-    {
-        id: 'adv-007',
-        title: 'Add MEV protection',
-        description: 'Implement fair ordering to prevent front-running and sandwich attacks.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 65,
-        tags: ['security', 'mev']
-    },
-    {
-        id: 'adv-008',
-        title: 'Build staking rewards system',
-        description: 'Implement staking with compound interest. Track delegations.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 55,
-        tags: ['staking', 'economics']
-    },
-    // ============ NETWORKING & P2P ============
-    {
-        id: 'net-001',
-        title: 'Implement gossip protocol for block propagation',
-        description: 'Build a gossip-based protocol where nodes share new blocks with random peers. Include deduplication and TTL for messages.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 60,
-        tags: ['networking', 'p2p']
-    },
-    {
-        id: 'net-002',
-        title: 'Add peer scoring and reputation system',
-        description: 'Score peers based on uptime, valid block propagation, and response times. Deprioritize or ban misbehaving peers.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['networking', 'security']
-    },
-    {
-        id: 'net-003',
-        title: 'Build NAT traversal for peer connections',
-        description: 'Implement STUN/TURN-style hole punching so nodes behind NAT can participate. Add relay fallback for unreachable peers.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['networking', 'infrastructure']
-    },
-    {
-        id: 'net-004',
-        title: 'Implement connection pooling and multiplexing',
-        description: 'Maintain persistent connections to top peers. Multiplex block, transaction, and state sync over single connections.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['networking', 'performance']
-    },
-    {
-        id: 'net-005',
-        title: 'Add bandwidth throttling and QoS',
-        description: 'Implement bandwidth limits per peer. Prioritize block propagation over state sync. Add backpressure mechanism.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 40,
-        tags: ['networking', 'performance']
-    },
-    {
-        id: 'net-006',
-        title: 'Build DHT-based peer discovery',
-        description: 'Implement Kademlia-style distributed hash table for decentralized peer discovery without bootstrap nodes.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 65,
-        tags: ['networking', 'p2p']
-    },
-    {
-        id: 'net-007',
-        title: 'Implement block announcement and request protocol',
-        description: 'Separate block announcement (header only) from full block fetch. Nodes request full blocks only when needed.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['networking', 'protocol']
+exports.BACKLOG_PHASES = exports.TASK_BACKLOG = exports.TARGET_COMMIT_WINDOWS = exports.TARGET_COMMIT_HOURS = exports.COMMIT_WINDOW_MINUTES = void 0;
+exports.getRuntimeCommitWindowMinutes = getRuntimeCommitWindowMinutes;
+exports.getOrderedBacklog = getOrderedBacklog;
+exports.getTasksByPriority = getTasksByPriority;
+exports.getTasksByType = getTasksByType;
+exports.getTasksByPhase = getTasksByPhase;
+exports.getTotalEstimatedTime = getTotalEstimatedTime;
+exports.getNextBacklogTask = getNextBacklogTask;
+exports.markBacklogTaskComplete = markBacklogTaskComplete;
+exports.getBacklogProgress = getBacklogProgress;
+exports.COMMIT_WINDOW_MINUTES = 10;
+exports.TARGET_COMMIT_HOURS = 108;
+exports.TARGET_COMMIT_WINDOWS = 648;
+function getRuntimeCommitWindowMinutes() {
+    const raw = Number.parseInt(process.env.AGENT_COMMIT_WINDOW_MINUTES || '', 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : exports.COMMIT_WINDOW_MINUTES;
+}
+const COMPLETED_TASKS = new Set();
+const BACKLOG_ANCHOR_TIME = Date.UTC(2026, 3, 15, 0, 0, 0);
+function unique(values) {
+    return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+function clampPriority(priority) {
+    return Math.max(1, Math.min(10, priority));
+}
+function pad2(value) {
+    return value.toString().padStart(2, '0');
+}
+function renderTemplate(template, workstream, phase, stepIndex, totalSteps) {
+    return template
+        .replace(/\{topic\}/g, workstream.title)
+        .replace(/\{workstream\}/g, workstream.description)
+        .replace(/\{phase\}/g, phase.title)
+        .replace(/\{step\}/g, `${stepIndex + 1}`)
+        .replace(/\{total\}/g, `${totalSteps}`)
+        .replace(/\{scopes\}/g, workstream.allowedScopes.join(', '));
+}
+const PATTERN_LIBRARY = {
+    foundation4: [
+        {
+            titlePrefix: 'Audit current',
+            description: 'inspect the existing {topic} entry points and pin down the canonical contract this backlog will preserve across {phase}.',
+            expectedOutcome: 'There is a grounded baseline for {topic}, including the exact code paths and runtime surfaces that must agree.',
+            type: 'audit',
+            priorityOffset: 1,
+            tags: ['audit', 'foundation'],
+        },
+        {
+            titlePrefix: 'Define typed',
+            description: 'add or tighten the core types, constants, and metadata records for {topic} so later tasks stop guessing the shape.',
+            expectedOutcome: '{topic} is backed by one typed source of truth inside the allowed scopes: {scopes}.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['types', 'foundation'],
+        },
+        {
+            titlePrefix: 'Wire canonical',
+            description: 'thread the canonical {topic} shape through the runtime surfaces that currently drift or duplicate responsibility.',
+            expectedOutcome: 'The main runtime/query surfaces now consume the same canonical implementation for {topic}.',
+            type: 'build',
+            tags: ['integration'],
+        },
+        {
+            titlePrefix: 'Cover',
+            description: 'add a focused regression check proving the {topic} contract holds and stays honest after the refactor.',
+            expectedOutcome: '{topic} has a targeted automated proof point that fits inside one commit window.',
+            type: 'test',
+            tags: ['test', 'regression'],
+        },
+    ],
+    protocol12: [
+        {
+            titlePrefix: 'Audit',
+            description: 'map the current {topic} code paths and list the validation holes or duplicated behavior that still exist.',
+            expectedOutcome: 'The repo has a grounded starting snapshot for {topic}, with concrete files and missing guarantees identified.',
+            type: 'audit',
+            priorityOffset: 1,
+            tags: ['audit'],
+        },
+        {
+            titlePrefix: 'Define typed',
+            description: 'introduce explicit type and data-shape definitions for {topic} so later checks can key off one schema.',
+            expectedOutcome: '{topic} exposes a stable typed contract for downstream validation and persistence.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['types'],
+        },
+        {
+            titlePrefix: 'Normalize serialization for',
+            description: 'tighten how {topic} is encoded, decoded, or hashed so the byte-level contract is deterministic.',
+            expectedOutcome: '{topic} now has deterministic serialization boundaries that stop hidden drift.',
+            type: 'build',
+            tags: ['serialization'],
+        },
+        {
+            titlePrefix: 'Persist canonical',
+            description: 'store the canonical {topic} data in the runtime or database layer that should own it going forward.',
+            expectedOutcome: 'Canonical {topic} data is recorded in one durable location instead of being recomputed ad hoc.',
+            type: 'build',
+            tags: ['persistence'],
+        },
+        {
+            titlePrefix: 'Enforce validation rules for',
+            description: 'add the validation gate that should reject malformed or incomplete {topic} inputs before they propagate.',
+            expectedOutcome: 'Invalid {topic} inputs now fail at the correct boundary with deterministic rules.',
+            type: 'fix',
+            tags: ['validation'],
+        },
+        {
+            titlePrefix: 'Add rejection reporting for',
+            description: 'surface why {topic} was rejected so operators and API consumers can debug failures without guesswork.',
+            expectedOutcome: '{topic} rejections expose actionable reasons instead of opaque failures.',
+            type: 'build',
+            tags: ['diagnostics'],
+        },
+        {
+            titlePrefix: 'Expose internal query helpers for',
+            description: 'add the smallest read helpers needed so later RPC/indexer work can interrogate {topic} without copy-paste logic.',
+            expectedOutcome: 'Internal code can query {topic} through one helper path instead of scattered custom lookups.',
+            type: 'build',
+            tags: ['query'],
+        },
+        {
+            titlePrefix: 'Record metrics for',
+            description: 'emit the operator-facing counters or gauges that make {topic} visible during live runs.',
+            expectedOutcome: '{topic} contributes real telemetry that can be surfaced in status endpoints and dashboards.',
+            type: 'build',
+            tags: ['metrics'],
+        },
+        {
+            titlePrefix: 'Add operator diagnostics for',
+            description: 'make the runtime or debug surfaces reveal enough detail to inspect {topic} without opening the debugger.',
+            expectedOutcome: 'Operators can inspect {topic} from a first-class diagnostic surface.',
+            type: 'build',
+            tags: ['operator'],
+        },
+        {
+            titlePrefix: 'Add regression fixtures for',
+            description: 'create deterministic fixtures that pin the intended behavior of {topic} to concrete inputs and outputs.',
+            expectedOutcome: '{topic} has deterministic fixtures that catch future regressions fast.',
+            type: 'test',
+            tags: ['fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add targeted checks for',
+            description: 'write the focused automated check that proves the latest {topic} behavior is correct under the agreed contract.',
+            expectedOutcome: '{topic} is protected by one focused automated check that is realistic for a 10-minute window.',
+            type: 'test',
+            tags: ['test'],
+        },
+        {
+            titlePrefix: 'Tighten verification notes for',
+            description: 'leave clear implementation notes or inline docs describing how {topic} should now be verified and extended.',
+            expectedOutcome: 'Future work on {topic} starts from accurate local documentation instead of folklore.',
+            type: 'docs',
+            tags: ['docs'],
+        },
+    ],
+    state12: [
+        {
+            titlePrefix: 'Audit state flow for',
+            description: 'trace how {topic} currently mutates state, then isolate the deterministic boundary we want to preserve.',
+            expectedOutcome: 'The state-transition surface for {topic} is explicit and grounded before new logic lands.',
+            type: 'audit',
+            priorityOffset: 1,
+            tags: ['audit', 'state'],
+        },
+        {
+            titlePrefix: 'Define canonical records for',
+            description: 'introduce the typed state objects and helper contracts that should own {topic} moving forward.',
+            expectedOutcome: '{topic} is represented through canonical typed state records.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['types', 'state'],
+        },
+        {
+            titlePrefix: 'Normalize persistence for',
+            description: 'make {topic} write through the right persistence layer instead of leaking implicit state changes.',
+            expectedOutcome: '{topic} persists through one deterministic state path.',
+            type: 'build',
+            tags: ['persistence', 'state'],
+        },
+        {
+            titlePrefix: 'Enforce invariants for',
+            description: 'add the conservation, monotonicity, or integrity checks that should always hold for {topic}.',
+            expectedOutcome: '{topic} now enforces its core invariant at execution time.',
+            type: 'fix',
+            tags: ['invariants'],
+        },
+        {
+            titlePrefix: 'Capture reversible diffs for',
+            description: 'record the minimal change set required to replay or roll back {topic} safely.',
+            expectedOutcome: '{topic} produces a reversible diff artifact instead of irreversible side effects.',
+            type: 'build',
+            tags: ['diffs'],
+        },
+        {
+            titlePrefix: 'Add rollback hooks for',
+            description: 'wire the rollback or restore path that reorg-safe state management needs for {topic}.',
+            expectedOutcome: '{topic} can be unwound cleanly during rollback scenarios.',
+            type: 'build',
+            tags: ['rollback'],
+        },
+        {
+            titlePrefix: 'Add export helpers for',
+            description: 'expose the minimal export or snapshot helpers needed to inspect {topic} outside the main mutation path.',
+            expectedOutcome: '{topic} can be exported or snapshotted through stable helpers.',
+            type: 'build',
+            tags: ['snapshot'],
+        },
+        {
+            titlePrefix: 'Add integrity checks for',
+            description: 'validate that stored {topic} data remains internally consistent even after restarts or replays.',
+            expectedOutcome: '{topic} integrity failures now surface before they silently corrupt state.',
+            type: 'fix',
+            tags: ['integrity'],
+        },
+        {
+            titlePrefix: 'Expose query helpers for',
+            description: 'add read paths that let RPC, explorer, or operator tools inspect {topic} deterministically.',
+            expectedOutcome: '{topic} is queryable through explicit helper surfaces.',
+            type: 'build',
+            tags: ['query'],
+        },
+        {
+            titlePrefix: 'Add deterministic fixtures for',
+            description: 'capture one concrete before/after fixture that proves the intended {topic} state transition.',
+            expectedOutcome: '{topic} has a deterministic state fixture for fast regression checks.',
+            type: 'test',
+            tags: ['fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add regression tests for',
+            description: 'write a focused automated regression proving {topic} stays correct across the most important edge path.',
+            expectedOutcome: '{topic} is covered by a repeatable regression check.',
+            type: 'test',
+            tags: ['test'],
+        },
+        {
+            titlePrefix: 'Document state assumptions for',
+            description: 'leave clear notes on the invariant and rollback assumptions the next engineer must preserve for {topic}.',
+            expectedOutcome: '{topic} now carries accurate local documentation of its state assumptions.',
+            type: 'docs',
+            tags: ['docs'],
+        },
+    ],
+    consensus13: [
+        {
+            titlePrefix: 'Audit validation flow for',
+            description: 'separate the current {topic} behavior into distinct validation, production, and lifecycle responsibilities.',
+            expectedOutcome: 'The current {topic} path is mapped before refactoring begins.',
+            type: 'audit',
+            priorityOffset: 1,
+            tags: ['audit', 'consensus'],
+        },
+        {
+            titlePrefix: 'Extract canonical interfaces for',
+            description: 'define the interfaces or helper seams that let {topic} evolve without coupling validation to production.',
+            expectedOutcome: '{topic} has explicit seams between validation and mutation.',
+            type: 'refactor',
+            priorityOffset: 1,
+            tags: ['interfaces'],
+        },
+        {
+            titlePrefix: 'Split validator checks for',
+            description: 'move the first concrete validation rule for {topic} into the dedicated pipeline where it belongs.',
+            expectedOutcome: '{topic} no longer relies on block production code to enforce its first critical rule.',
+            type: 'build',
+            tags: ['validation'],
+        },
+        {
+            titlePrefix: 'Track canonical state for',
+            description: 'persist the lifecycle state that {topic} needs to distinguish pending, canonical, and finalized outcomes.',
+            expectedOutcome: '{topic} carries an explicit lifecycle state instead of an implicit guess.',
+            type: 'build',
+            tags: ['state'],
+        },
+        {
+            titlePrefix: 'Handle late-arrival edge cases for',
+            description: 'add the branch that safely handles out-of-order or late-arriving {topic} data.',
+            expectedOutcome: '{topic} behaves deterministically when late or competing data arrives.',
+            type: 'fix',
+            tags: ['edge-cases'],
+        },
+        {
+            titlePrefix: 'Add fork-choice hooks for',
+            description: 'wire the minimal decision points required to compare competing {topic} candidates.',
+            expectedOutcome: '{topic} can participate in fork-choice logic through explicit hooks.',
+            type: 'build',
+            tags: ['fork-choice'],
+        },
+        {
+            titlePrefix: 'Account for rewards in',
+            description: 'add the accounting path that lets {topic} affect rewards, fees, or participation metrics truthfully.',
+            expectedOutcome: '{topic} contributes to reward/accounting state without hidden side effects.',
+            type: 'build',
+            tags: ['rewards'],
+        },
+        {
+            titlePrefix: 'Expose operator visibility for',
+            description: 'surface the runtime state needed to inspect {topic} from operator-facing endpoints or logs.',
+            expectedOutcome: '{topic} is visible from operator diagnostics during live runs.',
+            type: 'build',
+            tags: ['operator'],
+        },
+        {
+            titlePrefix: 'Record consensus diagnostics for',
+            description: 'emit structured diagnostics so failures in {topic} can be reconstructed after the fact.',
+            expectedOutcome: '{topic} failures leave behind structured diagnostics instead of raw guesswork.',
+            type: 'build',
+            tags: ['diagnostics'],
+        },
+        {
+            titlePrefix: 'Add deterministic fixtures for',
+            description: 'create the first deterministic fixture proving the canonical success path for {topic}.',
+            expectedOutcome: '{topic} has a deterministic success fixture for regression testing.',
+            type: 'test',
+            tags: ['fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add late-path tests for',
+            description: 'cover the late-arrival or competing-candidate behavior of {topic} with a focused automated check.',
+            expectedOutcome: 'The nastiest timing edge in {topic} is now covered by a regression test.',
+            type: 'test',
+            tags: ['test', 'timing'],
+        },
+        {
+            titlePrefix: 'Add reorg regression for',
+            description: 'prove that {topic} behaves correctly when the canonical chain changes underneath it.',
+            expectedOutcome: '{topic} has at least one reorg-aware regression check.',
+            type: 'test',
+            tags: ['test', 'reorg'],
+        },
+        {
+            titlePrefix: 'Document lifecycle rules for',
+            description: 'leave concise notes on the lifecycle and finality assumptions the next commit must preserve for {topic}.',
+            expectedOutcome: '{topic} carries accurate lifecycle notes for follow-on work.',
+            type: 'docs',
+            tags: ['docs'],
+        },
+    ],
+    api12: [
+        {
+            titlePrefix: 'Define response contract for',
+            description: 'pin down the request/response shape for {topic} so explorer and operator consumers have a stable target.',
+            expectedOutcome: '{topic} exposes a stable contract before endpoint logic sprawls further.',
+            type: 'analyze',
+            priorityOffset: 1,
+            tags: ['api', 'contract'],
+        },
+        {
+            titlePrefix: 'Add typed handlers for',
+            description: 'introduce the typed handler or service helpers that should own {topic} responses.',
+            expectedOutcome: '{topic} is served through typed handlers rather than ad hoc response assembly.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['api', 'types'],
+        },
+        {
+            titlePrefix: 'Normalize input parsing for',
+            description: 'validate params, cursors, or hashes for {topic} so malformed input fails early.',
+            expectedOutcome: '{topic} rejects invalid inputs deterministically.',
+            type: 'fix',
+            tags: ['validation'],
+        },
+        {
+            titlePrefix: 'Wire storage queries for',
+            description: 'connect {topic} to the storage/query helpers that should answer it truthfully.',
+            expectedOutcome: '{topic} responses come from canonical stored data rather than synthetic placeholders.',
+            type: 'build',
+            tags: ['storage'],
+        },
+        {
+            titlePrefix: 'Add pagination or filtering for',
+            description: 'implement the smallest paging or filtering surface needed to make {topic} usable at runtime scale.',
+            expectedOutcome: '{topic} is queryable without dumping the whole dataset every time.',
+            type: 'build',
+            tags: ['pagination'],
+        },
+        {
+            titlePrefix: 'Expose status fields for',
+            description: 'include the lifecycle or finality fields that downstream consumers need from {topic}.',
+            expectedOutcome: '{topic} responses now carry the status fields clients actually need.',
+            type: 'build',
+            tags: ['status'],
+        },
+        {
+            titlePrefix: 'Add index helpers for',
+            description: 'create the index or lookup helpers that keep {topic} queries fast and explicit.',
+            expectedOutcome: '{topic} has a maintainable lookup path instead of repeated table scans.',
+            type: 'build',
+            tags: ['indexing'],
+        },
+        {
+            titlePrefix: 'Add search surfaces for',
+            description: 'make {topic} searchable by the most operator-relevant keys without inventing extra abstraction.',
+            expectedOutcome: '{topic} can be searched through a small, useful query surface.',
+            type: 'build',
+            tags: ['search'],
+        },
+        {
+            titlePrefix: 'Add operator diagnostics for',
+            description: 'expose the debug metadata that helps operators understand why {topic} did or did not resolve.',
+            expectedOutcome: '{topic} carries useful debug context for operators.',
+            type: 'build',
+            tags: ['operator'],
+        },
+        {
+            titlePrefix: 'Add endpoint fixtures for',
+            description: 'capture deterministic fixture responses proving the success path for {topic}.',
+            expectedOutcome: '{topic} has a stable fixture contract that future refactors can compare against.',
+            type: 'test',
+            tags: ['fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add integration checks for',
+            description: 'write the focused integration test that proves {topic} works end to end against the current node/runtime shape.',
+            expectedOutcome: '{topic} has an end-to-end proof point instead of only local unit coverage.',
+            type: 'test',
+            tags: ['integration', 'test'],
+        },
+        {
+            titlePrefix: 'Document consumer expectations for',
+            description: 'write concise local documentation on what downstream consumers can rely on from {topic}.',
+            expectedOutcome: '{topic} has accurate local consumer-facing guidance for later explorer or wallet work.',
+            type: 'docs',
+            tags: ['docs'],
+        },
+    ],
+    wallet9: [
+        {
+            titlePrefix: 'Define canonical contract for',
+            description: 'pin down the request, response, and signing shape that {topic} should preserve going forward.',
+            expectedOutcome: '{topic} has a canonical contract that stops wallet-side guesswork.',
+            type: 'analyze',
+            priorityOffset: 1,
+            tags: ['wallet', 'contract'],
+        },
+        {
+            titlePrefix: 'Derive identity rules for',
+            description: 'wire the address, key, or sender derivation rules that make {topic} trustworthy.',
+            expectedOutcome: '{topic} now derives identity from canonical crypto/state rules.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['wallet', 'identity'],
+        },
+        {
+            titlePrefix: 'Wire signed submission for',
+            description: 'connect {topic} to the canonical transaction submission path instead of a wallet-only side effect.',
+            expectedOutcome: '{topic} flows through canonical chain submission rather than local-only mutation.',
+            type: 'build',
+            tags: ['wallet', 'submission'],
+        },
+        {
+            titlePrefix: 'Expose pending state for',
+            description: 'surface the pending lifecycle details operators and UIs need from {topic}.',
+            expectedOutcome: '{topic} clearly distinguishes pending behavior from confirmed state.',
+            type: 'build',
+            tags: ['wallet', 'pending'],
+        },
+        {
+            titlePrefix: 'Expose confirmed state for',
+            description: 'derive the confirmed result of {topic} from receipts and chain state only.',
+            expectedOutcome: '{topic} confirmed results now come from canonical chain data.',
+            type: 'build',
+            tags: ['wallet', 'confirmed'],
+        },
+        {
+            titlePrefix: 'Enforce validation and cooldown rules for',
+            description: 'apply the validation, rate-limit, or cooldown policy that keeps {topic} honest under real usage.',
+            expectedOutcome: '{topic} enforces its abuse-prevention or validation rules at the right boundary.',
+            type: 'fix',
+            tags: ['wallet', 'validation'],
+        },
+        {
+            titlePrefix: 'Surface rejection reasons for',
+            description: 'make failures in {topic} explainable to operators and wallet consumers.',
+            expectedOutcome: '{topic} failures now surface actionable rejection reasons.',
+            type: 'build',
+            tags: ['wallet', 'diagnostics'],
+        },
+        {
+            titlePrefix: 'Add focused tests for',
+            description: 'write a tight automated check proving the current {topic} behavior against the chain-backed contract.',
+            expectedOutcome: '{topic} is backed by a focused automated regression.',
+            type: 'test',
+            tags: ['wallet', 'test'],
+        },
+        {
+            titlePrefix: 'Document operator expectations for',
+            description: 'leave concise notes on how to verify and operate {topic} without re-learning the contract from code.',
+            expectedOutcome: '{topic} has accurate local operator guidance for follow-on work.',
+            type: 'docs',
+            tags: ['wallet', 'docs'],
+        },
+    ],
+    contract12: [
+        {
+            titlePrefix: 'Audit runtime surface for',
+            description: 'map the existing runtime or placeholder path for {topic} before mutating execution behavior.',
+            expectedOutcome: '{topic} has a grounded starting point before runtime logic changes.',
+            type: 'audit',
+            priorityOffset: 1,
+            tags: ['contracts', 'audit'],
+        },
+        {
+            titlePrefix: 'Define canonical execution types for',
+            description: 'introduce the typed runtime contract that should govern {topic}.',
+            expectedOutcome: '{topic} is represented through explicit runtime types and helper contracts.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['contracts', 'types'],
+        },
+        {
+            titlePrefix: 'Add execution scaffold for',
+            description: 'wire the smallest executable scaffold needed to route {topic} through the VM/runtime pipeline.',
+            expectedOutcome: '{topic} now enters the runtime through a real scaffold instead of a placeholder.',
+            type: 'build',
+            tags: ['contracts', 'runtime'],
+        },
+        {
+            titlePrefix: 'Wire state mutation path for',
+            description: 'connect {topic} to canonical state reads and writes with deterministic ownership of side effects.',
+            expectedOutcome: '{topic} mutates contract or chain state through one canonical path.',
+            type: 'build',
+            tags: ['contracts', 'state'],
+        },
+        {
+            titlePrefix: 'Account for gas and fees in',
+            description: 'add the gas, fee, or resource accounting required for truthful execution of {topic}.',
+            expectedOutcome: '{topic} participates in canonical gas or fee accounting.',
+            type: 'build',
+            tags: ['contracts', 'gas'],
+        },
+        {
+            titlePrefix: 'Handle revert and failure rules for',
+            description: 'make {topic} fail safely, preserving the right rollback and error semantics.',
+            expectedOutcome: '{topic} now has explicit revert/failure behavior instead of silent partial mutation.',
+            type: 'fix',
+            tags: ['contracts', 'revert'],
+        },
+        {
+            titlePrefix: 'Persist receipt and event data for',
+            description: 'record the logs, receipts, or traces emitted by {topic} so external consumers can inspect it.',
+            expectedOutcome: '{topic} execution produces canonical receipt or event data.',
+            type: 'build',
+            tags: ['contracts', 'receipts'],
+        },
+        {
+            titlePrefix: 'Expose read helpers for',
+            description: 'add the minimal query helpers required to inspect {topic} state without duplicating runtime logic.',
+            expectedOutcome: '{topic} has dedicated read helpers for RPC or indexer work.',
+            type: 'build',
+            tags: ['contracts', 'query'],
+        },
+        {
+            titlePrefix: 'Add success fixtures for',
+            description: 'capture a deterministic happy-path fixture proving the intended runtime behavior of {topic}.',
+            expectedOutcome: '{topic} has a deterministic success fixture for future regression checks.',
+            type: 'test',
+            tags: ['contracts', 'fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add failure fixtures for',
+            description: 'cover a realistic revert, out-of-gas, or invalid-state path for {topic}.',
+            expectedOutcome: '{topic} has a deterministic failure-path regression check.',
+            type: 'test',
+            tags: ['contracts', 'test'],
+        },
+        {
+            titlePrefix: 'Add runtime diagnostics for',
+            description: 'surface the operator-visible diagnostics needed to debug {topic} during live execution.',
+            expectedOutcome: '{topic} runtime behavior is inspectable without stepping through the VM manually.',
+            type: 'build',
+            tags: ['contracts', 'diagnostics'],
+        },
+        {
+            titlePrefix: 'Document runtime guarantees for',
+            description: 'write concise local notes on the gas, state, and receipt guarantees that {topic} now preserves.',
+            expectedOutcome: '{topic} has accurate local runtime documentation for future protocol work.',
+            type: 'docs',
+            tags: ['contracts', 'docs'],
+        },
+    ],
+    network12: [
+        {
+            titlePrefix: 'Audit transport surfaces for',
+            description: 'trace the current or placeholder transport path for {topic} before building new sync behavior.',
+            expectedOutcome: '{topic} has a grounded transport baseline before networking changes land.',
+            type: 'audit',
+            priorityOffset: 1,
+            tags: ['network', 'audit'],
+        },
+        {
+            titlePrefix: 'Define message contracts for',
+            description: 'pin down the canonical payload and state shape that {topic} messages should use.',
+            expectedOutcome: '{topic} now has explicit message contracts instead of ad hoc payloads.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['network', 'messages'],
+        },
+        {
+            titlePrefix: 'Wire handshake or routing for',
+            description: 'add the first routing or handshake path required to make {topic} flow through the node.',
+            expectedOutcome: '{topic} is connected to a real transport path through the node.',
+            type: 'build',
+            tags: ['network', 'routing'],
+        },
+        {
+            titlePrefix: 'Validate inbound data for',
+            description: 'reject malformed or unauthenticated inbound {topic} messages before they affect the node.',
+            expectedOutcome: '{topic} inbound validation fails early and deterministically.',
+            type: 'fix',
+            tags: ['network', 'validation'],
+        },
+        {
+            titlePrefix: 'Add retry and suppression rules for',
+            description: 'teach the node when to retry, drop, or deduplicate {topic} traffic.',
+            expectedOutcome: '{topic} no longer loops or duplicates blindly under churn.',
+            type: 'build',
+            tags: ['network', 'retries'],
+        },
+        {
+            titlePrefix: 'Persist sync state for',
+            description: 'store the node state needed to resume or reason about {topic} across process restarts.',
+            expectedOutcome: '{topic} survives restarts with explicit sync state.',
+            type: 'build',
+            tags: ['network', 'sync'],
+        },
+        {
+            titlePrefix: 'Expose peer or sync helpers for',
+            description: 'add the internal read helpers needed to inspect {topic} from APIs and operator tools.',
+            expectedOutcome: '{topic} can be queried without scraping logs.',
+            type: 'build',
+            tags: ['network', 'query'],
+        },
+        {
+            titlePrefix: 'Add operator diagnostics for',
+            description: 'surface the peer health, retry state, or sync progress needed to reason about {topic}.',
+            expectedOutcome: '{topic} is visible from operator diagnostics during live node operation.',
+            type: 'build',
+            tags: ['network', 'operator'],
+        },
+        {
+            titlePrefix: 'Add success fixtures for',
+            description: 'capture a deterministic successful transport or sync path for {topic}.',
+            expectedOutcome: '{topic} has a deterministic success fixture for regression testing.',
+            type: 'test',
+            tags: ['network', 'fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add failure fixtures for',
+            description: 'cover a realistic timeout, duplicate, or partial-peer path for {topic}.',
+            expectedOutcome: '{topic} has a regression proving the node handles its main failure path.',
+            type: 'test',
+            tags: ['network', 'test'],
+        },
+        {
+            titlePrefix: 'Add recovery checks for',
+            description: 'prove the node can recover {topic} after a restart or partial outage.',
+            expectedOutcome: '{topic} recovery behavior is covered by an automated check.',
+            type: 'test',
+            tags: ['network', 'recovery', 'test'],
+        },
+        {
+            titlePrefix: 'Document operator flow for',
+            description: 'write concise local notes on how to inspect and repair {topic} when the network misbehaves.',
+            expectedOutcome: '{topic} has accurate operator notes for future node work.',
+            type: 'docs',
+            tags: ['network', 'docs'],
+        },
+    ],
+    economics9: [
+        {
+            titlePrefix: 'Define parameter surface for',
+            description: 'identify the parameters and state the protocol should treat as canonical for {topic}.',
+            expectedOutcome: '{topic} parameters are explicit before accounting logic expands further.',
+            type: 'analyze',
+            priorityOffset: 1,
+            tags: ['economics', 'parameters'],
+        },
+        {
+            titlePrefix: 'Persist canonical config for',
+            description: 'store the authoritative configuration required to make {topic} deterministic across restarts.',
+            expectedOutcome: '{topic} reads from persisted canonical config instead of scattered constants.',
+            type: 'build',
+            priorityOffset: 1,
+            tags: ['economics', 'config'],
+        },
+        {
+            titlePrefix: 'Wire state hooks for',
+            description: 'connect {topic} to the state transition hooks that should own its accounting side effects.',
+            expectedOutcome: '{topic} affects state through explicit hooks instead of hidden mutation.',
+            type: 'build',
+            tags: ['economics', 'state'],
+        },
+        {
+            titlePrefix: 'Expose query helpers for',
+            description: 'add the minimal read paths needed to inspect {topic} from APIs or operator tooling.',
+            expectedOutcome: '{topic} can be queried without duplicating accounting logic.',
+            type: 'build',
+            tags: ['economics', 'query'],
+        },
+        {
+            titlePrefix: 'Emit receipts or accounting records for',
+            description: 'record the observable outputs that make {topic} auditable after the fact.',
+            expectedOutcome: '{topic} now leaves behind auditable receipt or accounting records.',
+            type: 'build',
+            tags: ['economics', 'receipts'],
+        },
+        {
+            titlePrefix: 'Handle edge cases for',
+            description: 'cover the underflow, cooldown, or invalid-state case most likely to break {topic}.',
+            expectedOutcome: '{topic} now fails safely under its main edge condition.',
+            type: 'fix',
+            tags: ['economics', 'edge-cases'],
+        },
+        {
+            titlePrefix: 'Add deterministic fixtures for',
+            description: 'capture a small deterministic fixture that proves the intended accounting behavior of {topic}.',
+            expectedOutcome: '{topic} has a deterministic accounting fixture for regression work.',
+            type: 'test',
+            tags: ['economics', 'fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add operator metrics for',
+            description: 'expose the counters or gauges that make {topic} observable from node health surfaces.',
+            expectedOutcome: '{topic} contributes operator-visible metrics instead of hidden accounting state.',
+            type: 'build',
+            tags: ['economics', 'metrics'],
+        },
+        {
+            titlePrefix: 'Document invariants for',
+            description: 'leave concise notes on the accounting invariants and operator expectations for {topic}.',
+            expectedOutcome: '{topic} has accurate local invariants documentation for future economics work.',
+            type: 'docs',
+            tags: ['economics', 'docs'],
+        },
+    ],
+    hardening9: [
+        {
+            titlePrefix: 'Enumerate invariants for',
+            description: 'write down the concrete invariant or threat boundary that {topic} must preserve before adding new checks.',
+            expectedOutcome: '{topic} has a clearly stated invariant or threat boundary.',
+            type: 'analyze',
+            priorityOffset: 1,
+            tags: ['hardening', 'invariants'],
+        },
+        {
+            titlePrefix: 'Add deterministic fixtures for',
+            description: 'capture the baseline fixture that proves the healthy behavior of {topic}.',
+            expectedOutcome: '{topic} has a deterministic baseline fixture for later adversarial checks.',
+            type: 'test',
+            priorityOffset: 1,
+            tags: ['hardening', 'fixtures', 'test'],
+        },
+        {
+            titlePrefix: 'Add negative checks for',
+            description: 'cover the first invalid-input or malformed-state path that should fail for {topic}.',
+            expectedOutcome: '{topic} now has at least one explicit negative-path regression.',
+            type: 'test',
+            tags: ['hardening', 'negative', 'test'],
+        },
+        {
+            titlePrefix: 'Add adversarial checks for',
+            description: 'simulate the abusive or adversarial path most likely to stress {topic}.',
+            expectedOutcome: '{topic} now has a focused adversarial regression case.',
+            type: 'test',
+            tags: ['hardening', 'adversarial', 'test'],
+        },
+        {
+            titlePrefix: 'Record diagnostics for',
+            description: 'emit the logs, counters, or audit trail required to debug {topic} when invariants break.',
+            expectedOutcome: '{topic} now leaves behind useful diagnostics during failure.',
+            type: 'build',
+            tags: ['hardening', 'diagnostics'],
+        },
+        {
+            titlePrefix: 'Add operator repair steps for',
+            description: 'write the smallest operator-facing repair or inspection flow needed when {topic} goes wrong.',
+            expectedOutcome: '{topic} has an operator repair flow that can be followed under pressure.',
+            type: 'docs',
+            tags: ['hardening', 'runbook'],
+        },
+        {
+            titlePrefix: 'Add troubleshooting notes for',
+            description: 'document the fastest way to interpret failures in {topic} from logs, APIs, or tests.',
+            expectedOutcome: '{topic} has accurate troubleshooting notes near the code.',
+            type: 'docs',
+            tags: ['hardening', 'docs'],
+        },
+        {
+            titlePrefix: 'Wire CI checks for',
+            description: 'make the targeted check for {topic} part of the normal verification path instead of a one-off manual step.',
+            expectedOutcome: '{topic} verification now runs as part of the repeatable CI/test flow.',
+            type: 'build',
+            tags: ['hardening', 'ci'],
+        },
+        {
+            titlePrefix: 'Sweep regression coverage for',
+            description: 'finish the smallest honest regression sweep that proves {topic} is ready for follow-on protocol work.',
+            expectedOutcome: '{topic} exits the hardening phase with a truthful regression sweep.',
+            type: 'test',
+            tags: ['hardening', 'regression', 'test'],
+        },
+    ],
+};
+const PHASE_BLUEPRINTS = [
+    {
+        id: 'phase-01',
+        title: 'Execution Scaffolding and Chain Truth',
+        order: 1,
+        basePriority: 10,
+        description: 'Lock canonical chain metadata, chain age, genesis config, chain ID, verification wrappers, and operator health truth.',
+        tags: ['foundation', 'chain', 'operator'],
+        workstreams: [
+            {
+                id: 'chain-metadata',
+                title: 'chain metadata persistence',
+                description: 'canonical genesis timestamp, latest height, latest hash, stored transaction totals, and runtime truth',
+                pattern: 'foundation4',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['chain', 'metadata', 'persistence'],
+                objectiveTags: ['chain', 'tooling'],
+                verification: {
+                    label: 'Run backend protocol suite',
+                    command: 'npm run test',
+                    cwd: 'backend',
+                },
+            },
+            {
+                id: 'genesis-config',
+                title: 'genesis configuration truth',
+                description: 'canonical genesis parameters, allocations, timestamps, and migration-safe defaults',
+                pattern: 'foundation4',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['chain', 'genesis', 'config'],
+                objectiveTags: ['chain', 'config'],
+                verification: {
+                    label: 'Run backend protocol suite',
+                    command: 'npm run test',
+                    cwd: 'backend',
+                },
+            },
+            {
+                id: 'chain-id',
+                title: 'chain identity surfaces',
+                description: 'chain ID, network name, domain separation constants, and status exposure',
+                pattern: 'foundation4',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['chain', 'identity', 'api'],
+                objectiveTags: ['chain', 'api'],
+                verification: {
+                    label: 'Run backend protocol suite',
+                    command: 'npm run test',
+                    cwd: 'backend',
+                },
+            },
+            {
+                id: 'serialization',
+                title: 'serialization boundaries',
+                description: 'canonical block and transaction encoding boundaries across runtime and API surfaces',
+                pattern: 'foundation4',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['serialization', 'chain', 'api'],
+                objectiveTags: ['chain', 'api'],
+                verification: {
+                    label: 'Run backend protocol suite',
+                    command: 'npm run test',
+                    cwd: 'backend',
+                },
+            },
+            {
+                id: 'verification-wrappers',
+                title: 'verification wrappers',
+                description: 'task-safe verification helpers, commit scaffolding, and agent-facing protocol metadata',
+                pattern: 'foundation4',
+                allowedScopes: ['backend/src/agent/', 'backend/tests/', 'backend/package.json', 'backend/tsconfig.json'],
+                tags: ['agent', 'verification', 'tooling'],
+                objectiveTags: ['tooling', 'agent'],
+                verification: {
+                    label: 'Run agent test suite',
+                    command: 'npm run test',
+                    cwd: 'backend',
+                },
+            },
+            {
+                id: 'operator-health',
+                title: 'operator health surfaces',
+                description: 'health/status endpoints for block height, finality, mempool size, receipts, and sync state',
+                pattern: 'foundation4',
+                allowedScopes: ['backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['operator', 'status', 'api'],
+                objectiveTags: ['operator', 'api'],
+                verification: {
+                    label: 'Run backend API suite',
+                    command: 'npm run test',
+                    cwd: 'backend',
+                },
+            },
+        ],
+    },
+    {
+        id: 'phase-02',
+        title: 'Transaction Model, Signatures, and Mempool',
+        order: 2,
+        basePriority: 9,
+        description: 'Harden the canonical transaction contract, signature pipeline, replay protection, mempool rules, and pending visibility.',
+        tags: ['transactions', 'mempool', 'crypto'],
+        workstreams: [
+            {
+                id: 'tx-schema',
+                title: 'transaction schema contract',
+                description: 'canonical transaction fields, versioning, and chain-aware encoding',
+                pattern: 'protocol12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['transactions', 'schema', 'serialization'],
+                objectiveTags: ['chain', 'security'],
+                verification: { label: 'Run backend protocol suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'tx-domain',
+                title: 'transaction domain separation',
+                description: 'chain ID binding, deterministic hashing, and replay-resistant signing domains',
+                pattern: 'protocol12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['transactions', 'hashing', 'security'],
+                objectiveTags: ['security', 'chain'],
+                verification: { label: 'Run backend protocol suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'tx-signatures',
+                title: 'transaction signature verification',
+                description: 'Ed25519 sender derivation, signature checks, and malformed-signature rejection',
+                pattern: 'protocol12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['transactions', 'signatures', 'crypto'],
+                objectiveTags: ['security', 'chain'],
+                verification: { label: 'Run backend crypto suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'tx-nonce',
+                title: 'nonce and replay protection',
+                description: 'account nonce validation, replay rejection, and sender sequencing guarantees',
+                pattern: 'protocol12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['transactions', 'nonce', 'security'],
+                objectiveTags: ['security', 'state'],
+                verification: { label: 'Run backend protocol suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'mempool-admission',
+                title: 'mempool admission rules',
+                description: 'duplicate rejection, intrinsic fee checks, size limits, and malformed transaction handling',
+                pattern: 'protocol12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['mempool', 'validation', 'transactions'],
+                objectiveTags: ['chain', 'performance'],
+                verification: { label: 'Run mempool suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'mempool-ordering',
+                title: 'mempool ordering and eviction',
+                description: 'fee-based ordering, replacement rules, TTL policies, and bounded pool behavior',
+                pattern: 'protocol12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['mempool', 'ordering', 'performance'],
+                objectiveTags: ['performance', 'chain'],
+                verification: { label: 'Run mempool suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'tx-status',
+                title: 'pending transaction status and rejections',
+                description: 'pending transaction status surfaces, rejection reasons, and receipt correlation hooks',
+                pattern: 'protocol12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['transactions', 'status', 'api'],
+                objectiveTags: ['api', 'chain'],
+                verification: { label: 'Run backend API suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-03',
+        title: 'State Engine, Receipts, and Storage Correctness',
+        order: 3,
+        basePriority: 9,
+        description: 'Make account state transitions, receipts, reversible diffs, snapshots, and proof-oriented storage surfaces deterministic.',
+        tags: ['state', 'receipts', 'storage'],
+        workstreams: [
+            {
+                id: 'account-transitions',
+                title: 'account state transitions',
+                description: 'deterministic account mutation order, sender/receiver application, and nonce evolution',
+                pattern: 'state12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['state', 'accounts', 'transitions'],
+                objectiveTags: ['state', 'chain'],
+                verification: { label: 'Run state suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'balance-conservation',
+                title: 'balance conservation',
+                description: 'total-supply conservation, fee routing, and state-root consistency for balance updates',
+                pattern: 'state12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['state', 'balances', 'invariants'],
+                objectiveTags: ['state', 'security'],
+                verification: { label: 'Run state suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'receipt-generation',
+                title: 'transaction receipt generation',
+                description: 'status, gas usage, logs, receipt roots, and transaction-to-receipt linking',
+                pattern: 'state12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['receipts', 'transactions', 'api'],
+                objectiveTags: ['state', 'api'],
+                verification: { label: 'Run receipt suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'state-diffs',
+                title: 'state diffs and rollback',
+                description: 'state diff tracking, reversible application, and reorg-safe rollback primitives',
+                pattern: 'state12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['state', 'rollback', 'reorg'],
+                objectiveTags: ['state', 'chain'],
+                verification: { label: 'Run rollback suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'snapshots',
+                title: 'snapshot and checkpoint primitives',
+                description: 'state export/import, checkpoint records, and archival boundaries for fast recovery',
+                pattern: 'state12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['state', 'snapshots', 'checkpoints'],
+                objectiveTags: ['state', 'operator'],
+                verification: { label: 'Run snapshot suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'storage-integrity',
+                title: 'storage integrity checks',
+                description: 'storage validation, corruption detection, export consistency, and restart safety',
+                pattern: 'state12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/database/', 'backend/tests/'],
+                tags: ['storage', 'integrity', 'database'],
+                objectiveTags: ['state', 'tooling'],
+                verification: { label: 'Run storage suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'proof-interfaces',
+                title: 'proof-oriented state interfaces',
+                description: 'state proof interfaces, trie-facing contracts, and structured proof metadata without overbuilding proofs yet',
+                pattern: 'state12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['state', 'proofs', 'interfaces'],
+                objectiveTags: ['state', 'chain'],
+                verification: { label: 'Run proof interface suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-04',
+        title: 'Consensus, Finality, and Chain Lifecycle',
+        order: 4,
+        basePriority: 8,
+        description: 'Separate validation from production, add finality truth, reorg handling, reward accounting, and consensus diagnostics.',
+        tags: ['consensus', 'finality', 'reorg'],
+        workstreams: [
+            {
+                id: 'validation-pipeline',
+                title: 'block validation pipeline separation',
+                description: 'independent validation stages for candidate blocks before production-side side effects occur',
+                pattern: 'consensus13',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['consensus', 'validation', 'blocks'],
+                objectiveTags: ['consensus', 'chain'],
+                verification: { label: 'Run consensus suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'finality',
+                title: 'finality tracking',
+                description: 'confirmation depth, canonical-vs-pending views, and finality-aware chain status',
+                pattern: 'consensus13',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['finality', 'api', 'consensus'],
+                objectiveTags: ['consensus', 'api'],
+                verification: { label: 'Run finality suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'reorgs',
+                title: 'reorg and fork-choice handling',
+                description: 'fork choice, late blocks, canonical chain replacement, and replay safety',
+                pattern: 'consensus13',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['consensus', 'reorg', 'fork-choice'],
+                objectiveTags: ['consensus', 'state'],
+                verification: { label: 'Run reorg suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'rewards',
+                title: 'block reward and fee accounting',
+                description: 'block rewards, fee distribution, treasury routing, and reward receipts',
+                pattern: 'consensus13',
+                allowedScopes: ['backend/src/blockchain/', 'backend/tests/'],
+                tags: ['consensus', 'rewards', 'fees'],
+                objectiveTags: ['economics', 'state'],
+                verification: { label: 'Run reward suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'epochs',
+                title: 'epoch and validator participation metrics',
+                description: 'epoch boundaries, validator participation counters, and lifecycle observability',
+                pattern: 'consensus13',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/validators/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['consensus', 'epochs', 'validators'],
+                objectiveTags: ['consensus', 'operator'],
+                verification: { label: 'Run validator suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'consensus-diagnostics',
+                title: 'consensus failure diagnostics',
+                description: 'structured failure events, deterministic validation tests, and reorg-aware regression coverage',
+                pattern: 'consensus13',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['consensus', 'diagnostics', 'tests'],
+                objectiveTags: ['consensus', 'tooling'],
+                verification: { label: 'Run consensus suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-05',
+        title: 'RPC, Indexer, Explorer, and Query Surfaces',
+        order: 5,
+        basePriority: 8,
+        description: 'Add truthful read APIs, lookups, pagination, indexing, and operator/debug query surfaces on top of canonical chain data.',
+        tags: ['rpc', 'indexer', 'api'],
+        workstreams: [
+            {
+                id: 'block-rpc',
+                title: 'block and account query RPC',
+                description: 'stable read APIs for block lookup, account state, and canonical chain metadata',
+                pattern: 'api12',
+                allowedScopes: ['backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['rpc', 'blocks', 'accounts'],
+                objectiveTags: ['api', 'chain'],
+                verification: { label: 'Run API suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'tx-rpc',
+                title: 'transaction and receipt RPC',
+                description: 'transaction lookup, receipt lookup, status surfaces, and canonical hash-based resolution',
+                pattern: 'api12',
+                allowedScopes: ['backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['rpc', 'transactions', 'receipts'],
+                objectiveTags: ['api', 'chain'],
+                verification: { label: 'Run API suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'address-history',
+                title: 'address history and lookup indexing',
+                description: 'address transaction history, signature/hash lookups, and paginated account-centric query paths',
+                pattern: 'api12',
+                allowedScopes: ['backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['indexer', 'addresses', 'history'],
+                objectiveTags: ['api', 'state'],
+                verification: { label: 'Run indexer suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'event-logs',
+                title: 'event and log indexing',
+                description: 'event/log indexing, filters, search helpers, and lightweight materialized views',
+                pattern: 'api12',
+                allowedScopes: ['backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['indexer', 'events', 'logs'],
+                objectiveTags: ['api', 'contracts'],
+                verification: { label: 'Run event indexer suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'explorer-contracts',
+                title: 'explorer data contracts',
+                description: 'recent block, transaction status, receipt, finality, and contract-event payloads for explorer consumers',
+                pattern: 'api12',
+                allowedScopes: ['backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['explorer', 'api', 'contracts'],
+                objectiveTags: ['api', 'operator'],
+                verification: { label: 'Run API suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'operator-debug',
+                title: 'operator debug and consistency endpoints',
+                description: 'checkpoint metadata, snapshot health, sync state, and chain consistency inspection endpoints',
+                pattern: 'api12',
+                allowedScopes: ['backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['operator', 'debug', 'consistency'],
+                objectiveTags: ['operator', 'tooling'],
+                verification: { label: 'Run operator API suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-06',
+        title: 'Wallet, Faucet, and Account Truth on Top of the Chain',
+        order: 6,
+        basePriority: 7,
+        description: 'Make wallet creation, import, signing, faucet issuance, and account history flow through canonical chain state and receipts.',
+        tags: ['wallet', 'faucet', 'accounts'],
+        workstreams: [
+            {
+                id: 'wallet-keys',
+                title: 'wallet key creation and import',
+                description: 'canonical keypair-derived identity, import validation, and address derivation truth',
+                pattern: 'wallet9',
+                allowedScopes: ['backend/src/api/wallet.ts', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['wallet', 'keys', 'identity'],
+                objectiveTags: ['wallet', 'security'],
+                verification: { label: 'Run wallet suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'wallet-submit',
+                title: 'signed transaction submission',
+                description: 'wallet submission paths tied to canonical signed transaction handling and mempool admission',
+                pattern: 'wallet9',
+                allowedScopes: ['backend/src/api/wallet.ts', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['wallet', 'transactions', 'submission'],
+                objectiveTags: ['wallet', 'chain'],
+                verification: { label: 'Run wallet suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'wallet-history',
+                title: 'account balance and history truth',
+                description: 'balances, history, and transaction views derived from canonical chain state plus receipts',
+                pattern: 'wallet9',
+                allowedScopes: ['backend/src/api/wallet.ts', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['wallet', 'history', 'state'],
+                objectiveTags: ['wallet', 'state'],
+                verification: { label: 'Run wallet suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'faucet-issuance',
+                title: 'faucet chain issuance',
+                description: 'faucet mint/issue flows recorded as real chain mutations with cooldowns and receipts',
+                pattern: 'wallet9',
+                allowedScopes: ['backend/src/api/wallet.ts', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['faucet', 'wallet', 'receipts'],
+                objectiveTags: ['wallet', 'security'],
+                verification: { label: 'Run faucet suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'wallet-status',
+                title: 'pending and confirmed transaction account surfaces',
+                description: 'clear account-facing pending vs confirmed state contracts for wallet/explorer consumers',
+                pattern: 'wallet9',
+                allowedScopes: ['backend/src/api/wallet.ts', 'backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['wallet', 'status', 'api'],
+                objectiveTags: ['wallet', 'api'],
+                verification: { label: 'Run wallet API suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'wallet-safety',
+                title: 'key safety and validation surfaces',
+                description: 'address validation, private-key handling rules, import/export safety, and failure surfacing',
+                pattern: 'wallet9',
+                allowedScopes: ['backend/src/api/wallet.ts', 'backend/tests/'],
+                tags: ['wallet', 'security', 'validation'],
+                objectiveTags: ['wallet', 'security'],
+                verification: { label: 'Run wallet safety suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-07',
+        title: 'Contract Runtime and Token Standards',
+        order: 7,
+        basePriority: 7,
+        description: 'Build the minimal VM, gas accounting, deployment/call/runtime surfaces, ORC-20 truth, and a measured ORC-721 foundation.',
+        tags: ['contracts', 'vm', 'tokens'],
+        workstreams: [
+            {
+                id: 'vm-core',
+                title: 'minimal VM execution model',
+                description: 'core interpreter loop, execution context, and stack/runtime lifecycle',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/tests/'],
+                tags: ['contracts', 'vm', 'runtime'],
+                objectiveTags: ['contracts', 'chain'],
+                verification: { label: 'Run contract runtime suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'opcodes',
+                title: 'opcode scaffolding',
+                description: 'opcode registration, dispatch, operand handling, and deterministic instruction semantics',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/tests/'],
+                tags: ['contracts', 'vm', 'opcodes'],
+                objectiveTags: ['contracts', 'chain'],
+                verification: { label: 'Run contract runtime suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'gas',
+                title: 'gas metering',
+                description: 'resource accounting, out-of-gas behavior, and fee coupling for runtime execution',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/tests/'],
+                tags: ['contracts', 'gas', 'fees'],
+                objectiveTags: ['contracts', 'economics'],
+                verification: { label: 'Run contract gas suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'deploy',
+                title: 'contract deployment path',
+                description: 'deployment transactions, deterministic contract addresses, and deploy receipts',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['contracts', 'deployment', 'transactions'],
+                objectiveTags: ['contracts', 'api'],
+                verification: { label: 'Run contract deploy suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'storage-calls',
+                title: 'contract storage and calls',
+                description: 'contract state reads/writes, call execution, and deterministic storage ownership',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/tests/'],
+                tags: ['contracts', 'storage', 'calls'],
+                objectiveTags: ['contracts', 'state'],
+                verification: { label: 'Run contract storage suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'events',
+                title: 'contract events and receipts',
+                description: 'event emission, receipt log integration, and runtime trace visibility',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['contracts', 'events', 'receipts'],
+                objectiveTags: ['contracts', 'api'],
+                verification: { label: 'Run contract event suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'orc20-core',
+                title: 'ORC-20 core token flow',
+                description: 'fungible token deployment, mint, burn, transfer, and canonical balance mutation rules',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/tests/'],
+                tags: ['contracts', 'orc20', 'token'],
+                objectiveTags: ['contracts', 'economics'],
+                verification: { label: 'Run ORC-20 suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'orc20-allowance',
+                title: 'ORC-20 allowance and approval flow',
+                description: 'approve, allowance, transferFrom, and allowance-aware receipt behavior',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/tests/'],
+                tags: ['contracts', 'orc20', 'allowance'],
+                objectiveTags: ['contracts', 'economics'],
+                verification: { label: 'Run ORC-20 suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'orc721',
+                title: 'ORC-721 foundation',
+                description: 'NFT ownership, transfer, metadata hooks, and a measured base standard after fungible flows are stable',
+                pattern: 'contract12',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/contracts/', 'backend/tests/'],
+                tags: ['contracts', 'orc721', 'nft'],
+                objectiveTags: ['contracts', 'state'],
+                verification: { label: 'Run ORC-721 suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-08',
+        title: 'Node Sync, Peer Networking, and Validator Operations',
+        order: 8,
+        basePriority: 6,
+        description: 'Add peer discovery, gossip, sync handshakes, checkpoint/snapshot catch-up, peer health, and validator operations truth.',
+        tags: ['network', 'sync', 'validators'],
+        workstreams: [
+            {
+                id: 'peer-discovery',
+                title: 'peer discovery and handshakes',
+                description: 'peer identity, capability exchange, discovery records, and authenticated handshake flow',
+                pattern: 'network12',
+                allowedScopes: ['backend/src/network/', 'backend/src/validators/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['network', 'peers', 'discovery'],
+                objectiveTags: ['network', 'operator'],
+                verification: { label: 'Run networking suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'tx-gossip',
+                title: 'transaction gossip',
+                description: 'transaction broadcast, duplicate suppression, inbound validation, and mempool propagation',
+                pattern: 'network12',
+                allowedScopes: ['backend/src/network/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['network', 'transactions', 'gossip'],
+                objectiveTags: ['network', 'chain'],
+                verification: { label: 'Run networking suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'block-gossip',
+                title: 'block gossip',
+                description: 'block broadcast, late-block handling, duplicate suppression, and canonical chain propagation',
+                pattern: 'network12',
+                allowedScopes: ['backend/src/network/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['network', 'blocks', 'gossip'],
+                objectiveTags: ['network', 'consensus'],
+                verification: { label: 'Run networking suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'initial-sync',
+                title: 'initial sync flow',
+                description: 'sync handshakes, block catch-up, progress tracking, and restart-safe initial node bootstrapping',
+                pattern: 'network12',
+                allowedScopes: ['backend/src/network/', 'backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['network', 'sync', 'bootstrapping'],
+                objectiveTags: ['network', 'operator'],
+                verification: { label: 'Run sync suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'checkpoint-sync',
+                title: 'checkpoint and snapshot-assisted sync',
+                description: 'checkpoint-aware catch-up, snapshot import, and fast recovery path selection',
+                pattern: 'network12',
+                allowedScopes: ['backend/src/network/', 'backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['network', 'snapshots', 'checkpoints'],
+                objectiveTags: ['network', 'state'],
+                verification: { label: 'Run sync suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'validator-ops',
+                title: 'validator and peer health operations',
+                description: 'validator role separation, peer scoring, topology observability, and operator repair signals',
+                pattern: 'network12',
+                allowedScopes: ['backend/src/network/', 'backend/src/validators/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['network', 'validators', 'operator'],
+                objectiveTags: ['network', 'operator'],
+                verification: { label: 'Run validator networking suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-09',
+        title: 'Economics, Staking, and Governance Primitives',
+        order: 9,
+        basePriority: 5,
+        description: 'Add truthful fee policy, treasury accounting, staking flows, and governance hooks only on top of stable state and receipts.',
+        tags: ['economics', 'staking', 'governance'],
+        workstreams: [
+            {
+                id: 'fee-market',
+                title: 'fee market tuning',
+                description: 'fee parameters, fee burn vs reward policy, and deterministic fee configuration surfaces',
+                pattern: 'economics9',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['economics', 'fees', 'config'],
+                objectiveTags: ['economics', 'chain'],
+                verification: { label: 'Run economics suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'treasury',
+                title: 'treasury and accounting scaffolding',
+                description: 'treasury records, accounting outputs, and transparent state surfaces for economic flows',
+                pattern: 'economics9',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['economics', 'treasury', 'accounting'],
+                objectiveTags: ['economics', 'operator'],
+                verification: { label: 'Run economics suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'staking',
+                title: 'staking and delegation ledger',
+                description: 'staking positions, delegation, reward accrual, cooldowns, and unstake accounting',
+                pattern: 'economics9',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['staking', 'economics', 'validators'],
+                objectiveTags: ['economics', 'state'],
+                verification: { label: 'Run staking suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'governance',
+                title: 'governance parameters and execution hooks',
+                description: 'proposal state, voting hooks, and parameter update execution after finality and receipts are trustworthy',
+                pattern: 'economics9',
+                allowedScopes: ['backend/src/blockchain/', 'backend/src/api/', 'backend/tests/'],
+                tags: ['governance', 'economics', 'parameters'],
+                objectiveTags: ['governance', 'economics'],
+                verification: { label: 'Run governance suite', command: 'npm run test', cwd: 'backend' },
+            },
+        ],
+    },
+    {
+        id: 'phase-10',
+        title: 'Security, Tests, Docs, and Operator Hardening',
+        order: 10,
+        basePriority: 5,
+        description: 'Finish with invariants, adversarial cases, threat models, operator runbooks, and docs that match the real implementation.',
+        tags: ['security', 'tests', 'docs'],
+        workstreams: [
+            {
+                id: 'invariants',
+                title: 'protocol invariants and property checks',
+                description: 'balance, nonce, receipt, and reorg invariants expressed as deterministic checks',
+                pattern: 'hardening9',
+                allowedScopes: ['backend/tests/', 'backend/src/blockchain/', 'backend/package.json', 'backend/tsconfig.json'],
+                tags: ['security', 'invariants', 'tests'],
+                objectiveTags: ['security', 'tooling'],
+                verification: { label: 'Run hardening suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'adversarial',
+                title: 'adversarial transaction and block cases',
+                description: 'malformed transaction/block cases, fuzz-style inputs, and mempool abuse regressions',
+                pattern: 'hardening9',
+                allowedScopes: ['backend/tests/', 'backend/src/blockchain/', 'backend/package.json', 'backend/tsconfig.json'],
+                tags: ['security', 'fuzzing', 'mempool'],
+                objectiveTags: ['security', 'chain'],
+                verification: { label: 'Run hardening suite', command: 'npm run test', cwd: 'backend' },
+            },
+            {
+                id: 'runbooks',
+                title: 'threat models and incident runbooks',
+                description: 'threat models for replay, reorgs, faucet abuse, peer abuse, and operator incident response',
+                pattern: 'hardening9',
+                allowedScopes: ['backend/docs/', 'backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['security', 'docs', 'runbooks'],
+                objectiveTags: ['security', 'operator'],
+                verification: { label: 'Run backend build', command: 'npm run build', cwd: 'backend' },
+            },
+            {
+                id: 'protocol-docs',
+                title: 'protocol and operator documentation truth',
+                description: 'local protocol docs, operator notes, and consistency tooling that match what the node really does',
+                pattern: 'hardening9',
+                allowedScopes: ['backend/docs/', 'backend/src/api/', 'backend/src/blockchain/', 'backend/tests/'],
+                tags: ['docs', 'operator', 'protocol'],
+                objectiveTags: ['documentation', 'operator'],
+                verification: { label: 'Run backend build', command: 'npm run build', cwd: 'backend' },
+            },
+        ],
     },
-    // ============ STORAGE & DATABASE ============
-    {
-        id: 'store-001',
-        title: 'Implement LevelDB-backed block storage',
-        description: 'Replace in-memory block storage with LevelDB for persistence. Key blocks by height and hash. Support range queries.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 55,
-        tags: ['storage', 'database']
-    },
-    {
-        id: 'store-002',
-        title: 'Build UTXO index for fast balance lookups',
-        description: 'Maintain a UTXO set index for O(1) balance lookups. Update on each block commit. Support pruning of spent outputs.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['storage', 'indexing']
-    },
-    {
-        id: 'store-003',
-        title: 'Add transaction receipt storage and indexing',
-        description: 'Store transaction receipts with status, gas used, and logs. Index by transaction hash and block number.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 45,
-        tags: ['storage', 'indexing']
-    },
-    {
-        id: 'store-004',
-        title: 'Implement state pruning for disk space management',
-        description: 'Prune old state trie nodes that are no longer referenced. Keep last N blocks of state for reorgs. Archive old state.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 60,
-        tags: ['storage', 'optimization']
-    },
-    {
-        id: 'store-005',
-        title: 'Build WAL (write-ahead log) for crash recovery',
-        description: 'Implement write-ahead logging so incomplete block commits can be recovered after crashes. Ensure atomicity.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 55,
-        tags: ['storage', 'reliability']
-    },
-    {
-        id: 'store-006',
-        title: 'Add database compaction and vacuum scheduling',
-        description: 'Schedule periodic compaction of LevelDB. Monitor disk usage. Alert when storage exceeds thresholds.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 35,
-        tags: ['storage', 'maintenance']
-    },
-    // ============ SMART CONTRACTS ============
-    {
-        id: 'sc-001',
-        title: 'Build smart contract bytecode interpreter',
-        description: 'Implement a stack-based VM for executing smart contract bytecode. Support basic opcodes: PUSH, POP, ADD, SUB, MUL, DIV, STORE, LOAD.',
-        type: 'build',
-        priority: 9,
-        estimatedMinutes: 75,
-        tags: ['smart-contracts', 'vm']
-    },
-    {
-        id: 'sc-002',
-        title: 'Implement contract deployment and addressing',
-        description: 'Generate contract addresses from deployer + nonce. Store contract bytecode and state. Support CREATE and CREATE2.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 50,
-        tags: ['smart-contracts', 'deployment']
-    },
-    {
-        id: 'sc-003',
-        title: 'Add contract storage with Merkle proof support',
-        description: 'Implement per-contract storage slots. Build Merkle proofs for storage values. Support SSTORE and SLOAD opcodes.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 60,
-        tags: ['smart-contracts', 'storage']
-    },
-    {
-        id: 'sc-004',
-        title: 'Build event emission and log system',
-        description: 'Implement LOG0-LOG4 opcodes for contract events. Store logs in receipts. Build bloom filters for efficient log queries.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['smart-contracts', 'events']
-    },
-    {
-        id: 'sc-005',
-        title: 'Implement contract-to-contract calls',
-        description: 'Support CALL, DELEGATECALL, and STATICCALL opcodes. Manage call stack depth. Forward gas between contracts.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 55,
-        tags: ['smart-contracts', 'vm']
-    },
-    {
-        id: 'sc-006',
-        title: 'Add gas metering to smart contract execution',
-        description: 'Assign gas costs to each opcode. Track gas usage during execution. Revert on out-of-gas. Refund unused gas.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 45,
-        tags: ['smart-contracts', 'gas']
-    },
-    {
-        id: 'sc-007',
-        title: 'Build contract ABI encoder/decoder',
-        description: 'Implement ABI encoding for function calls and return values. Support all Solidity types. Parse function signatures.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['smart-contracts', 'abi']
-    },
-    {
-        id: 'sc-008',
-        title: 'Implement precompiled contracts',
-        description: 'Add precompiles for ecrecover, sha256, ripemd160, identity, modexp, and bn256 curve operations.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['smart-contracts', 'crypto']
-    },
-    // ============ CONSENSUS IMPROVEMENTS ============
-    {
-        id: 'cons-001',
-        title: 'Implement finality gadget',
-        description: 'Add a finality mechanism where blocks become irreversible after 2/3 validator attestations. Track finalized checkpoint.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 65,
-        tags: ['consensus', 'finality']
-    },
-    {
-        id: 'cons-002',
-        title: 'Build validator rotation and epoch system',
-        description: 'Implement epoch-based validator rotation. Shuffle validator order each epoch. Support validator entry and exit queues.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 55,
-        tags: ['consensus', 'validators']
-    },
-    {
-        id: 'cons-003',
-        title: 'Add slashing conditions for misbehavior',
-        description: 'Detect double-signing and surround voting. Implement slashing penalties. Build evidence submission and verification.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 60,
-        tags: ['consensus', 'security']
-    },
-    {
-        id: 'cons-004',
-        title: 'Implement view change protocol',
-        description: 'Handle leader failures gracefully. Implement timeout-based view changes. Ensure liveness under partial network partitions.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 55,
-        tags: ['consensus', 'fault-tolerance']
-    },
-    {
-        id: 'cons-005',
-        title: 'Build fork choice rule with weight scoring',
-        description: 'Implement GHOST-like fork choice rule. Weight branches by validator attestations. Resolve ties deterministically.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['consensus', 'fork-choice']
-    },
-    {
-        id: 'cons-006',
-        title: 'Add validator committee selection',
-        description: 'Randomly select validator committees per slot using RANDAO. Implement committee attestation aggregation.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['consensus', 'validators']
-    },
-    // ============ CRYPTOGRAPHY ============
-    {
-        id: 'crypto-001',
-        title: 'Implement BLS signature aggregation',
-        description: 'Add BLS12-381 signature support for compact multi-validator attestations. Aggregate signatures for block finality.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 60,
-        tags: ['crypto', 'signatures']
-    },
-    {
-        id: 'crypto-002',
-        title: 'Build Merkle mountain range for light clients',
-        description: 'Implement MMR append-only structure for efficient light client proofs. Support inclusion and consistency proofs.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['crypto', 'merkle']
-    },
-    {
-        id: 'crypto-003',
-        title: 'Add VDF (verifiable delay function) for randomness',
-        description: 'Implement a VDF for unbiasable on-chain randomness. Use for validator selection and contract randomness requests.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 65,
-        tags: ['crypto', 'randomness']
-    },
-    {
-        id: 'crypto-004',
-        title: 'Implement zero-knowledge proof verifier',
-        description: 'Add a basic Groth16 or PLONK verifier as a precompile. Support zk-SNARK proof verification for privacy features.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 70,
-        tags: ['crypto', 'zk-proofs']
-    },
-    // ============ RPC & API ============
-    {
-        id: 'rpc-001',
-        title: 'Implement eth_call equivalent for read-only execution',
-        description: 'Execute contract calls without creating transactions. Return result without modifying state. Support block parameter.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 40,
-        tags: ['rpc', 'api']
-    },
-    {
-        id: 'rpc-002',
-        title: 'Build event subscription with WebSocket support',
-        description: 'Implement newHeads, logs, and pendingTransactions subscriptions over WebSocket. Support filter parameters.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['rpc', 'websocket']
-    },
-    {
-        id: 'rpc-003',
-        title: 'Add trace/debug namespace for transaction tracing',
-        description: 'Implement trace_transaction and debug_traceCall. Return full execution trace with opcodes, gas, and state changes.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['rpc', 'debugging']
-    },
-    {
-        id: 'rpc-004',
-        title: 'Implement batch RPC request handling',
-        description: 'Support JSON-RPC batch requests. Execute in parallel where possible. Return ordered results.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 35,
-        tags: ['rpc', 'performance']
-    },
-    {
-        id: 'rpc-005',
-        title: 'Build rate limiting and API key system',
-        description: 'Add per-key rate limits for RPC endpoints. Implement tiered access. Track usage statistics.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['rpc', 'security']
-    },
-    {
-        id: 'rpc-006',
-        title: 'Add getProof endpoint for Merkle proofs',
-        description: 'Return account proof and storage proofs for light client verification. Include account balance, nonce, and code hash.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['rpc', 'light-clients']
-    },
-    // ============ MEMPOOL & TRANSACTION MANAGEMENT ============
-    {
-        id: 'mempool-001',
-        title: 'Implement priority fee auction mechanism',
-        description: 'Sort pending transactions by effective priority fee. Support EIP-1559 style base fee + tip. Dynamic base fee adjustment.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 55,
-        tags: ['mempool', 'economics']
-    },
-    {
-        id: 'mempool-002',
-        title: 'Add transaction replacement (speed-up and cancel)',
-        description: 'Allow replacing pending transactions with same nonce but higher gas. Support cancel-by-self-transfer pattern.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['mempool', 'transactions']
-    },
-    {
-        id: 'mempool-003',
-        title: 'Build mempool eviction policy',
-        description: 'Evict lowest-fee transactions when mempool is full. Maintain per-sender transaction limit. Age out stale transactions.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['mempool', 'optimization']
-    },
-    {
-        id: 'mempool-004',
-        title: 'Implement transaction propagation protocol',
-        description: 'Announce new transactions to peers. Deduplicate by hash. Batch transaction announcements for efficiency.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 45,
-        tags: ['mempool', 'networking']
-    },
-    {
-        id: 'mempool-005',
-        title: 'Add nonce gap detection and queuing',
-        description: 'Detect and queue transactions with nonce gaps. Process queued transactions when gaps are filled. Alert on stuck transactions.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 35,
-        tags: ['mempool', 'transactions']
-    },
-    // ============ TOKEN STANDARDS ============
-    {
-        id: 'token-001',
-        title: 'Implement GRC20 token factory contract',
-        description: 'Build a factory contract that deploys new GRC20 tokens with configurable name, symbol, decimals, and initial supply.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 50,
-        tags: ['tokens', 'smart-contracts']
-    },
-    {
-        id: 'token-002',
-        title: 'Build GRC721 NFT minting and transfer system',
-        description: 'Implement NFT minting with metadata URI. Support safe transfers with onReceived hooks. Add enumeration extension.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 55,
-        tags: ['tokens', 'nft']
-    },
-    {
-        id: 'token-003',
-        title: 'Add token approval and allowance system',
-        description: 'Implement approve/transferFrom pattern for GRC20. Add increaseAllowance/decreaseAllowance for safety. Emit events.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['tokens', 'smart-contracts']
-    },
-    {
-        id: 'token-004',
-        title: 'Build token bridge interface',
-        description: 'Design a bridge contract interface for cross-chain token transfers. Implement lock-and-mint mechanism with validator signatures.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 60,
-        tags: ['tokens', 'bridge']
-    },
-    {
-        id: 'token-005',
-        title: 'Implement wrapped native token (WOPEN)',
-        description: 'Build wrapped OPEN token contract. Support deposit (wrap) and withdraw (unwrap). Maintain 1:1 peg with native token.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 35,
-        tags: ['tokens', 'defi']
-    },
-    // ============ DEFI PRIMITIVES ============
-    {
-        id: 'defi-001',
-        title: 'Build constant product AMM (x*y=k)',
-        description: 'Implement Uniswap V2-style automated market maker. Support add/remove liquidity. Calculate swap amounts with fee.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 65,
-        tags: ['defi', 'amm']
-    },
-    {
-        id: 'defi-002',
-        title: 'Implement lending pool with collateral',
-        description: 'Build basic lending pool. Track supply/borrow rates. Implement collateral factor and liquidation threshold.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 70,
-        tags: ['defi', 'lending']
-    },
-    {
-        id: 'defi-003',
-        title: 'Add oracle price feed system',
-        description: 'Build on-chain price oracle. Support multiple price sources with median aggregation. Add staleness checks.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['defi', 'oracle']
-    },
-    {
-        id: 'defi-004',
-        title: 'Build flash loan mechanism',
-        description: 'Implement uncollateralized flash loans that must be repaid within same transaction. Add fee mechanism.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['defi', 'lending']
-    },
-    {
-        id: 'defi-005',
-        title: 'Implement yield farming reward distributor',
-        description: 'Build staking reward distribution with time-weighted shares. Support multiple reward tokens. Auto-compound option.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 50,
-        tags: ['defi', 'staking']
-    },
-    // ============ MONITORING & OBSERVABILITY ============
-    {
-        id: 'mon-001',
-        title: 'Build chain health dashboard metrics',
-        description: 'Expose block time, TPS, pending tx count, peer count, and memory usage as Prometheus metrics. Add Grafana dashboard.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 45,
-        tags: ['monitoring', 'metrics']
-    },
-    {
-        id: 'mon-002',
-        title: 'Implement structured logging with correlation IDs',
-        description: 'Add structured JSON logging. Track requests across components with correlation IDs. Add log levels and sampling.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['monitoring', 'logging']
-    },
-    {
-        id: 'mon-003',
-        title: 'Add alerting for chain anomalies',
-        description: 'Detect and alert on: missed blocks, long finality times, validator downtime, unusual gas usage, mempool congestion.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['monitoring', 'alerting']
-    },
-    {
-        id: 'mon-004',
-        title: 'Build block explorer API for external consumption',
-        description: 'Expose paginated blocks, transactions, and accounts via REST API. Support search by hash, address, and block number.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['monitoring', 'api']
-    },
-    {
-        id: 'mon-005',
-        title: 'Implement distributed tracing for cross-service calls',
-        description: 'Add OpenTelemetry tracing spans for RPC handling, block validation, state transitions, and p2p messages.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 50,
-        tags: ['monitoring', 'tracing']
-    },
-    // ============ SECURITY HARDENING ============
-    {
-        id: 'sec-001',
-        title: 'Implement transaction signature malleability protection',
-        description: 'Enforce canonical signature form (low-s). Reject malleable signatures. Add EIP-2 style replay protection.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['security', 'crypto']
-    },
-    {
-        id: 'sec-002',
-        title: 'Add DoS protection for RPC endpoints',
-        description: 'Implement request size limits, execution timeouts, gas caps for eth_call, and connection limits per IP.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['security', 'rpc']
-    },
-    {
-        id: 'sec-003',
-        title: 'Build chain state integrity checker',
-        description: 'Verify state root matches computed state after each block. Detect database corruption. Support state root recalculation.',
-        type: 'audit',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['security', 'integrity']
-    },
-    {
-        id: 'sec-004',
-        title: 'Implement replay attack prevention',
-        description: 'Add chain ID to transaction signatures. Reject transactions from other networks. Support EIP-155 style replay protection.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 35,
-        tags: ['security', 'transactions']
-    },
-    {
-        id: 'sec-005',
-        title: 'Add peer message authentication',
-        description: 'Sign all p2p messages with node key. Verify sender identity. Reject unauthenticated messages. Prevent eclipse attacks.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['security', 'networking']
-    },
-    {
-        id: 'sec-006',
-        title: 'Build reentrancy guard for contract execution',
-        description: 'Detect and prevent reentrant contract calls. Implement mutex-style guard in VM. Test with known reentrancy patterns.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['security', 'smart-contracts']
-    },
-    // ============ TESTING & QUALITY ============
-    {
-        id: 'test-007',
-        title: 'Build fuzzing framework for transaction processing',
-        description: 'Generate random transactions with valid and invalid fields. Fuzz the transaction validation and execution pipeline.',
-        type: 'test',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['testing', 'fuzzing']
-    },
-    {
-        id: 'test-008',
-        title: 'Implement network simulation test suite',
-        description: 'Simulate multi-node network with configurable latency and partition. Test consensus under adversarial conditions.',
-        type: 'test',
-        priority: 6,
-        estimatedMinutes: 65,
-        tags: ['testing', 'simulation']
-    },
-    {
-        id: 'test-009',
-        title: 'Add load testing for RPC endpoints',
-        description: 'Build load test scripts targeting all RPC methods. Measure throughput, latency, and error rates under load.',
-        type: 'test',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['testing', 'performance']
-    },
-    {
-        id: 'test-010',
-        title: 'Create integration test for full block lifecycle',
-        description: 'Test: create tx → mempool → block inclusion → execution → receipt → state update → finality. Verify each step.',
-        type: 'test',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['testing', 'integration']
-    },
-    {
-        id: 'test-011',
-        title: 'Build contract deployment and execution test suite',
-        description: 'Test deploying contracts, calling functions, emitting events, and reverting on errors. Cover all opcode paths.',
-        type: 'test',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['testing', 'smart-contracts']
-    },
-    // ============ FRONTEND FEATURES ============
-    {
-        id: 'fe-011',
-        title: 'Build transaction detail modal with decoded data',
-        description: 'Show transaction details: sender, receiver, value, gas, input data decoded via ABI. Display execution trace.',
-        type: 'feature',
-        priority: 7,
-        estimatedMinutes: 45,
-        tags: ['frontend', 'explorer']
-    },
-    {
-        id: 'fe-012',
-        title: 'Add real-time gas price chart',
-        description: 'Show historical gas prices over last 100 blocks. Display current base fee and suggested priority fee tiers.',
-        type: 'feature',
-        priority: 5,
-        estimatedMinutes: 40,
-        tags: ['frontend', 'analytics']
-    },
-    {
-        id: 'fe-013',
-        title: 'Build validator performance leaderboard',
-        description: 'Display validator uptime, blocks produced, attestation rate, and total rewards. Rank by performance score.',
-        type: 'feature',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['frontend', 'validators']
-    },
-    {
-        id: 'fe-014',
-        title: 'Implement dark/light theme toggle',
-        description: 'Add system preference detection and manual toggle. Persist preference. Smooth transition between themes.',
-        type: 'feature',
-        priority: 4,
-        estimatedMinutes: 35,
-        tags: ['frontend', 'ux']
-    },
-    {
-        id: 'fe-015',
-        title: 'Build contract interaction UI',
-        description: 'Parse contract ABI and generate forms for each function. Support read (call) and write (transaction) operations.',
-        type: 'feature',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['frontend', 'smart-contracts']
-    },
-    {
-        id: 'fe-016',
-        title: 'Add network topology visualization',
-        description: 'Show connected peers as a force-directed graph. Display connection quality and message flow between nodes.',
-        type: 'feature',
-        priority: 5,
-        estimatedMinutes: 50,
-        tags: ['frontend', 'visualization']
-    },
-    {
-        id: 'fe-017',
-        title: 'Build mempool visualization',
-        description: 'Show pending transactions as bubbles sized by gas. Color by age. Animate as they get included in blocks.',
-        type: 'feature',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['frontend', 'visualization']
-    },
-    {
-        id: 'fe-018',
-        title: 'Implement address watchlist with notifications',
-        description: 'Let users save addresses to watch. Show transaction activity. Browser notifications for incoming/outgoing transfers.',
-        type: 'feature',
-        priority: 5,
-        estimatedMinutes: 40,
-        tags: ['frontend', 'ux']
-    },
-    // ============ DEVTOOLS & SDK ============
-    {
-        id: 'dev-001',
-        title: 'Build JavaScript SDK for interacting with Hermeschain',
-        description: 'Create an npm package with methods for: connect, getBalance, sendTransaction, deployContract, callContract, subscribe.',
-        type: 'build',
-        priority: 8,
-        estimatedMinutes: 70,
-        tags: ['sdk', 'developer-tools']
-    },
-    {
-        id: 'dev-002',
-        title: 'Implement local devnet launcher',
-        description: 'Single command to spin up a local Hermeschain network with funded accounts, fast block times, and auto-mining.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['devtools', 'testing']
-    },
-    {
-        id: 'dev-003',
-        title: 'Build contract deployment CLI tool',
-        description: 'CLI tool to compile, deploy, and verify smart contracts. Support constructor arguments and linked libraries.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 50,
-        tags: ['devtools', 'cli']
-    },
-    {
-        id: 'dev-004',
-        title: 'Add hardhat/foundry-style test runner',
-        description: 'Build a test runner for smart contracts with setup/teardown, assertions, gas reporting, and snapshot/revert.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 60,
-        tags: ['devtools', 'testing']
-    },
-    {
-        id: 'dev-005',
-        title: 'Implement contract source verification system',
-        description: 'Accept source code uploads. Recompile and match bytecode. Store verified source for block explorer display.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['devtools', 'verification']
-    },
-    {
-        id: 'dev-006',
-        title: 'Build gas estimation service',
-        description: 'Estimate gas for transactions by simulating execution. Return gas limit with safety margin. Support all transaction types.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['devtools', 'gas']
-    },
-    // ============ GOVERNANCE ============
-    {
-        id: 'gov-001',
-        title: 'Implement on-chain proposal submission',
-        description: 'Build proposal contract with title, description, and executable actions. Require minimum token stake to propose.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['governance', 'smart-contracts']
-    },
-    {
-        id: 'gov-002',
-        title: 'Build token-weighted voting system',
-        description: 'Implement voting with token balance snapshots at proposal creation. Support For/Against/Abstain. Quorum requirements.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 55,
-        tags: ['governance', 'voting']
-    },
-    {
-        id: 'gov-003',
-        title: 'Add timelock for governance execution',
-        description: 'Queue passed proposals with configurable delay. Allow cancellation during timelock. Execute after delay expires.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 40,
-        tags: ['governance', 'security']
-    },
-    {
-        id: 'gov-004',
-        title: 'Implement delegation system for voting power',
-        description: 'Allow token holders to delegate voting power. Support transitive delegation. Track delegation history.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['governance', 'delegation']
-    },
-    // ============ ACCOUNT ABSTRACTION ============
-    {
-        id: 'aa-001',
-        title: 'Implement ERC-4337 style account abstraction',
-        description: 'Build UserOperation mempool, bundler, and entry point contract. Support smart contract wallets as first-class accounts.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 70,
-        tags: ['account-abstraction', 'smart-contracts']
-    },
-    {
-        id: 'aa-002',
-        title: 'Build paymaster for gas sponsorship',
-        description: 'Implement paymaster contract that pays gas on behalf of users. Support token payments and sponsored transactions.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['account-abstraction', 'gas']
-    },
-    {
-        id: 'aa-003',
-        title: 'Add social recovery for smart wallets',
-        description: 'Implement guardian-based wallet recovery. Support time-delayed recovery with guardian signatures.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 50,
-        tags: ['account-abstraction', 'security']
-    },
-    // ============ LAYER 2 & SCALING ============
-    {
-        id: 'l2-001',
-        title: 'Design state channel framework',
-        description: 'Build off-chain state channels for instant transactions. Support open/close/dispute/force-close lifecycle.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 70,
-        tags: ['scaling', 'state-channels']
-    },
-    {
-        id: 'l2-002',
-        title: 'Implement optimistic rollup data availability',
-        description: 'Post compressed transaction batches on-chain. Implement fraud proof window. Build state commitment chain.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 75,
-        tags: ['scaling', 'rollups']
-    },
-    {
-        id: 'l2-003',
-        title: 'Build blob transaction support for data availability',
-        description: 'Implement EIP-4844 style blob transactions. Add blob gas market. Support KZG commitments for data availability.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 65,
-        tags: ['scaling', 'data-availability']
-    },
-    // ============ DOCUMENTATION ============
-    {
-        id: 'docs-001',
-        title: 'Write RPC API reference documentation',
-        description: 'Document all JSON-RPC methods with parameters, return types, examples, and error codes. Generate from code annotations.',
-        type: 'docs',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['documentation', 'api']
-    },
-    {
-        id: 'docs-002',
-        title: 'Create getting started tutorial',
-        description: 'Write step-by-step guide: install, run node, create wallet, get testnet tokens, send first transaction.',
-        type: 'docs',
-        priority: 7,
-        estimatedMinutes: 40,
-        tags: ['documentation', 'tutorial']
-    },
-    {
-        id: 'docs-003',
-        title: 'Document smart contract development guide',
-        description: 'Write guide covering: setup environment, write contract, test locally, deploy to testnet, verify source, interact via SDK.',
-        type: 'docs',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['documentation', 'smart-contracts']
-    },
-    {
-        id: 'docs-004',
-        title: 'Write architecture decision records',
-        description: 'Document key architecture decisions: consensus choice, state model, gas mechanism, token economics, and trade-offs.',
-        type: 'docs',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['documentation', 'architecture']
-    },
-    {
-        id: 'docs-005',
-        title: 'Create validator setup and operations guide',
-        description: 'Document how to run a validator: hardware requirements, setup, key management, monitoring, and troubleshooting.',
-        type: 'docs',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['documentation', 'validators']
-    },
-    // ============ MISC INFRASTRUCTURE ============
-    {
-        id: 'infra-001',
-        title: 'Build graceful shutdown with state persistence',
-        description: 'Handle SIGTERM/SIGINT gracefully. Flush pending writes. Save mempool state. Close peer connections cleanly.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 35,
-        tags: ['infrastructure', 'reliability']
-    },
-    {
-        id: 'infra-002',
-        title: 'Implement config file system with environment overrides',
-        description: 'Support TOML/YAML config files for all node settings. Environment variables override file values. Validate on startup.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['infrastructure', 'config']
-    },
-    {
-        id: 'infra-003',
-        title: 'Add health check endpoint with dependency status',
-        description: 'Expose /health with database, Redis, peer connectivity, and chain sync status. Return degraded state when partially healthy.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 30,
-        tags: ['infrastructure', 'monitoring']
-    },
-    {
-        id: 'infra-004',
-        title: 'Build database migration system',
-        description: 'Track schema versions. Run migrations on startup. Support rollback. Generate migration files from schema changes.',
-        type: 'build',
-        priority: 7,
-        estimatedMinutes: 45,
-        tags: ['infrastructure', 'database']
-    },
-    {
-        id: 'infra-005',
-        title: 'Implement backup and restore for chain data',
-        description: 'Export chain data to portable format. Support incremental backups. Restore from backup with integrity verification.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 50,
-        tags: ['infrastructure', 'backup']
-    },
-    {
-        id: 'infra-006',
-        title: 'Add resource usage profiling and limits',
-        description: 'Monitor CPU, memory, and disk usage per component. Set limits for block execution time. Kill runaway processes.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 40,
-        tags: ['infrastructure', 'performance']
-    },
-    {
-        id: 'infra-007',
-        title: 'Build automatic chain data snapshot export',
-        description: 'Periodically export chain snapshots for fast sync. Compress and upload to storage. Maintain latest N snapshots.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 45,
-        tags: ['infrastructure', 'sync']
-    },
-    {
-        id: 'infra-008',
-        title: 'Implement transaction receipt bloom filter',
-        description: 'Build bloom filters for transaction receipts to enable efficient log searching across blocks without scanning all receipts.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 40,
-        tags: ['infrastructure', 'indexing']
-    },
-    {
-        id: 'infra-009',
-        title: 'Add node identity and ENR record system',
-        description: 'Generate persistent node identity with Ed25519 keys. Build Ethereum Node Record (ENR) for peer advertisement.',
-        type: 'build',
-        priority: 5,
-        estimatedMinutes: 35,
-        tags: ['infrastructure', 'networking']
-    },
-    {
-        id: 'infra-010',
-        title: 'Build chain specification and genesis config parser',
-        description: 'Define chain parameters in a genesis config file. Parse on startup. Support custom chains with different consensus rules.',
-        type: 'build',
-        priority: 6,
-        estimatedMinutes: 45,
-        tags: ['infrastructure', 'config']
-    }
 ];
-// Calculate total estimated time
-const getTotalEstimatedTime = () => {
+function createBacklog() {
+    const tasks = [];
+    let sequence = 0;
+    for (const phase of PHASE_BLUEPRINTS) {
+        for (const workstream of phase.workstreams) {
+            const pattern = PATTERN_LIBRARY[workstream.pattern];
+            for (let index = 0; index < pattern.length; index += 1) {
+                const step = pattern[index];
+                sequence += 1;
+                tasks.push({
+                    id: `${phase.id}:${workstream.id}:${pad2(index + 1)}`,
+                    title: `${step.titlePrefix} ${workstream.title}`,
+                    description: [
+                        `${phase.title} microtask ${index + 1}/${pattern.length} for ${workstream.title}.`,
+                        renderTemplate(step.description, workstream, phase, index, pattern.length),
+                        `Allowed scopes: ${workstream.allowedScopes.join(', ')}.`,
+                    ].join(' '),
+                    type: step.type,
+                    priority: clampPriority(phase.basePriority + (step.priorityOffset || 0)),
+                    estimatedMinutes: exports.COMMIT_WINDOW_MINUTES,
+                    commitWindowMinutes: exports.COMMIT_WINDOW_MINUTES,
+                    phaseId: phase.id,
+                    phaseTitle: phase.title,
+                    phaseOrder: phase.order,
+                    workstreamId: workstream.id,
+                    workstreamTitle: workstream.title,
+                    sequence,
+                    tags: unique([...phase.tags, ...workstream.tags, ...(step.tags || [])]),
+                    objectiveTags: unique(workstream.objectiveTags),
+                    allowedScopes: unique(workstream.allowedScopes),
+                    verification: workstream.verification,
+                    expectedOutcome: renderTemplate(step.expectedOutcome, workstream, phase, index, pattern.length),
+                });
+            }
+        }
+    }
+    return tasks;
+}
+exports.TASK_BACKLOG = createBacklog();
+exports.BACKLOG_PHASES = PHASE_BLUEPRINTS.map((phase) => ({
+    id: phase.id,
+    title: phase.title,
+    order: phase.order,
+    commitCount: phase.workstreams.reduce((total, workstream) => total + PATTERN_LIBRARY[workstream.pattern].length, 0),
+    workstreamCount: phase.workstreams.length,
+    description: phase.description,
+    tags: phase.tags,
+}));
+if (exports.TASK_BACKLOG.length !== exports.TARGET_COMMIT_WINDOWS) {
+    throw new Error(`[BACKLOG] Expected ${exports.TARGET_COMMIT_WINDOWS} tasks, generated ${exports.TASK_BACKLOG.length}.`);
+}
+const totalMinutes = exports.TASK_BACKLOG.reduce((sum, task) => sum + task.estimatedMinutes, 0);
+if (totalMinutes !== exports.TARGET_COMMIT_HOURS * 60) {
+    throw new Error(`[BACKLOG] Expected ${exports.TARGET_COMMIT_HOURS * 60} planned minutes, got ${totalMinutes}.`);
+}
+function getOrderedBacklog() {
+    return exports.TASK_BACKLOG.slice().sort((a, b) => a.sequence - b.sequence);
+}
+function getTasksByPriority() {
+    return exports.TASK_BACKLOG.slice().sort((a, b) => b.priority - a.priority || a.sequence - b.sequence);
+}
+function getTasksByType(type) {
+    return exports.TASK_BACKLOG
+        .filter((task) => (type ? task.type === type : true))
+        .sort((a, b) => a.sequence - b.sequence);
+}
+function getTasksByPhase(phaseId) {
+    return exports.TASK_BACKLOG
+        .filter((task) => (phaseId ? task.phaseId === phaseId : true))
+        .sort((a, b) => a.sequence - b.sequence);
+}
+function getTotalEstimatedTime() {
     const minutes = exports.TASK_BACKLOG.reduce((sum, task) => sum + task.estimatedMinutes, 0);
     return {
         minutes,
-        hours: Math.round(minutes / 60 * 10) / 10,
-        days: Math.round(minutes / 60 / 24 * 10) / 10
+        hours: minutes / 60,
+        days: minutes / 60 / 24,
+        commitWindows: exports.TASK_BACKLOG.length,
+        commitWindowMinutes: exports.COMMIT_WINDOW_MINUTES,
     };
-};
-exports.getTotalEstimatedTime = getTotalEstimatedTime;
-// Get tasks by priority
-const getTasksByPriority = () => {
-    return [...exports.TASK_BACKLOG].sort((a, b) => b.priority - a.priority);
-};
-exports.getTasksByPriority = getTasksByPriority;
-// Get tasks by type
-const getTasksByType = (type) => {
-    return exports.TASK_BACKLOG.filter(t => t.type === type);
-};
-exports.getTasksByType = getTasksByType;
-// Get unstarted task (for task sources)
-let completedTaskIds = new Set();
-const getNextBacklogTask = () => {
-    const sorted = (0, exports.getTasksByPriority)();
-    for (const task of sorted) {
-        if (!completedTaskIds.has(task.id)) {
-            return task;
-        }
-    }
-    // All tasks done - reset and start over
-    completedTaskIds = new Set();
-    return sorted[0] || null;
-};
-exports.getNextBacklogTask = getNextBacklogTask;
-const markBacklogTaskComplete = (taskId) => {
-    completedTaskIds.add(taskId);
-};
-exports.markBacklogTaskComplete = markBacklogTaskComplete;
-const getBacklogProgress = () => {
-    const completed = completedTaskIds.size;
+}
+function getNextBacklogTask() {
+    return getOrderedBacklog().find((task) => !COMPLETED_TASKS.has(task.id));
+}
+function markBacklogTaskComplete(taskId) {
+    COMPLETED_TASKS.add(taskId);
+}
+function getBacklogProgress() {
     const total = exports.TASK_BACKLOG.length;
+    const completed = COMPLETED_TASKS.size;
     return {
         completed,
         total,
-        percent: Math.round((completed / total) * 100)
+        percent: total === 0 ? 0 : Math.round((completed / total) * 100),
     };
-};
-exports.getBacklogProgress = getBacklogProgress;
-console.log(`[BACKLOG] Loaded ${exports.TASK_BACKLOG.length} tasks (${(0, exports.getTotalEstimatedTime)().hours} hours estimated)`);
+}
+console.log(`[BACKLOG] Loaded ${exports.TASK_BACKLOG.length} protocol microtasks ` +
+    `(${exports.TARGET_COMMIT_HOURS}h at ${exports.COMMIT_WINDOW_MINUTES}m windows) starting ${new Date(BACKLOG_ANCHOR_TIME).toISOString()}`);
 //# sourceMappingURL=TaskBacklog.js.map

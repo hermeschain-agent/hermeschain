@@ -1,3 +1,5 @@
+import { AgentConfig } from './config';
+import { ExecutionScope } from './types';
 export interface GitOperationResult {
     success: boolean;
     output: string;
@@ -5,6 +7,7 @@ export interface GitOperationResult {
     branch?: string;
     commit?: string;
     prUrl?: string;
+    files?: string[];
 }
 export interface BranchInfo {
     name: string;
@@ -26,15 +29,33 @@ export interface CommitInfo {
     author: string;
     date: string;
 }
+export interface GitCapabilityProbe {
+    git: 'ready' | 'unavailable';
+    push: 'ready' | 'unavailable';
+    reason?: string;
+}
 export declare class GitIntegration {
     private projectRoot;
     private mainBranch;
     private branchPrefix;
     private initialized;
+    private config;
     constructor(projectRoot?: string);
+    private hasGitRepo;
+    private matchesScope;
+    private getDefaultCommitScopes;
+    private isLikelyGibberish;
+    private inspectFilesForGibberish;
+    private getScopedStatusEntries;
+    configure(config: AgentConfig): void;
     private setupGitConfig;
     private deriveCommitMessage;
-    autoCommitAndPush(message: string, taskId?: string): Promise<GitOperationResult>;
+    autoCommitAndPush(message: string, taskId?: string, options?: {
+        scopes?: ExecutionScope[];
+        files?: string[];
+    }): Promise<GitOperationResult>;
+    getChangedFilesWithinScopes(scopes: ExecutionScope[]): string[];
+    probeCapabilities(): GitCapabilityProbe;
     private execGit;
     getCurrentBranch(): string;
     getBranches(): BranchInfo[];

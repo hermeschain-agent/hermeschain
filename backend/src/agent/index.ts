@@ -3,6 +3,7 @@ export { TaskGenerator } from './TaskGenerator';
 export type { Task } from './TaskGenerator';
 export { createAgentConfig, resolveRepoRoot } from './config';
 export { agentTaskStore } from './AgentTaskStore';
+export { agentRuntimeStore } from './AgentRuntimeStore';
 
 // Brain components
 export { agentMemory } from './AgentMemory';

@@ -207,6 +207,44 @@ class AgentMemorySystem {
     async recall(options = {}) {
         const { type, limit = 10, minImportance = 0, search } = options;
         let memories = Array.from(this.memoryCache.values());
+        if (search) {
+            try {
+                const params = [search, limit];
+                let query = `
+          SELECT *
+          FROM agent_memory
+          WHERE to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+        `;
+                if (type) {
+                    query += ` AND type = $${params.length + 1}`;
+                    params.push(type);
+                }
+                if (minImportance > 0) {
+                    query += ` AND importance >= $${params.length + 1}`;
+                    params.push(minImportance);
+                }
+                query += `
+          ORDER BY importance DESC, last_accessed_at DESC
+          LIMIT $2
+        `;
+                const result = await db_1.db.query(query, params);
+                if ((result.rows || []).length > 0) {
+                    memories = result.rows.map((row) => ({
+                        id: row.id,
+                        type: row.type,
+                        content: row.content,
+                        metadata: row.metadata || {},
+                        importance: row.importance,
+                        createdAt: new Date(row.created_at),
+                        lastAccessedAt: new Date(row.last_accessed_at),
+                        accessCount: row.access_count,
+                    }));
+                }
+            }
+            catch {
+                // Fallback to cache search when Postgres FTS is unavailable.
+            }
+        }
         // Filter by type
         if (type) {
             memories = memories.filter(m => m.type === type);
@@ -246,9 +284,9 @@ class AgentMemorySystem {
         return contextParts.join('\n\n');
     }
     // Record a completed task
-    async recordTaskCompletion(taskTitle, taskType, output, success) {
+    async recordTaskCompletion(taskTitle, taskType, output, success, metadata = {}) {
         // Remember the task
-        await this.remember('task', `Completed: ${taskTitle}`, { type: taskType, success, outputLength: output.length }, success ? 0.6 : 0.8 // Failed tasks are more important to remember
+        await this.remember('task', `Completed: ${taskTitle}`, { type: taskType, success, outputLength: output.length, ...metadata }, success ? 0.6 : 0.8 // Failed tasks are more important to remember
         );
         // Update working context
         this.workingContext.recentTasks.unshift(taskTitle);
@@ -258,7 +296,7 @@ class AgentMemorySystem {
         this.workingContext.tasksCompletedThisSession++;
         // Extract and remember any insights
         if (output.includes('FINDING') || output.includes('Issue') || output.includes('Bug')) {
-            await this.remember('insight', `Found issue while ${taskTitle}: ${output.substring(0, 200)}...`, { taskType, taskTitle }, 0.8);
+            await this.remember('insight', `Found issue while ${taskTitle}: ${output.substring(0, 200)}...`, { taskType, taskTitle, ...metadata }, 0.8);
         }
         await this.saveWorkingContext();
     }

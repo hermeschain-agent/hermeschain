@@ -1,11 +1,19 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.skillManager = exports.BROWSER_TOOLS = exports.browserAutomation = exports.ciMonitor = exports.taskSources = exports.gitIntegration = exports.AGENT_TOOLS = exports.agentExecutor = exports.agentBrain = exports.agentGoals = exports.chainObserver = exports.agentMemory = exports.TaskGenerator = exports.agentEvents = exports.agentWorker = void 0;
+exports.skillManager = exports.BROWSER_TOOLS = exports.browserAutomation = exports.ciMonitor = exports.taskSources = exports.gitIntegration = exports.AGENT_TOOLS = exports.agentExecutor = exports.agentGoals = exports.chainObserver = exports.agentMemory = exports.agentRuntimeStore = exports.agentTaskStore = exports.resolveRepoRoot = exports.createAgentConfig = exports.TaskGenerator = exports.agentEvents = exports.agentWorker = void 0;
+exports.configureAgentSubsystems = configureAgentSubsystems;
 var AgentWorker_1 = require("./AgentWorker");
 Object.defineProperty(exports, "agentWorker", { enumerable: true, get: function () { return AgentWorker_1.agentWorker; } });
 Object.defineProperty(exports, "agentEvents", { enumerable: true, get: function () { return AgentWorker_1.agentEvents; } });
 var TaskGenerator_1 = require("./TaskGenerator");
 Object.defineProperty(exports, "TaskGenerator", { enumerable: true, get: function () { return TaskGenerator_1.TaskGenerator; } });
+var config_1 = require("./config");
+Object.defineProperty(exports, "createAgentConfig", { enumerable: true, get: function () { return config_1.createAgentConfig; } });
+Object.defineProperty(exports, "resolveRepoRoot", { enumerable: true, get: function () { return config_1.resolveRepoRoot; } });
+var AgentTaskStore_1 = require("./AgentTaskStore");
+Object.defineProperty(exports, "agentTaskStore", { enumerable: true, get: function () { return AgentTaskStore_1.agentTaskStore; } });
+var AgentRuntimeStore_1 = require("./AgentRuntimeStore");
+Object.defineProperty(exports, "agentRuntimeStore", { enumerable: true, get: function () { return AgentRuntimeStore_1.agentRuntimeStore; } });
 // Brain components
 var AgentMemory_1 = require("./AgentMemory");
 Object.defineProperty(exports, "agentMemory", { enumerable: true, get: function () { return AgentMemory_1.agentMemory; } });
@@ -13,8 +21,6 @@ var ChainObserver_1 = require("./ChainObserver");
 Object.defineProperty(exports, "chainObserver", { enumerable: true, get: function () { return ChainObserver_1.chainObserver; } });
 var AgentGoals_1 = require("./AgentGoals");
 Object.defineProperty(exports, "agentGoals", { enumerable: true, get: function () { return AgentGoals_1.agentGoals; } });
-var AgentBrain_1 = require("./AgentBrain");
-Object.defineProperty(exports, "agentBrain", { enumerable: true, get: function () { return AgentBrain_1.agentBrain; } });
 var AgentExecutor_1 = require("./AgentExecutor");
 Object.defineProperty(exports, "agentExecutor", { enumerable: true, get: function () { return AgentExecutor_1.agentExecutor; } });
 Object.defineProperty(exports, "AGENT_TOOLS", { enumerable: true, get: function () { return AgentExecutor_1.AGENT_TOOLS; } });
@@ -29,4 +35,20 @@ Object.defineProperty(exports, "browserAutomation", { enumerable: true, get: fun
 Object.defineProperty(exports, "BROWSER_TOOLS", { enumerable: true, get: function () { return BrowserAutomation_1.BROWSER_TOOLS; } });
 var SkillManager_1 = require("./SkillManager");
 Object.defineProperty(exports, "skillManager", { enumerable: true, get: function () { return SkillManager_1.skillManager; } });
+const AgentWorker_2 = require("./AgentWorker");
+const AgentExecutor_2 = require("./AgentExecutor");
+const GitIntegration_2 = require("./GitIntegration");
+const TaskSources_2 = require("./TaskSources");
+const CIMonitor_2 = require("./CIMonitor");
+const BrowserAutomation_2 = require("./BrowserAutomation");
+const SkillManager_2 = require("./SkillManager");
+function configureAgentSubsystems(config) {
+    AgentExecutor_2.agentExecutor.configure(config);
+    GitIntegration_2.gitIntegration.configure(config);
+    TaskSources_2.taskSources.configure(config);
+    CIMonitor_2.ciMonitor.configure(config);
+    BrowserAutomation_2.browserAutomation.configure(config);
+    SkillManager_2.skillManager.configure(config);
+    AgentWorker_2.agentWorker.configure(config);
+}
 //# sourceMappingURL=index.js.map

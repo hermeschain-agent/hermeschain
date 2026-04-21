@@ -1,3 +1,4 @@
+import { AgentConfig } from './config';
 export interface BrowserResult {
     success: boolean;
     data?: any;
@@ -133,7 +134,9 @@ export declare class BrowserAutomation {
     private projectRoot;
     private screenshotDir;
     private userAgent;
+    private config;
     constructor(projectRoot?: string);
+    configure(config: AgentConfig): void;
     browseUrl(url: string, extractText?: boolean): Promise<BrowserResult>;
     screenshotUrl(url: string, filename?: string, fullPage?: boolean): Promise<BrowserResult>;
     checkDeployment(url: string, expectedText?: string): Promise<BrowserResult>;

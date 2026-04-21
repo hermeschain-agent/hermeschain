@@ -8,7 +8,11 @@ class ChainObserverSystem {
         this.blockTimes = [];
         this.transactionCounts = [];
         this.isRunning = false;
+        this.analysisInterval = null;
         this.eventBus = EventBus_1.EventBus.getInstance();
+        this.boundOnBlockProduced = this.onBlockProduced.bind(this);
+        this.boundOnTransactionAdded = this.onTransactionAdded.bind(this);
+        this.boundOnConsensusFailed = this.onConsensusFailed.bind(this);
         this.state = {
             blockHeight: 0,
             lastBlockTime: new Date(),
@@ -28,37 +32,50 @@ class ChainObserverSystem {
         this.isRunning = true;
         console.log('[OBSERVER] Starting chain observer...');
         // Subscribe to chain events
-        this.eventBus.on('block_produced', this.onBlockProduced.bind(this));
-        this.eventBus.on('transaction_added', this.onTransactionAdded.bind(this));
-        this.eventBus.on('consensus_failed', this.onConsensusFailed.bind(this));
+        this.eventBus.on('block_produced', this.boundOnBlockProduced);
+        this.eventBus.on('transaction_added', this.boundOnTransactionAdded);
+        this.eventBus.on('consensus_failed', this.boundOnConsensusFailed);
         // Start periodic analysis
         this.startPeriodicAnalysis();
         console.log('[OBSERVER] Chain observer started');
     }
     stop() {
         this.isRunning = false;
-        this.eventBus.off('block_produced', this.onBlockProduced.bind(this));
-        this.eventBus.off('transaction_added', this.onTransactionAdded.bind(this));
-        this.eventBus.off('consensus_failed', this.onConsensusFailed.bind(this));
+        this.eventBus.off('block_produced', this.boundOnBlockProduced);
+        this.eventBus.off('transaction_added', this.boundOnTransactionAdded);
+        this.eventBus.off('consensus_failed', this.boundOnConsensusFailed);
+        if (this.analysisInterval) {
+            clearInterval(this.analysisInterval);
+            this.analysisInterval = null;
+        }
     }
     getState() {
         return { ...this.state };
     }
-    async onBlockProduced(block) {
+    async onBlockProduced(payload) {
+        const block = payload?.block?.header ? payload.block : payload;
         const now = Date.now();
         const blockTime = (now - this.state.lastBlockTime.getTime()) / 1000;
         this.blockTimes.push(blockTime);
         if (this.blockTimes.length > 100)
             this.blockTimes.shift();
-        const txCount = block?.transactions?.length || 0;
+        const txCount = payload?.transactionCount ?? block?.transactions?.length ?? 0;
         this.transactionCounts.push(txCount);
         if (this.transactionCounts.length > 100)
             this.transactionCounts.shift();
         // Update state
-        this.state.blockHeight = block?.header?.number || this.state.blockHeight + 1;
-        this.state.lastBlockTime = new Date();
+        this.state.blockHeight =
+            block?.header?.height ??
+                block?.header?.number ??
+                this.state.blockHeight + 1;
+        this.state.lastBlockTime = block?.header?.timestamp
+            ? new Date(block.header.timestamp)
+            : new Date();
         this.state.averageBlockTime = this.blockTimes.reduce((a, b) => a + b, 0) / this.blockTimes.length;
-        this.state.recentTPS = this.transactionCounts.reduce((a, b) => a + b, 0) / this.transactionCounts.length / 10;
+        this.state.recentTPS =
+            this.transactionCounts.reduce((a, b) => a + b, 0) /
+                this.transactionCounts.length /
+                Math.max(this.state.averageBlockTime || 10, 1);
         // Check for issues
         await this.checkBlockTimeIssue(blockTime);
         await this.checkEmptyBlockPattern();
@@ -127,8 +144,11 @@ class ChainObserverSystem {
         }
     }
     startPeriodicAnalysis() {
+        if (this.analysisInterval) {
+            clearInterval(this.analysisInterval);
+        }
         // Run analysis every 30 seconds
-        setInterval(async () => {
+        this.analysisInterval = setInterval(async () => {
             if (!this.isRunning)
                 return;
             await this.analyzeChainHealth();

@@ -50,13 +50,20 @@ export function resolveRepoRoot(startDir: string = process.cwd()): string | null
 
 export function createAgentConfig(startDir: string = process.cwd()): AgentConfig {
   const autorunEnabled = process.env.AGENT_AUTORUN !== 'false';
+  const role: 'web' | 'worker' =
+    process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web';
   const repoRoot = resolveRepoRoot(startDir);
+  const workspaceReady = !!repoRoot;
   const repoRootHealth = repoRoot ? 'ready' : 'missing';
   const projectPaths = {
     backend: repoRoot ? path.join(repoRoot, 'backend') : null,
     frontend: repoRoot ? path.join(repoRoot, 'frontend') : null,
   };
   const modelConfigured = isConfigured();
+  const gitAvailable = repoRoot
+    ? fs.existsSync(path.join(repoRoot, '.git'))
+    : false;
+  const pushAvailable = gitAvailable && process.env.AUTO_GIT_PUSH === 'true';
   const requestedMode: AgentMode =
     process.env.AGENT_MODE === 'demo'
       ? 'demo'
@@ -75,6 +82,12 @@ export function createAgentConfig(startDir: string = process.cwd()): AgentConfig
     startupIssues.push('OPENROUTER_API_KEY is missing, so real mode cannot call the model.');
   }
 
+  if (workspaceReady && !gitAvailable) {
+    startupIssues.push(
+      'Git metadata is unavailable. Hermes can still reason, but commit/push will be skipped.'
+    );
+  }
+
   const canWriteScopes = repoRoot ? getDefaultWriteScopes() : [];
 
   let effectiveMode: AgentEffectiveMode = 'disabled';
@@ -89,6 +102,10 @@ export function createAgentConfig(startDir: string = process.cwd()): AgentConfig
   }
 
   return {
+    role,
+    workspaceReady,
+    gitAvailable,
+    pushAvailable,
     autorunEnabled,
     requestedMode,
     effectiveMode,

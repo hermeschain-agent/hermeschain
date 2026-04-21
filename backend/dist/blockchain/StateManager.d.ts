@@ -23,6 +23,8 @@ export declare class StateManager {
     initialize(): Promise<void>;
     private initializeGenesisState;
     getBalance(address: string): bigint;
+    refreshAccount(address: string): Promise<void>;
+    refreshAllAccounts(): Promise<void>;
     getNonce(address: string): number;
     getAccount(address: string): AccountState | undefined;
     getStateRoot(): string;
