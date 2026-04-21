@@ -7,9 +7,7 @@ import {
   frameDivider,
   motdBlock,
   progressBar,
-  spacerRow,
   statusLine,
-  wall,
 } from './asciiScreen';
 import {
   autocomplete,
@@ -100,7 +98,7 @@ const INITIAL_STATE: AgentState = {
   genesisTimestamp: 0,
 };
 
-const MOTD_STORAGE_KEY = 'hermeschain-motd-seen';
+const STREAM_STORAGE_KEY = 'hermeschain-terminal-stream';
 const MAX_STREAM_LINES = 400;
 const COLS = DEFAULT_COLS;
 const TERMINAL_VERSION = 'v0.4.2';
@@ -214,14 +212,22 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
 }) => {
   const [state, setState] = useState<AgentState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
-  const [displayedText, setDisplayedText] = useState('');
+  const initialBuffer = (() => {
+    if (variant !== 'rail') return '';
+    try {
+      return window.sessionStorage.getItem(STREAM_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  })();
+  const [displayedText, setDisplayedText] = useState(initialBuffer);
   const [command, setCommand] = useState('');
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const historyRef = useRef<string[]>([]);
-  const textBufferRef = useRef('');
-  const displayIndexRef = useRef(0);
+  const textBufferRef = useRef(initialBuffer);
+  const displayIndexRef = useRef(initialBuffer.length);
   const typeTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const lastEventAtRef = useRef<number>(Date.now());
   const outputRef = useRef<HTMLDivElement>(null);
@@ -261,6 +267,14 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
           trimmed.length,
         );
       }
+      try {
+        window.sessionStorage.setItem(
+          STREAM_STORAGE_KEY,
+          textBufferRef.current,
+        );
+      } catch {
+        /* noop */
+      }
       if (!typeTimerRef.current) {
         typeTimerRef.current = setTimeout(typewriterTick, 10);
       }
@@ -272,6 +286,11 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
     textBufferRef.current = '';
     displayIndexRef.current = 0;
     setDisplayedText('');
+    try {
+      window.sessionStorage.removeItem(STREAM_STORAGE_KEY);
+    } catch {
+      /* noop */
+    }
     if (typeTimerRef.current) {
       clearTimeout(typeTimerRef.current);
       typeTimerRef.current = undefined;
@@ -309,39 +328,9 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
     })();
   }, []);
 
-  // ── MOTD on first session load ─────────────────────────────
-  useEffect(() => {
-    if (variant !== 'rail') return;
-    let shown = false;
-    try {
-      shown = window.sessionStorage.getItem(MOTD_STORAGE_KEY) === '1';
-    } catch {
-      /* noop */
-    }
-    if (shown) return;
-
-    // Small delay so the MOTD renders after the first status fetch.
-    const timer = setTimeout(() => {
-      const motdText = motdBlock(
-        {
-          blockHeight: state.blockHeight,
-          uptime: formatUptime(state.genesisTimestamp, Date.now()),
-          lastCommitSha: recentCommits[0]?.shortHash,
-          lastCommitMessage: recentCommits[0]?.message,
-          version: TERMINAL_VERSION,
-        },
-        COLS,
-      ).join('\n');
-      appendText(motdText + '\n' + frameDivider(COLS) + '\n');
-      try {
-        window.sessionStorage.setItem(MOTD_STORAGE_KEY, '1');
-      } catch {
-        /* noop */
-      }
-    }, 400);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant]);
+  // MOTD is rendered as a pinned banner (see `motdRows` below), not
+  // injected into the scrolling buffer — so refreshes don't reset the
+  // coding flow and the logo always stays visible at the top.
 
   // ── Live agent feed ────────────────────────────────────────
   useEffect(() => {
@@ -372,7 +361,20 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type !== 'ping' && payload.type !== 'heartbeat') {
+          // Only yield the synthetic feed for events that represent real
+          // agent work. Passive telemetry (init/status/ping/heartbeat)
+          // fires on a 5s pulse and would otherwise starve the stream.
+          const REAL_WORK_EVENTS = new Set([
+            'task_start',
+            'text',
+            'tool_start',
+            'tool_result',
+            'verification_start',
+            'verification_result',
+            'task_complete',
+            'error',
+          ]);
+          if (REAL_WORK_EVENTS.has(payload.type)) {
             pauseFeed();
             lastEventAtRef.current = Date.now();
           }
@@ -484,15 +486,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
   const heartbeat =
     Math.floor(nowMs / 1000) % 2 === 0 ? '♥' : '♡';
 
-  const topLine = frameTop(
-    'tty://hermes-agent',
-    [
-      `mode:${state.mode}`,
-      `viewers:${state.viewerCount}`,
-      `stream:${connected ? 'open' : 'closed'}`,
-    ],
-    COLS,
-  );
+  const topLine = frameTop('tty://hermes-agent', [], COLS);
   const statusRow = statusLine(
     {
       stage,
@@ -506,11 +500,26 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
   );
   const bottomLine = frameDivider(COLS, { kind: 'bottom' });
 
-  // ── Render stream rows (wrap each line in side walls) ──────
-  const streamRows: string[] = useMemo(() => {
-    const lines = toLines(displayedText);
-    return lines.map((line) => wall('  ' + line, COLS));
-  }, [displayedText]);
+  // ── Pinned MOTD (always shown at top, wrapped in walls) ────
+  const motdRows: string[] = useMemo(
+    () =>
+      motdBlock(
+        {
+          uptime: formatUptime(state.genesisTimestamp, nowMs),
+          lastCommitSha: recentCommits[0]?.shortHash,
+          lastCommitMessage: recentCommits[0]?.message,
+          version: TERMINAL_VERSION,
+        },
+        COLS,
+      ),
+    [state.genesisTimestamp, nowMs, recentCommits],
+  );
+  const motdDivider = frameDivider(COLS, { label: 'live-feed' });
+
+  // ── Render stream rows (raw, no wall truncation) ──────────
+  const streamRows: string[] = useMemo(() => toLines(displayedText), [
+    displayedText,
+  ]);
 
   // ── Prompt execution ──────────────────────────────────────
   const runCommand = useCallback(
@@ -605,9 +614,22 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
         {topLine}
       </pre>
 
+      <div className="ascii-screen__motd">
+        {motdRows.map((row, i) => (
+          <pre key={`motd-${i}`} className="ascii-screen__row ascii-screen__row--motd">
+            {row}
+          </pre>
+        ))}
+        <pre className="ascii-screen__row ascii-screen__row--frame">
+          {motdDivider}
+        </pre>
+      </div>
+
       <div ref={outputRef} className="ascii-screen__stream">
         {streamRows.length === 0 ? (
-          <pre className="ascii-screen__row">{wall('', COLS)}</pre>
+          <pre className="ascii-screen__row ascii-screen__row--dim">
+            {'waiting for agent feed...'}
+          </pre>
         ) : (
           streamRows.map((row, index) => (
             <pre key={index} className="ascii-screen__row">
@@ -615,9 +637,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
             </pre>
           ))
         )}
-        <pre className="ascii-screen__row ascii-screen__row--caret">
-          {wall('  ', COLS)}
-        </pre>
+        <pre className="ascii-screen__row ascii-screen__row--caret" />
       </div>
 
       <pre className="ascii-screen__row ascii-screen__row--frame">
@@ -626,7 +646,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
 
       <pre className="ascii-screen__row ascii-screen__row--prompt">
         <span className="ascii-screen__prompt-prefix">
-          {'│ hermes@hermeschain:~$ '}
+          {'hermes@hermeschain:~$ '}
         </span>
         <input
           ref={inputRef}
@@ -640,9 +660,6 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
         />
         <span className="ascii-screen__prompt-cursor" aria-hidden="true">
           █
-        </span>
-        <span className="ascii-screen__prompt-suffix">
-          {' '.repeat(Math.max(0, COLS - 27 - command.length - 2)) + '│'}
         </span>
       </pre>
 

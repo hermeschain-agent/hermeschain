@@ -2022,11 +2022,11 @@ button { font-family: inherit; cursor: pointer; }
  */
 
 :root {
-  --ascii-bg:     #01140a;
-  --ascii-fg:     #70ffad;
-  --ascii-dim:    #3a9668;
-  --ascii-accent: #9bffd4;
-  --ascii-warn:   #ffc872;
+  --ascii-bg:     #110a02;
+  --ascii-fg:     #ffcf7a;
+  --ascii-dim:    #a87a38;
+  --ascii-accent: #ffe6a8;
+  --ascii-warn:   #ffb44a;
   --ascii-error:  #ff7a7a;
 }
 
@@ -2058,7 +2058,7 @@ button { font-family: inherit; cursor: pointer; }
     repeating-linear-gradient(
       0deg,
       transparent 0 3px,
-      rgba(112, 255, 173, 0.045) 3px 4px
+      rgba(255, 200, 114, 0.05) 3px 4px
     );
   opacity: 0.55;
 }
@@ -2092,7 +2092,18 @@ button { font-family: inherit; cursor: pointer; }
   white-space: pre;
   position: relative;
   z-index: 1;
-  text-shadow: 0 0 4px rgba(112, 255, 173, 0.28);
+  text-shadow: 0 0 4px rgba(255, 200, 114, 0.28);
+}
+
+.ascii-screen__motd {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+.ascii-screen__row--motd {
+  color: var(--ascii-accent);
+  text-shadow: 0 0 6px rgba(255, 220, 150, 0.35);
 }
 
 .ascii-screen__row--frame {
@@ -2105,14 +2116,14 @@ button { font-family: inherit; cursor: pointer; }
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(112, 255, 173, 0.25) transparent;
+  scrollbar-color: rgba(255, 200, 114, 0.25) transparent;
   position: relative;
   z-index: 1;
 }
 
 .ascii-screen__stream::-webkit-scrollbar { width: 6px; }
 .ascii-screen__stream::-webkit-scrollbar-thumb {
-  background: rgba(112, 255, 173, 0.25);
+  background: rgba(255, 200, 114, 0.25);
 }
 
 .ascii-screen__row--caret::after {

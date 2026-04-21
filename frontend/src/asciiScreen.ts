@@ -77,7 +77,6 @@ export function spacerRow(cols: number): string {
  * fits inside the frame interior (cols - 2).
  */
 export function motdBlock(info: {
-  blockHeight: number;
   uptime: string;
   lastCommitSha?: string;
   lastCommitMessage?: string;
@@ -96,7 +95,6 @@ export function motdBlock(info: {
     '╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝  ' + info.version,
   ];
 
-  const blockHeightStr = info.blockHeight.toLocaleString().padStart(11, '0');
   const login = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const shortSha = (info.lastCommitSha || 'pending').slice(0, 7);
   const commitMsg = (info.lastCommitMessage || 'awaiting first autonomous commit').slice(0, interior - 24);
@@ -107,7 +105,6 @@ export function motdBlock(info: {
   }
   rows.push(blank);
   rows.push(line(`Last login: ${login} UTC  from hermeschain.xyz`));
-  rows.push(line(`Block height:  ${blockHeightStr}`));
   rows.push(line(`Agent uptime:  ${info.uptime}`));
   rows.push(line(`Last commit:   ${shortSha} ${commitMsg}`));
   rows.push(blank);

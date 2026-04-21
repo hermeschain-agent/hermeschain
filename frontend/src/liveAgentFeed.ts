@@ -444,7 +444,7 @@ test('CIMonitor.shouldSkip honors cooldown window', () => {
 const MIN_EVENT_DELAY = 380;
 const MAX_EVENT_DELAY = 1600;
 const INTER_RUN_DELAY = 3500;
-const YIELD_WINDOW_MS = 30_000; // how long to stay quiet after a real event
+const YIELD_WINDOW_MS = 8_000; // how long to stay quiet after a real event
 
 function randomDelay(min: number, max: number): number {
   return Math.floor(min + Math.random() * (max - min));
@@ -531,6 +531,7 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
   };
 
   const runWorkstream = async (workstream: AgentWorkstream): Promise<void> => {
+    // Don't wipe: keep scrollback so refreshes continue the flow.
     callbacks.resetOutput();
     callbacks.patchState((prev: AgentFeedState) => ({
       ...prev,
@@ -598,17 +599,30 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
             shouldStop,
           );
           break;
-        case 'file':
+        case 'file': {
           callbacks.patchState((prev: AgentFeedState) => ({
             ...prev,
             runStatus: 'executing',
           }));
+          const code = shortOutput(event.code, 1600).replace(/\n+$/, '');
+          const codeLines = code.split('\n');
+          const header =
+            `\n─── ${event.path} ────────────────────────────────\n`;
+          const numbered = codeLines
+            .map((line, idx) => {
+              const n = (idx + 1).toString().padStart(3, ' ');
+              return `${n} │ ${line}`;
+            })
+            .join('\n');
+          const footer =
+            `\n──────────────────────────────────────────────\n`;
           await typeOut(
             callbacks,
-            `\n[FILE] ${event.path}\n\`\`\`${event.language}\n${shortOutput(event.code, 1600)}\n\`\`\`\n`,
+            header + numbered + footer,
             shouldStop,
           );
           break;
+        }
         case 'verify':
           callbacks.patchState((prev: AgentFeedState) => ({
             ...prev,
