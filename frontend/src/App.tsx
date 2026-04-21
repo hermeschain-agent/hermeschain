@@ -941,7 +941,11 @@ export default function App() {
               </p>
             </div>
             <div className="terminal-preview-frame">
-              <AgentTerminal variant="embedded" />
+              <AgentTerminal
+                variant="embedded"
+                handleTab={handleTab}
+                recentCommits={gitStatus?.recentCommits || []}
+              />
             </div>
           </div>
         </div>
@@ -1807,7 +1811,11 @@ export default function App() {
                 <span className="section-label">System console</span>
                 <p>The persistent live rail for Hermes work, status, and output.</p>
               </div>
-              <AgentTerminal variant="rail" />
+              <AgentTerminal
+                variant="rail"
+                handleTab={handleTab}
+                recentCommits={gitStatus?.recentCommits || []}
+              />
             </div>
           </aside>
         ) : null}

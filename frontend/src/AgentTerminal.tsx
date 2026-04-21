@@ -1,6 +1,21 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, apiUrl } from './api';
 import { startLiveAgentFeed } from './liveAgentFeed';
+import {
+  DEFAULT_COLS,
+  frameTop,
+  frameDivider,
+  motdBlock,
+  progressBar,
+  spacerRow,
+  statusLine,
+  wall,
+} from './asciiScreen';
+import {
+  autocomplete,
+  executeCommand,
+  TerminalCtx,
+} from './terminalCommands';
 
 interface Task {
   id: string;
@@ -55,26 +70,15 @@ interface AgentState {
   lastFailure: string | null;
   repoRootHealth: 'ready' | 'missing';
   startupIssues: string[];
+  blockHeight: number;
+  genesisTimestamp: number;
 }
 
 interface AgentTerminalProps {
   variant?: 'rail' | 'embedded';
+  handleTab?: (tab: string) => void;
+  recentCommits?: Array<{ shortHash: string; message: string; date: string }>;
 }
-
-interface StreamRowSegment {
-  kind: 'row';
-  line: string;
-}
-
-interface StreamCodeSegment {
-  kind: 'code';
-  path: string | null;
-  language: string;
-  code: string;
-  complete: boolean;
-}
-
-type StreamSegment = StreamRowSegment | StreamCodeSegment;
 
 const INITIAL_STATE: AgentState = {
   isWorking: false,
@@ -92,95 +96,14 @@ const INITIAL_STATE: AgentState = {
   lastFailure: null,
   repoRootHealth: 'missing',
   startupIssues: [],
+  blockHeight: 0,
+  genesisTimestamp: 0,
 };
 
-function trimTaskTitle(title: string): string {
-  return title.replace(
-    /^(Building|Auditing|Analyzing|Proposing|Documenting|Writing):\s*/i,
-    ''
-  );
-}
-
-function renderInlineMarkup(line: string): React.ReactNode {
-  const parts = line.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
-
-  return parts.map((part, index) => {
-    if (!part) return null;
-
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return (
-        <code key={index} className="agent-row__code">
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return (
-        <strong key={index} className="agent-row__accent">
-          {part.slice(2, -2)}
-        </strong>
-      );
-    }
-
-    return <span key={index}>{part}</span>;
-  });
-}
-
-function parseStreamSegments(text: string): StreamSegment[] {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const segments: StreamSegment[] = [];
-  let pendingFilePath: string | null = null;
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-
-    if (line.startsWith('[FILE] ')) {
-      pendingFilePath = line.replace('[FILE] ', '').trim();
-      continue;
-    }
-
-    if (line.startsWith('```')) {
-      const language = line.slice(3).trim();
-      const codeLines: string[] = [];
-      let complete = false;
-
-      index += 1;
-      while (index < lines.length) {
-        if (lines[index].startsWith('```')) {
-          complete = true;
-          break;
-        }
-
-        codeLines.push(lines[index]);
-        index += 1;
-      }
-
-      segments.push({
-        kind: 'code',
-        path: pendingFilePath,
-        language,
-        code: codeLines.join('\n'),
-        complete,
-      });
-      pendingFilePath = null;
-      continue;
-    }
-
-    if (pendingFilePath && line.trim()) {
-      segments.push({ kind: 'row', line: `$ file ${pendingFilePath}` });
-      pendingFilePath = null;
-    }
-
-    segments.push({ kind: 'row', line });
-  }
-
-  if (pendingFilePath) {
-    segments.push({ kind: 'row', line: `$ file ${pendingFilePath}` });
-  }
-
-  return segments;
-}
+const MOTD_STORAGE_KEY = 'hermeschain-motd-seen';
+const MAX_STREAM_LINES = 400;
+const COLS = DEFAULT_COLS;
+const TERMINAL_VERSION = 'v0.4.2';
 
 function applyStatusPayload(payload: any, previous: AgentState): AgentState {
   const completedTasks =
@@ -232,120 +155,203 @@ function applyStatusPayload(payload: any, previous: AgentState): AgentState {
     startupIssues: Array.isArray(payload?.startupIssues)
       ? payload.startupIssues
       : previous.startupIssues,
+    blockHeight:
+      typeof payload?.blockHeight === 'number'
+        ? payload.blockHeight
+        : previous.blockHeight,
+    genesisTimestamp:
+      typeof payload?.genesisTimestamp === 'number'
+        ? payload.genesisTimestamp
+        : previous.genesisTimestamp,
   };
 }
 
-function summarizeStatus(state: AgentState, connected: boolean): string {
+function deriveStageLabel(state: AgentState, connected: boolean): string {
   if (!connected) return 'OFFLINE';
-  if (state.mode === 'disabled') return 'DISABLED';
-  if (state.mode === 'demo') return state.isWorking ? 'DEMO LIVE' : 'DEMO IDLE';
-  if (state.runStatus === 'blocked') return 'BLOCKED';
-  if (state.verificationStatus === 'failed') return 'VERIFY FAIL';
-  if (state.isWorking) return state.runStatus.replace(/_/g, ' ').toUpperCase();
+  if (state.mode === 'disabled') return 'HALTED';
+  if (state.runStatus === 'verifying') return 'VERIFY';
+  if (state.runStatus === 'executing') return 'EXEC';
+  if (state.runStatus === 'analyzing') return 'ANALYZE';
+  if (state.isWorking) return 'RUN';
   return 'IDLE';
 }
 
-function buildIdleMessage(state: AgentState, connected: boolean): string {
-  if (!connected) return '$ connecting_to_agent_stream...';
-  if (state.mode === 'disabled') {
-    return `$ agent_disabled :: ${state.startupIssues[0] || 'autorun is off'}`;
-  }
-  if (state.mode === 'demo') {
-    return '$ demo_stream_ready :: no repository writes allowed';
-  }
-  if (state.blockedReason) {
-    return `$ task_blocked :: ${state.blockedReason}`;
-  }
-  if (state.lastFailure) {
-    return `$ verification_failed :: ${state.lastFailure}`;
-  }
-  return '$ waiting_for_scoped_task...';
+function formatUptime(genesis: number, nowMs: number): string {
+  if (!genesis) return '0m';
+  const delta = Math.max(0, Math.floor((nowMs - genesis) / 1000));
+  const d = Math.floor(delta / 86400);
+  const h = Math.floor((delta % 86400) / 3600);
+  const m = Math.floor((delta % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
-const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
+function formatIdle(idleMs: number): string {
+  if (idleMs < 3000) return `last: ${(idleMs / 1000).toFixed(1)}s`;
+  const s = Math.floor(idleMs / 1000);
+  if (s < 60) return `idle ${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return `idle ${m}m ${rem}s`;
+  const h = Math.floor(m / 60);
+  return `idle ${h}h ${m % 60}m`;
+}
+
+/**
+ * Split raw text from the event feed into individual lines, preserving
+ * empty lines. Each line becomes a row in the stream.
+ */
+function toLines(text: string): string[] {
+  if (!text) return [];
+  return text.replace(/\r\n/g, '\n').split('\n');
+}
+
+const AgentTerminal: React.FC<AgentTerminalProps> = ({
+  variant = 'rail',
+  handleTab,
+  recentCommits = [],
+}) => {
   const [state, setState] = useState<AgentState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
   const [displayedText, setDisplayedText] = useState('');
-  const outputRef = useRef<HTMLDivElement>(null);
+  const [command, setCommand] = useState('');
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const historyRef = useRef<string[]>([]);
   const textBufferRef = useRef('');
   const displayIndexRef = useRef(0);
-  const animationFrameRef = useRef<number>();
+  const typeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const lastEventAtRef = useRef<number>(Date.now());
+  const outputRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const feedHandleRef = useRef<{ stop: () => void; pause: () => void } | null>(null);
-  // Yield the live agent feed whenever a real SSE chunk arrives.
-  const pauseFeed = useCallback(() => {
-    feedHandleRef.current?.pause();
-  }, []);
 
-  const typewriterEffect = useCallback(() => {
+  // Variable-speed typewriter with per-char jitter and punctuation pauses.
+  const typewriterTick = useCallback(() => {
     const buffer = textBufferRef.current;
-    const currentIndex = displayIndexRef.current;
-
-    if (currentIndex < buffer.length) {
-      const charsToAdd = Math.min(3, buffer.length - currentIndex);
-      displayIndexRef.current = currentIndex + charsToAdd;
-      setDisplayedText(buffer.slice(0, displayIndexRef.current));
-
-      animationFrameRef.current = requestAnimationFrame(typewriterEffect);
-    } else {
-      animationFrameRef.current = undefined;
+    const idx = displayIndexRef.current;
+    if (idx >= buffer.length) {
+      typeTimerRef.current = undefined;
+      return;
     }
+    const ch = buffer[idx];
+    displayIndexRef.current = idx + 1;
+    setDisplayedText(buffer.slice(0, idx + 1));
+
+    let delay = 12 + Math.random() * 28;
+    if (ch === '.' || ch === '!' || ch === '?') delay = 80 + Math.random() * 80;
+    if (ch === '\n') delay = 40 + Math.random() * 40;
+    if (ch === ' ') delay = 6 + Math.random() * 18;
+    typeTimerRef.current = setTimeout(typewriterTick, delay);
   }, []);
 
   const appendText = useCallback(
     (text: string) => {
       textBufferRef.current += text;
-      if (!animationFrameRef.current) {
-        animationFrameRef.current = requestAnimationFrame(typewriterEffect);
+      lastEventAtRef.current = Date.now();
+      // Cap total buffer so it doesn't grow unbounded.
+      const lines = textBufferRef.current.split('\n');
+      if (lines.length > MAX_STREAM_LINES) {
+        const trimmed = lines.slice(lines.length - MAX_STREAM_LINES).join('\n');
+        textBufferRef.current = trimmed;
+        displayIndexRef.current = Math.min(
+          displayIndexRef.current,
+          trimmed.length,
+        );
+      }
+      if (!typeTimerRef.current) {
+        typeTimerRef.current = setTimeout(typewriterTick, 10);
       }
     },
-    [typewriterEffect]
+    [typewriterTick],
   );
 
   const resetOutput = useCallback(() => {
     textBufferRef.current = '';
     displayIndexRef.current = 0;
     setDisplayedText('');
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = undefined;
+    if (typeTimerRef.current) {
+      clearTimeout(typeTimerRef.current);
+      typeTimerRef.current = undefined;
     }
   }, []);
 
+  const pauseFeed = useCallback(() => {
+    feedHandleRef.current?.pause();
+  }, []);
+
+  // ── Clock tick ─────────────────────────────────────────────
+  useEffect(() => {
+    const tick = window.setInterval(() => setNowMs(Date.now()), 500);
+    return () => window.clearInterval(tick);
+  }, []);
+
+  // ── Scroll stream to bottom whenever new chars land ────────
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
   }, [displayedText]);
 
+  // ── Initial status fetch ───────────────────────────────────
   useEffect(() => {
-    const loadPersistedTasks = async () => {
+    (async () => {
       try {
-        const response = await fetch(apiUrl('/api/agent/status'));
-        if (!response.ok) return;
-
-        const data = await response.json();
+        const res = await fetch(apiUrl('/api/agent/status'));
+        if (!res.ok) return;
+        const data = await res.json();
         setState((prev) => applyStatusPayload(data, prev));
-
-        if (data.currentOutput) {
-          textBufferRef.current = data.currentOutput;
-          displayIndexRef.current = data.currentOutput.length;
-          setDisplayedText(data.currentOutput);
-        }
-      } catch (error) {
-        console.error('[AgentTerminal] Failed to load persisted tasks:', error);
+      } catch {
+        /* noop */
       }
-    };
-
-    void loadPersistedTasks();
+    })();
   }, []);
 
-  // Surface Hermes's live workstream into the hero terminal. Yields to any
-  // real SSE chunk for the duration of that task.
+  // ── MOTD on first session load ─────────────────────────────
+  useEffect(() => {
+    if (variant !== 'rail') return;
+    let shown = false;
+    try {
+      shown = window.sessionStorage.getItem(MOTD_STORAGE_KEY) === '1';
+    } catch {
+      /* noop */
+    }
+    if (shown) return;
+
+    // Small delay so the MOTD renders after the first status fetch.
+    const timer = setTimeout(() => {
+      const motdText = motdBlock(
+        {
+          blockHeight: state.blockHeight,
+          uptime: formatUptime(state.genesisTimestamp, Date.now()),
+          lastCommitSha: recentCommits[0]?.shortHash,
+          lastCommitMessage: recentCommits[0]?.message,
+          version: TERMINAL_VERSION,
+        },
+        COLS,
+      ).join('\n');
+      appendText(motdText + '\n' + frameDivider(COLS) + '\n');
+      try {
+        window.sessionStorage.setItem(MOTD_STORAGE_KEY, '1');
+      } catch {
+        /* noop */
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant]);
+
+  // ── Live agent feed ────────────────────────────────────────
   useEffect(() => {
     if (variant !== 'rail') return;
     const handle = startLiveAgentFeed({
       appendText,
-      resetOutput,
+      resetOutput: () => {
+        // do NOT wipe — we want continuous scrollback. Just mark new run.
+        appendText('\n' + frameDivider(COLS, { label: 'next-task' }) + '\n');
+      },
       patchState: (updater) => setState((prev) => updater(prev) as AgentState),
     });
     feedHandleRef.current = handle;
@@ -353,55 +359,40 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
       handle.stop();
       feedHandleRef.current = null;
     };
-  }, [variant, appendText, resetOutput]);
+  }, [variant, appendText]);
 
+  // ── SSE subscription (real worker events) ──────────────────
   useEffect(() => {
     let eventSource: EventSource | null = null;
     let reconnectTimeout: number | undefined;
 
     const connect = () => {
       eventSource = new EventSource(`${API_BASE}/api/agent/stream`);
-
-      eventSource.onopen = () => {
-        setConnected(true);
-      };
-
+      eventSource.onopen = () => setConnected(true);
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-
-          // Live worker stream takes priority — pause the hero feed.
           if (payload.type !== 'ping' && payload.type !== 'heartbeat') {
             pauseFeed();
+            lastEventAtRef.current = Date.now();
           }
-
           switch (payload.type) {
             case 'init':
               setState((prev) => applyStatusPayload(payload.data, prev));
-              if (payload.data?.currentOutput) {
-                textBufferRef.current = payload.data.currentOutput;
-                displayIndexRef.current = payload.data.currentOutput.length;
-                setDisplayedText(payload.data.currentOutput);
-              }
               break;
-
             case 'status':
               setState((prev) =>
                 applyStatusPayload(
                   {
                     ...payload.data,
                     isWorking:
-                      payload.data?.status === 'idle'
-                        ? false
-                        : prev.isWorking,
+                      payload.data?.status === 'idle' ? false : prev.isWorking,
                   },
-                  prev
-                )
+                  prev,
+                ),
               );
               break;
-
             case 'task_start':
-              resetOutput();
               setState((prev) =>
                 applyStatusPayload(
                   {
@@ -412,149 +403,64 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
                     blockedReason: null,
                     lastFailure: null,
                   },
-                  prev
-                )
+                  prev,
+                ),
               );
               appendText(
-                `$ begin_task :: ${payload.data?.task?.title || 'unknown task'}\n`
+                `\n[${stampNow()}] > [TASK] ${payload.data?.task?.title || 'unknown task'}\n`,
               );
               break;
-
-            case 'analysis_start':
-              setState((prev) => ({
-                ...prev,
-                runStatus: 'analyzing',
-              }));
-              appendText('\n> [ANALYSIS] evidence_attached\n');
-              break;
-
             case 'text':
-              appendText(payload.data);
+              appendText(payload.data || '');
               break;
-
             case 'tool_start':
-              setState((prev) => ({
-                ...prev,
-                runStatus: 'executing',
-              }));
-              appendText(`\n> [TOOL] ${payload.data?.tool}\n`);
-              break;
-
-            case 'tool_result': {
-              const preview = payload.data?.preview;
-              const toolName = payload.data?.tool || 'tool';
-              const result = payload.data?.result;
-
-              if (preview?.path && typeof preview?.content === 'string') {
-                appendText(
-                  `[FILE] ${preview.path}\n\`\`\`${preview.language || 'text'}\n${preview.content}${
-                    preview.truncated ? '\n// ...truncated' : ''
-                  }\n\`\`\`\n`
-                );
-              } else if (result?.error) {
-                appendText(`> [ERROR] ${result.error}\n`);
-              } else {
-                appendText(`> [RESULT] ${toolName} ok\n`);
-              }
-              break;
-            }
-
-            case 'verification_start':
-              setState((prev) => ({
-                ...prev,
-                runStatus: 'verifying',
-                verificationStatus: 'running',
-              }));
-              appendText('\n> [VERIFY] running verification plan\n');
-              break;
-
-            case 'verification_result':
-              if (payload.data?.success === false) {
-                setState((prev) => ({
-                  ...prev,
-                  verificationStatus: 'failed',
-                  lastFailure:
-                    payload.data?.failureReason ||
-                    payload.data?.summary ||
-                    prev.lastFailure,
-                }));
-                appendText(
-                  `> [FAIL] ${
-                    payload.data?.failureReason ||
-                    payload.data?.summary ||
-                    'verification failed'
-                  }\n`
-                );
-              } else if (payload.data?.step) {
-                appendText(`> [PASS] ${payload.data.step}\n`);
-              }
-              break;
-
-            case 'task_complete':
-              setState((prev) =>
-                applyStatusPayload(
-                  {
-                    isWorking: false,
-                    currentTask: null,
-                    runStatus: 'idle',
-                    verificationStatus:
-                      payload.data?.verificationStatus || 'passed',
-                    recentTasks: [
-                      {
-                        title: payload.data?.title,
-                        agent: prev.currentTask?.agent || 'HERMES',
-                        completedAt: new Date().toISOString(),
-                      },
-                      ...prev.completedTasks,
-                    ].slice(0, 5),
-                  },
-                  prev
-                )
-              );
               appendText(
-                `> [DONE] ${payload.data?.title || 'task complete'} :: ${
-                  payload.data?.verificationStatus || 'passed'
-                }\n`
+                `\n[${stampNow()}] > [TOOL] ${payload.data?.tool || '?'} ${
+                  payload.data?.input?.path ||
+                  payload.data?.input?.pattern ||
+                  ''
+                }\n`,
               );
               break;
-
-            case 'task_blocked':
+            case 'tool_result':
+              appendText(
+                `[${stampNow()}] > [RESULT] ${shortRepr(payload.data?.result)}\n`,
+              );
+              break;
+            case 'verification_start':
+              appendText(
+                `\n[${stampNow()}] > [VERIFY] starting\n`,
+              );
+              break;
+            case 'verification_result':
+              appendText(
+                `[${stampNow()}] > [${payload.data?.success ? 'PASS' : 'FAIL'}] ${
+                  payload.data?.step || ''
+                }\n`,
+              );
+              break;
+            case 'task_complete':
+              appendText(
+                `[${stampNow()}] > [DONE] ${payload.data?.title || 'task complete'}\n`,
+              );
               setState((prev) => ({
                 ...prev,
                 isWorking: false,
-                runStatus: 'blocked',
-                verificationStatus: 'failed',
-                blockedReason: payload.data?.reason || 'Task blocked',
+                runStatus: 'succeeded',
               }));
-              appendText(`> [BLOCKED] ${payload.data?.reason || 'Task blocked'}\n`);
               break;
-
             case 'error':
-              setState((prev) => ({
-                ...prev,
-                isWorking: false,
-                runStatus: 'failed',
-                verificationStatus: 'failed',
-                lastFailure: payload.data?.message || 'Agent error',
-              }));
-              appendText(`> [ERROR] ${payload.data?.message || 'Agent error'}\n`);
+              appendText(
+                `[${stampNow()}] > [ERROR] ${payload.data?.message || 'unknown error'}\n`,
+              );
               break;
-
-            case 'heartbeat':
-              setState((prev) => ({
-                ...prev,
-                viewerCount: payload.viewerCount || prev.viewerCount,
-              }));
-              break;
-
             default:
               break;
           }
-        } catch (error) {
-          console.error('[AgentTerminal] Parse error:', error);
+        } catch {
+          /* noop */
         }
       };
-
       eventSource.onerror = () => {
         setConnected(false);
         eventSource?.close();
@@ -565,456 +471,201 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({ variant = 'rail' }) => {
     connect();
 
     return () => {
+      if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
       eventSource?.close();
-      if (reconnectTimeout) {
-        window.clearTimeout(reconnectTimeout);
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
     };
-  }, [appendText, resetOutput]);
+  }, [appendText, pauseFeed]);
 
-  const renderStreamRow = (line: string, index: number) => {
-    if (!line) {
-      return (
-        <div key={index} className="agent-row agent-row--blank" aria-hidden="true">
-          <span className="agent-row__glyph" />
-          <span className="agent-row__body">&nbsp;</span>
-        </div>
-      );
+  // ── Derived state for UI ───────────────────────────────────
+  const stage = deriveStageLabel(state, connected);
+  const clockStr = new Date(nowMs).toISOString().substring(11, 19);
+  const progress = progressBar(stage, Math.floor(nowMs / 800));
+  const idleText = formatIdle(nowMs - lastEventAtRef.current);
+  const heartbeat =
+    Math.floor(nowMs / 1000) % 2 === 0 ? '♥' : '♡';
+
+  const topLine = frameTop(
+    'tty://hermes-agent',
+    [
+      `mode:${state.mode}`,
+      `viewers:${state.viewerCount}`,
+      `stream:${connected ? 'open' : 'closed'}`,
+    ],
+    COLS,
+  );
+  const statusRow = statusLine(
+    {
+      stage,
+      host: 'hermes@hermeschain',
+      progress,
+      clock: `${clockStr} UTC`,
+      idleText,
+      heartbeat,
+    },
+    COLS,
+  );
+  const bottomLine = frameDivider(COLS, { kind: 'bottom' });
+
+  // ── Render stream rows (wrap each line in side walls) ──────
+  const streamRows: string[] = useMemo(() => {
+    const lines = toLines(displayedText);
+    return lines.map((line) => wall('  ' + line, COLS));
+  }, [displayedText]);
+
+  // ── Prompt execution ──────────────────────────────────────
+  const runCommand = useCallback(
+    (raw: string) => {
+      const trimmed = raw.trim();
+      if (trimmed) historyRef.current.push(trimmed);
+      setHistoryIndex(-1);
+      // Echo the command
+      appendText(`\nhermes@hermeschain:~$ ${trimmed}\n`);
+      const ctx: TerminalCtx = {
+        blockHeight: state.blockHeight,
+        uptime: formatUptime(state.genesisTimestamp, Date.now()),
+        genesisTimestamp: state.genesisTimestamp,
+        recentCommits,
+        history: historyRef.current,
+        handleTab: (tab) => handleTab?.(tab),
+        clear: () => resetOutput(),
+      };
+      const result = executeCommand(trimmed, ctx);
+      if (result.clearFirst) {
+        resetOutput();
+        return;
+      }
+      if (result.lines.length > 0) {
+        appendText(result.lines.join('\n') + '\n');
+      }
+    },
+    [appendText, handleTab, recentCommits, resetOutput, state.blockHeight, state.genesisTimestamp],
+  );
+
+  const onPromptKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      runCommand(command);
+      setCommand('');
+      return;
     }
-
-    if (line.startsWith('> [TOOL]')) {
-      return (
-        <div key={index} className="agent-row agent-row--tool agent-row--special">
-          <span className="agent-row__glyph">$</span>
-          <div className="agent-row__body">
-            <div className="agent-row__meta">tool_start</div>
-            <div className="agent-row__title">{line.replace('> [TOOL] ', '')}</div>
-          </div>
-        </div>
-      );
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      const history = historyRef.current;
+      if (history.length === 0) return;
+      const nextIdx =
+        historyIndex < 0
+          ? history.length - 1
+          : Math.max(0, historyIndex - 1);
+      setHistoryIndex(nextIdx);
+      setCommand(history[nextIdx]);
+      return;
     }
-
-    if (line.startsWith('> [RESULT]')) {
-      return (
-        <div key={index} className="agent-row agent-row--command">
-          <span className="agent-row__glyph">=</span>
-          <div className="agent-row__body">{line.replace('> [RESULT] ', '')}</div>
-        </div>
-      );
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      const history = historyRef.current;
+      if (history.length === 0 || historyIndex < 0) {
+        setCommand('');
+        setHistoryIndex(-1);
+        return;
+      }
+      const nextIdx = historyIndex + 1;
+      if (nextIdx >= history.length) {
+        setHistoryIndex(-1);
+        setCommand('');
+      } else {
+        setHistoryIndex(nextIdx);
+        setCommand(history[nextIdx]);
+      }
+      return;
     }
-
-    if (line.startsWith('> [ANALYSIS]')) {
-      return (
-        <div key={index} className="agent-row agent-row--thought agent-row--special">
-          <span className="agent-row__glyph">*</span>
-          <div className="agent-row__body">
-            <div className="agent-row__meta">analysis_start</div>
-            <div className="agent-row__title">
-              {line.replace('> [ANALYSIS] ', '')}
-            </div>
-          </div>
-        </div>
-      );
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      const match = autocomplete(command);
+      if (match) setCommand(match + ' ');
+      return;
     }
-
-    if (line.startsWith('> [VERIFY]')) {
-      return (
-        <div key={index} className="agent-row agent-row--thought agent-row--special">
-          <span className="agent-row__glyph">?</span>
-          <div className="agent-row__body">
-            <div className="agent-row__meta">verification_start</div>
-            <div className="agent-row__title">
-              {line.replace('> [VERIFY] ', '')}
-            </div>
-          </div>
-        </div>
-      );
+    if (event.key === 'l' && event.ctrlKey) {
+      event.preventDefault();
+      resetOutput();
+      return;
     }
-
-    if (line.startsWith('> [PASS]')) {
-      return (
-        <div key={index} className="agent-row agent-row--deploy agent-row--special">
-          <span className="agent-row__glyph">+</span>
-          <div className="agent-row__body">
-            <div className="agent-row__meta">verification_result</div>
-            <div className="agent-row__title">
-              {line.replace('> [PASS] ', '')}
-            </div>
-          </div>
-        </div>
-      );
+    if (event.key === 'c' && event.ctrlKey) {
+      event.preventDefault();
+      appendText(`\n${command}^C\n`);
+      setCommand('');
     }
-
-    if (line.startsWith('> [FAIL]') || line.startsWith('> [ERROR]') || line.startsWith('> [BLOCKED]')) {
-      return (
-        <div key={index} className="agent-row agent-row--error agent-row--special">
-          <span className="agent-row__glyph">!</span>
-          <div className="agent-row__body">
-            <div className="agent-row__meta">
-              {line.startsWith('> [BLOCKED]') ? 'task_blocked' : 'stderr'}
-            </div>
-            <div className="agent-row__title">
-              {line
-                .replace('> [FAIL] ', '')
-                .replace('> [ERROR] ', '')
-                .replace('> [BLOCKED] ', '')}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (line.startsWith('> [DONE]')) {
-      return (
-        <div key={index} className="agent-row agent-row--deploy agent-row--special">
-          <span className="agent-row__glyph">#</span>
-          <div className="agent-row__body">
-            <div className="agent-row__meta">task_complete</div>
-            <div className="agent-row__title">{line.replace('> [DONE] ', '')}</div>
-          </div>
-        </div>
-      );
-    }
-
-    if (line.startsWith('$ begin_task ::')) {
-      return (
-        <div key={index} className="agent-row agent-row--header">
-          <span className="agent-row__glyph">{'>'}</span>
-          <div className="agent-row__body">{line.replace('$ begin_task :: ', '')}</div>
-        </div>
-      );
-    }
-
-    if (line.startsWith('[Executing:')) {
-      const command = line.replace('[Executing:', '').replace(']', '').trim();
-      return (
-        <div key={index} className="agent-row agent-row--command">
-          <span className="agent-row__glyph">$</span>
-          <div className="agent-row__body">{command}</div>
-        </div>
-      );
-    }
-
-    if (line.startsWith('## ')) {
-      return (
-        <div key={index} className="agent-row agent-row--header">
-          <span className="agent-row__glyph">{'>'}</span>
-          <div className="agent-row__body">{line.replace('## ', '')}</div>
-        </div>
-      );
-    }
-
-    if (line.startsWith('- ') || line.startsWith('• ')) {
-      return (
-        <div key={index} className="agent-row agent-row--list">
-          <span className="agent-row__glyph">+</span>
-          <div className="agent-row__body">{renderInlineMarkup(line.slice(2))}</div>
-        </div>
-      );
-    }
-
-    if (/^\d+\.\s/.test(line)) {
-      const number = line.match(/^(\d+)\./)?.[1] || index + 1;
-      return (
-        <div key={index} className="agent-row agent-row--numbered">
-          <span className="agent-row__glyph">{number}</span>
-          <div className="agent-row__body">
-            {renderInlineMarkup(line.replace(/^\d+\.\s/, ''))}
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div key={index} className="agent-row agent-row--plain">
-        <span className="agent-row__glyph">.</span>
-        <div className="agent-row__body">{renderInlineMarkup(line)}</div>
-      </div>
-    );
   };
-
-  const renderCodeSegment = (segment: StreamCodeSegment, index: number) => {
-    const codeLines = segment.code.split('\n');
-    const visibleLines =
-      codeLines.length === 1 && codeLines[0] === '' ? [''] : codeLines;
-
-    return (
-      <div key={index} className="agent-row agent-row--code-panel agent-row--special">
-        <span className="agent-row__glyph">{'/>'}</span>
-        <div className="agent-row__body">
-          <div
-            className={`agent-code-block ${
-              segment.complete ? '' : 'agent-code-block--live'
-            }`.trim()}
-          >
-            <div className="agent-code-block__head">
-              <span className="agent-code-block__label">+-- file_write</span>
-              <span className="agent-code-block__path">
-                {segment.path || 'stdout'}
-              </span>
-              <span className="agent-code-block__lang">
-                {segment.language || 'text'}
-              </span>
-            </div>
-
-            <div className="agent-code-block__body">
-              {visibleLines.map((codeLine, lineIndex) => (
-                <div
-                  key={`${index}-${lineIndex}`}
-                  className="agent-code-block__line"
-                >
-                  <span className="agent-code-block__line-no">
-                    {String(lineIndex + 1).padStart(2, '0')}
-                  </span>
-                  <span className="agent-code-block__line-text">
-                    {codeLine || ' '}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderOutput = (text: string) =>
-    parseStreamSegments(text).map((segment, index) =>
-      segment.kind === 'code'
-        ? renderCodeSegment(segment, index)
-        : renderStreamRow(segment.line, index)
-    );
-
-  const formatTime = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  // ─── Terminal-vibe helpers ──────────────────────────────────────
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const tick = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(tick);
-  }, []);
-  const clockParts = new Date(nowMs).toISOString().substring(11, 19);
-  const heartbeatChar = Math.floor(nowMs / 1000) % 2 === 0 ? '♥' : '♡';
-
-  const stageLabel = (() => {
-    if (!connected) return 'OFFLINE';
-    if (state.mode === 'disabled') return 'HALTED';
-    if (state.runStatus === 'verifying') return 'VERIFY';
-    if (state.runStatus === 'executing') return 'EXEC';
-    if (state.runStatus === 'analyzing') return 'ANALYZE';
-    if (state.isWorking) return 'RUN';
-    return 'IDLE';
-  })();
-
-  // 10-cell block-drawing progress bar. Drives off runStatus + a heartbeat
-  // so it always moves when the agent is working.
-  const progressCells = (() => {
-    const stageToCells: Record<string, number> = {
-      IDLE: 0,
-      ANALYZE: 3,
-      EXEC: 6,
-      VERIFY: 9,
-      RUN: 4,
-      HALTED: 0,
-      OFFLINE: 0,
-    };
-    const base = stageToCells[stageLabel] ?? 0;
-    if (base === 0) return '▱▱▱▱▱▱▱▱▱▱';
-    // bob ±1 cell with the clock
-    const bob = Math.floor(nowMs / 800) % 2;
-    const filled = Math.max(1, Math.min(10, base + bob));
-    return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
-  })();
-
-  const scopePath =
-    (state.currentTask && (state.currentTask as any).scope) ||
-    (state.mode === 'real' ? 'backend/src/' : '—');
-  // Box-drawn header for the active task. Kept width constant so the
-  // characters line up inside the monospaced viewport.
-  const BOX_W = 58;
-  const padBox = (text: string) => {
-    const trimmed = text.length > BOX_W - 4 ? text.slice(0, BOX_W - 7) + '...' : text;
-    return trimmed + ' '.repeat(Math.max(0, BOX_W - 4 - trimmed.length));
-  };
-
-  const connectionLabel = summarizeStatus(state, connected);
-  const questBadge = state.currentTask?.agent || state.mode.toUpperCase();
-  const questTitle =
-    state.currentTask?.title ||
-    (state.mode === 'demo'
-      ? 'Read-only demo stream active'
-      : state.mode === 'disabled'
-        ? 'Hermes is disabled'
-        : state.lastFailure || state.blockedReason || 'Awaiting next scoped task');
-  const questKicker = state.currentTask ? '$ current_objective' : '$ agent_state';
-  const questSubline =
-    state.currentDecision?.action
-      ? `$ action :: ${state.currentDecision.action}`
-      : state.mode === 'real'
-        ? `$ run_status :: ${state.runStatus}`
-        : '$ stream_status :: read_only';
 
   return (
-    <div className={`agent-terminal agent-terminal--${variant}`}>
-      <div className="agent-terminal__topbar">
-        <div className="agent-terminal__topbar-left">
-          <div className="agent-terminal__path">
-            <span className="agent-terminal__prompt">$</span>
-            tty://hermes-agent
-          </div>
-        </div>
+    <div
+      className={`ascii-screen ascii-screen--${variant}`}
+      onClick={() => inputRef.current?.focus()}
+    >
+      <pre className="ascii-screen__row ascii-screen__row--frame">
+        {topLine}
+      </pre>
 
-        <div className="agent-terminal__hud">
-          <div className="agent-terminal__chip agent-terminal__chip--auto">
-            <span className="agent-terminal__chip-label">mode</span>
-            <span className="agent-terminal__chip-value">{state.mode}</span>
-          </div>
-
-          <div className="agent-terminal__chip agent-terminal__chip--viewers">
-            <span className="agent-terminal__chip-label">viewers</span>
-            <span className="agent-terminal__chip-value">{state.viewerCount}</span>
-          </div>
-
-          <div
-            className={`agent-terminal__chip agent-terminal__chip--state ${
-              connected
-                ? state.isWorking
-                  ? 'is-working'
-                  : 'is-idle'
-                : 'is-offline'
-            }`}
-          >
-            <span className="agent-terminal__state-led" />
-            <span className="agent-terminal__chip-value">
-              {connectionLabel.toLowerCase()}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div className="agent-terminal__ascii-bar">
-        <span>+-- {state.mode === 'demo' ? 'demo_builder_stream' : 'live_builder_stream'}</span>
-        <span>
-          {connected
-            ? state.repoRootHealth === 'ready'
-              ? '[repo-ready]'
-              : '[repo-missing]'
-            : '[reconnect]'}
-        </span>
-      </div>
-
-      {(state.currentTask || state.mode !== 'real' || state.lastFailure || state.blockedReason) ? (
-        <div className="agent-terminal__quest">
-          <div className="agent-terminal__quest-head">
-            <div className="agent-terminal__quest-badge">{questBadge}</div>
-
-            <div className="agent-terminal__quest-copy">
-              <div className="agent-terminal__quest-kicker">{questKicker}</div>
-              <div className="agent-terminal__quest-title">{questTitle}</div>
-            </div>
-
-            {state.isWorking ? (
-              <div className="agent-terminal__quest-pips" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-            ) : null}
-          </div>
-
-          <div className="agent-terminal__quest-action">{questSubline}</div>
-
-          {(state.currentDecision?.reasoning ||
-            state.startupIssues[0] ||
-            state.lastFailure ||
-            state.blockedReason) ? (
-            <div className="agent-terminal__decision">
-              <div className="agent-terminal__decision-kicker">&gt; reasoning_log</div>
-              <div className="agent-terminal__decision-copy">
-                {state.currentDecision?.reasoning ||
-                  state.blockedReason ||
-                  state.lastFailure ||
-                  state.startupIssues[0]}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div ref={outputRef} className="agent-terminal__viewport">
-        <div className="agent-terminal__viewport-inner">
-          {state.currentTask ? (
-            <pre className="agent-terminal__box">
-{`╔${'═'.repeat(BOX_W - 2)}╗
-║ ${padBox(`HERMES :: ${state.currentTask.title}`)} ║
-║ ${padBox(`scope: ${scopePath}`)} ║
-╚${'═'.repeat(BOX_W - 2)}╝`}
+      <div ref={outputRef} className="ascii-screen__stream">
+        {streamRows.length === 0 ? (
+          <pre className="ascii-screen__row">{wall('', COLS)}</pre>
+        ) : (
+          streamRows.map((row, index) => (
+            <pre key={index} className="ascii-screen__row">
+              {row}
             </pre>
-          ) : null}
-          {displayedText ? (
-            <div className="agent-terminal__stream">
-              {renderOutput(displayedText)}
-              {state.isWorking ? (
-                <span className="agent-terminal__cursor" aria-hidden="true" />
-              ) : null}
-            </div>
-          ) : (
-            <div className="agent-terminal__empty">
-              {buildIdleMessage(state, connected)}
-            </div>
-          )}
-        </div>
+          ))
+        )}
+        <pre className="ascii-screen__row ascii-screen__row--caret">
+          {wall('  ', COLS)}
+        </pre>
       </div>
 
-      <div
-        className={`agent-terminal__statusline agent-terminal__statusline--${stageLabel.toLowerCase()}`}
-        aria-hidden="true"
-      >
-        <div className="agent-terminal__statusline-left">
-          <span className="agent-terminal__statusline-tag">[{stageLabel}]</span>
-          <span className="agent-terminal__statusline-host">hermes@hermeschain</span>
-        </div>
-        <div className="agent-terminal__statusline-center">
-          <span className="agent-terminal__statusline-bar">{progressCells}</span>
-        </div>
-        <div className="agent-terminal__statusline-right">
-          <span className="agent-terminal__statusline-clock">{clockParts} UTC</span>
-          <span className="agent-terminal__statusline-heart">{heartbeatChar}</span>
-        </div>
-      </div>
+      <pre className="ascii-screen__row ascii-screen__row--frame">
+        {statusRow}
+      </pre>
 
-      {state.completedTasks.length > 0 ? (
-        <div className="agent-terminal__footer">
-          <div className="agent-terminal__footer-label">recent_work.log</div>
-          <div className="agent-terminal__inventory">
-            {state.completedTasks.slice(0, 3).map((task, index) => (
-              <div
-                key={`${task.title}-${task.completedAt}-${index}`}
-                className="agent-terminal__inventory-item"
-              >
-                <span className="agent-terminal__inventory-icon">&gt;</span>
-                <span className="agent-terminal__inventory-title">
-                  {trimTaskTitle(task.title)}
-                </span>
-                <span className="agent-terminal__inventory-time">
-                  [{formatTime(task.completedAt)}]
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      <pre className="ascii-screen__row ascii-screen__row--prompt">
+        <span className="ascii-screen__prompt-prefix">
+          {'│ hermes@hermeschain:~$ '}
+        </span>
+        <input
+          ref={inputRef}
+          className="ascii-screen__prompt-input"
+          value={command}
+          onChange={(e) => setCommand(e.target.value)}
+          onKeyDown={onPromptKey}
+          spellCheck={false}
+          autoComplete="off"
+          aria-label="terminal input"
+        />
+        <span className="ascii-screen__prompt-cursor" aria-hidden="true">
+          █
+        </span>
+        <span className="ascii-screen__prompt-suffix">
+          {' '.repeat(Math.max(0, COLS - 27 - command.length - 2)) + '│'}
+        </span>
+      </pre>
+
+      <pre className="ascii-screen__row ascii-screen__row--frame">
+        {bottomLine}
+      </pre>
     </div>
   );
 };
+
+function stampNow(): string {
+  return new Date().toISOString().substring(11, 19);
+}
+
+function shortRepr(value: unknown): string {
+  if (typeof value === 'string') return value.slice(0, 80);
+  if (value == null) return '(no result)';
+  try {
+    const str = JSON.stringify(value);
+    return str.length > 80 ? str.slice(0, 77) + '...' : str;
+  } catch {
+    return '[object]';
+  }
+}
 
 export default AgentTerminal;

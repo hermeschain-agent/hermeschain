@@ -890,7 +890,7 @@ button { font-family: inherit; cursor: pointer; }
   background: rgba(2, 18, 18, 0.76);
 }
 
-.terminal-preview-frame > .agent-terminal {
+.terminal-preview-frame > .ascii-screen {
   flex: 1;
   min-height: 0;
 }
@@ -2015,636 +2015,154 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---- Hermes terminal HUD ---- */
 
-.agent-terminal {
+/* ─── ASCII terminal screen ───────────────────────────────────────
+ * The whole terminal is a single stack of <pre> rows rendered with
+ * box-drawing characters. No chips, no bezel, no flex chrome — just
+ * monospaced text inside a phosphor-green surface.
+ */
+
+:root {
+  --ascii-bg:     #01140a;
+  --ascii-fg:     #70ffad;
+  --ascii-dim:    #3a9668;
+  --ascii-accent: #9bffd4;
+  --ascii-warn:   #ffc872;
+  --ascii-error:  #ff7a7a;
+}
+
+.ascii-screen {
+  position: relative;
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
-  height: 100%;
-  color: var(--cream);
-  background:
-    linear-gradient(180deg, rgba(255, 230, 203, 0.02), transparent 24%),
-    radial-gradient(circle at top, rgba(255, 230, 203, 0.06), transparent 38%),
-    var(--bg-sunken);
-}
-
-.agent-terminal--rail {
-  flex: 1;
-}
-
-.agent-terminal--embedded {
-  height: 100%;
-  border: none;
-}
-
-.agent-terminal--embedded .agent-terminal__topbar {
-  padding-top: 12px;
-}
-
-.agent-terminal__topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid var(--cream-dim);
-  background:
-    linear-gradient(180deg, rgba(255, 230, 203, 0.03), transparent),
-    rgba(3, 18, 18, 0.92);
-  font-family: var(--font-mono);
-}
-
-.agent-terminal__topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.agent-terminal__lights {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-}
-
-.agent-terminal__light {
-  width: 10px;
-  height: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.35);
-  box-shadow: 1px 1px 0 0 rgba(255, 255, 255, 0.08) inset;
-}
-
-.agent-terminal__light--red { background: var(--red); }
-.agent-terminal__light--amber { background: var(--amber); }
-.agent-terminal__light--green { background: var(--success); }
-
-.agent-terminal__path {
-  min-width: 0;
+  padding: 10px 12px 12px;
+  background: var(--ascii-bg);
+  color: var(--ascii-fg);
   font-family: var(--font-mono);
   font-size: 13px;
-  letter-spacing: 0.08em;
-  color: var(--fg-faint);
-  text-transform: uppercase;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
+  line-height: 1.25;
+  letter-spacing: 0;
+  white-space: pre;
+  cursor: text;
   overflow: hidden;
-  text-overflow: ellipsis;
+  animation: crtFlicker 7.3s infinite steps(24, end);
 }
 
-.agent-terminal__prompt {
-  color: var(--success);
-  font-size: 14px;
-  line-height: 1;
-}
-
-.agent-terminal__ascii-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 16px 10px;
-  border-bottom: 1px dashed rgba(255, 230, 203, 0.12);
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: lowercase;
-}
-
-.agent-terminal__hud {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.agent-terminal__chip {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 24px;
-  padding: 4px 10px;
-  border: 1px dashed rgba(255, 230, 203, 0.18);
-  background: rgba(3, 16, 16, 0.72);
-  box-shadow: none;
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.agent-terminal__chip::before {
-  content: '[';
-  color: var(--fg-faint);
-}
-
-.agent-terminal__chip::after {
-  content: ']';
-  color: var(--fg-faint);
-}
-
-.agent-terminal__chip-label {
-  color: var(--fg-faint);
-  font-size: 11px;
-}
-
-.agent-terminal__chip-value {
-  color: var(--cream);
-  font-size: 12px;
-  line-height: 1;
-}
-
-.agent-terminal__chip--auto {
-  border-color: rgba(159, 143, 210, 0.3);
-  background:
-    linear-gradient(180deg, rgba(159, 143, 210, 0.14), rgba(159, 143, 210, 0.02)),
-    rgba(10, 18, 24, 0.92);
-}
-
-.agent-terminal__chip--viewers {
-  border-color: rgba(255, 200, 114, 0.24);
-}
-
-.agent-terminal__chip--state.is-working {
-  border-color: rgba(168, 230, 163, 0.34);
-}
-
-.agent-terminal__chip--state.is-idle {
-  border-color: rgba(255, 230, 203, 0.24);
-}
-
-.agent-terminal__chip--state.is-offline {
-  border-color: rgba(255, 107, 107, 0.32);
-}
-
-.agent-terminal__state-led {
-  width: 8px;
-  height: 8px;
-  flex-shrink: 0;
-  background: var(--cream);
-  box-shadow: 0 0 0 1px rgba(4, 28, 28, 0.5);
-}
-
-.agent-terminal__chip--state.is-working .agent-terminal__state-led {
-  background: var(--success);
-  animation: pulse 0.9s steps(2, end) infinite;
-}
-
-.agent-terminal__chip--state.is-idle .agent-terminal__state-led {
-  background: var(--amber);
-}
-
-.agent-terminal__chip--state.is-offline .agent-terminal__state-led {
-  background: var(--red);
-}
-
-.agent-terminal__quest,
-.agent-terminal__decision,
-.agent-row--special .agent-row__body,
-.agent-terminal__inventory-item {
-  position: relative;
-}
-
-.agent-terminal__quest::before,
-.agent-terminal__decision::before,
-.agent-row--special .agent-row__body::before,
-.agent-terminal__inventory-item::before {
-  content: none;
-}
-
-.agent-terminal__quest {
-  margin: 16px 16px 0;
-  padding: 14px;
-  border: 1px dashed rgba(255, 230, 203, 0.18);
-  background:
-    linear-gradient(180deg, rgba(76, 130, 107, 0.08), rgba(76, 130, 107, 0.02)),
-    rgba(6, 20, 20, 0.94);
-  box-shadow: inset 0 0 0 1px rgba(255, 230, 203, 0.03);
-}
-
-.agent-terminal__quest-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-}
-
-.agent-terminal__quest-badge {
-  min-width: 62px;
-  padding: 6px 8px;
-  border: 1px dashed rgba(255, 200, 114, 0.32);
-  background: rgba(255, 200, 114, 0.04);
-  color: var(--amber);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.agent-terminal__quest-copy {
-  min-width: 0;
-}
-
-.agent-terminal__quest-kicker,
-.agent-terminal__decision-kicker,
-.agent-terminal__footer-label,
-.agent-row__meta {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--fg-faint);
-}
-
-.agent-terminal__quest-title {
-  margin-top: 6px;
-  color: var(--cream);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.5;
-  letter-spacing: 0.02em;
-}
-
-.agent-terminal__quest-pips {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding-top: 5px;
-}
-
-.agent-terminal__quest-pips span {
-  width: 8px;
-  height: 8px;
-  background: var(--cream);
-  animation: pulse 0.9s steps(2, end) infinite;
-}
-
-.agent-terminal__quest-pips span:nth-child(2) {
-  animation-delay: 0.12s;
-}
-
-.agent-terminal__quest-pips span:nth-child(3) {
-  animation-delay: 0.24s;
-}
-
-.agent-terminal__quest-action {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed rgba(255, 230, 203, 0.12);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  letter-spacing: 0.05em;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-}
-
-.agent-terminal__decision {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px dashed rgba(159, 143, 210, 0.24);
-  background:
-    linear-gradient(180deg, rgba(159, 143, 210, 0.12), rgba(159, 143, 210, 0.03)),
-    rgba(10, 11, 19, 0.9);
-}
-
-.agent-terminal__decision-copy {
-  margin-top: 6px;
-  color: rgba(244, 239, 255, 0.9);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.agent-terminal__viewport {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  margin: 16px;
-  overflow-y: auto;
-  border: 1px solid rgba(255, 230, 203, 0.1);
-  background:
-    linear-gradient(180deg, rgba(2, 19, 19, 0.18), rgba(0, 0, 0, 0.3)),
-    rgba(1, 10, 10, 0.98);
-  box-shadow:
-    inset 0 0 0 1px rgba(102, 255, 180, 0.03),
-    0 0 0 1px rgba(0, 0, 0, 0.35);
-}
-
-.agent-terminal__viewport::before,
-.agent-terminal__viewport::after {
+.ascii-screen::before {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
-}
-
-.agent-terminal__viewport::before {
   background:
     repeating-linear-gradient(
       0deg,
       transparent 0 3px,
-      rgba(112, 255, 173, 0.03) 3px 4px
+      rgba(112, 255, 173, 0.045) 3px 4px
     );
-  opacity: 0.5;
-  animation: scanDrift 0.7s steps(2, end) infinite;
+  opacity: 0.55;
 }
 
-.agent-terminal__viewport::after {
-  background:
-    linear-gradient(90deg, rgba(255, 230, 203, 0.025) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 230, 203, 0.02) 1px, transparent 1px);
-  background-size: 18px 18px;
-  opacity: 0.16;
-}
-
-.agent-terminal__viewport-inner {
-  position: relative;
-  z-index: 1;
-  min-height: 100%;
-  padding: 12px 16px 18px;
-}
-
-.agent-terminal__stream {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-height: 100%;
-  padding-left: 56px;
-  font-family: var(--font-mono);
-  /* Reset CSS counter so each row gets a sequential line number */
-  counter-reset: agent-line;
-}
-
-/* Vertical gutter line + subtle background for the line-number column */
-.agent-terminal__stream::before {
+.ascii-screen::after {
   content: '';
   position: absolute;
-  left: 44px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: rgba(112, 255, 173, 0.18);
+  inset: 0;
   pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgba(0, 0, 0, 0.5) 100%
+  );
 }
 
-.agent-terminal__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100%;
-  padding: 42px 24px;
-  border: 1px dashed rgba(255, 230, 203, 0.12);
-  background: rgba(255, 230, 203, 0.02);
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  letter-spacing: 0.04em;
-  text-align: center;
+.ascii-screen--embedded {
+  border: 2px solid var(--cream-mid);
+  box-shadow:
+    6px 6px 0 0 var(--cream-dim),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55);
 }
 
-.agent-terminal__cursor {
-  display: block;
-  width: 12px;
-  height: 14px;
-  margin-left: 28px;
-  margin-top: 2px;
-  background: var(--cream);
-  box-shadow: 2px 2px 0 0 rgba(255, 230, 203, 0.25);
-  animation: cursorBlink 0.9s steps(2, end) infinite;
-}
-
-.agent-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  color: rgba(212, 232, 217, 0.84);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.55;
-  counter-increment: agent-line;
-  padding: 1px 0;
-  border-left: 2px solid transparent;
-  transition: background 80ms steps(2, end);
-}
-
-/* Line-number gutter — printed via CSS counter so React doesn't have to thread indexes. */
-.agent-row::before {
-  content: counter(agent-line, decimal-leading-zero);
-  position: absolute;
-  left: -54px;
-  top: 0;
-  width: 38px;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: rgba(112, 255, 173, 0.35);
-  letter-spacing: 0.02em;
-  user-select: none;
-  pointer-events: none;
-}
-
-.agent-row:hover {
-  background: rgba(112, 255, 173, 0.04);
-  border-left-color: rgba(112, 255, 173, 0.4);
-}
-.agent-row:hover::before {
-  color: rgba(112, 255, 173, 0.7);
-}
-
-/* Per-row-type accent on the gutter line number */
-.agent-row--tool::before        { color: rgba(112, 200, 255, 0.6); }
-.agent-row--command::before     { color: rgba(112, 255, 173, 0.6); }
-.agent-row--thought::before     { color: rgba(255, 230, 173, 0.5); }
-.agent-row--deploy::before      { color: rgba(120, 255, 200, 0.7); }
-.agent-row--error::before       { color: rgba(255, 130, 130, 0.7); }
-.agent-row--header::before      { color: rgba(255, 230, 203, 0.55); }
-
-.agent-row__glyph {
+.ascii-screen__row {
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  white-space: pre;
   position: relative;
   z-index: 1;
-  display: inline-flex;
+  text-shadow: 0 0 4px rgba(112, 255, 173, 0.28);
+}
+
+.ascii-screen__row--frame {
+  color: var(--ascii-fg);
+  letter-spacing: 0;
+}
+
+.ascii-screen__stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(112, 255, 173, 0.25) transparent;
+  position: relative;
+  z-index: 1;
+}
+
+.ascii-screen__stream::-webkit-scrollbar { width: 6px; }
+.ascii-screen__stream::-webkit-scrollbar-thumb {
+  background: rgba(112, 255, 173, 0.25);
+}
+
+.ascii-screen__row--caret::after {
+  content: '█';
+  display: inline-block;
+  color: var(--ascii-accent);
+  animation: cursorBlink 0.9s steps(2, end) infinite;
+  margin-left: 2px;
+}
+
+.ascii-screen__row--prompt {
+  display: flex;
   align-items: center;
-  justify-content: flex-start;
-  min-height: 18px;
-  padding-top: 0;
-  border: none;
-  background: transparent;
-  color: rgba(112, 255, 173, 0.7);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1;
-  text-transform: uppercase;
+  gap: 0;
+  color: var(--ascii-fg);
 }
 
-.agent-row__body {
+.ascii-screen__prompt-prefix,
+.ascii-screen__prompt-suffix {
+  font-family: inherit;
+  color: var(--ascii-fg);
+  white-space: pre;
+}
+
+.ascii-screen__prompt-input {
+  flex: 0 0 auto;
   min-width: 0;
-  color: inherit;
-  word-break: break-word;
-  font-family: var(--font-mono);
-}
-
-.agent-row__title {
-  margin-top: 4px;
-  color: var(--cream);
-  font-family: var(--font-mono);
-}
-
-.agent-row__code {
-  padding: 1px 5px;
-  border: 1px solid rgba(255, 230, 203, 0.16);
-  background: rgba(255, 230, 203, 0.06);
-  color: var(--coral-bright);
-  font-family: var(--font-mono);
-  font-size: 13px;
-}
-
-.agent-row__accent {
-  color: var(--cream);
-  font-weight: 400;
-}
-
-.agent-row--blank {
-  opacity: 0.25;
-}
-
-.agent-row--blank .agent-row__glyph {
-  opacity: 0;
-}
-
-.agent-row--plain .agent-row__glyph,
-.agent-row--status .agent-row__glyph,
-.agent-row--divider .agent-row__glyph {
-  color: var(--fg-faint);
-}
-
-.agent-row--command .agent-row__glyph {
-  color: var(--success);
-}
-
-.agent-row--command .agent-row__body {
-  color: rgba(168, 230, 163, 0.92);
-  letter-spacing: 0.04em;
-}
-
-.agent-row--special {
-  animation: pixelIn 170ms steps(3, end);
-}
-
-.agent-row--special .agent-row__glyph {
-  color: var(--cream);
-  box-shadow: none;
-}
-
-.agent-row--special .agent-row__body {
-  padding: 8px 10px;
-  border-left: 1px dashed rgba(255, 230, 203, 0.18);
-  box-shadow: none;
-}
-
-.agent-row--tool .agent-row__glyph {
-  color: var(--success);
-  background: rgba(12, 31, 18, 0.98);
-}
-
-.agent-row--tool .agent-row__body {
-  background:
-    linear-gradient(90deg, rgba(168, 230, 163, 0.12), rgba(168, 230, 163, 0.02)),
-    rgba(4, 14, 8, 0.82);
-}
-
-.agent-row--code-panel .agent-row__glyph {
-  color: var(--success);
-}
-
-.agent-row--code-panel .agent-row__body {
+  border: none;
+  outline: none;
   padding: 0;
-  border-left: 1px dashed rgba(112, 255, 173, 0.18);
-  background: none;
+  margin: 0;
+  background: transparent;
+  color: var(--ascii-accent);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: 0;
+  caret-color: transparent;
 }
 
-.agent-row--thought .agent-row__glyph {
-  color: var(--violet);
-  background: rgba(18, 15, 35, 0.96);
+.ascii-screen__prompt-cursor {
+  color: var(--ascii-accent);
+  animation: cursorBlink 0.9s steps(2, end) infinite;
+  margin-left: -2px;
 }
 
-.agent-row--thought .agent-row__body {
-  background:
-    linear-gradient(90deg, rgba(159, 143, 210, 0.14), rgba(159, 143, 210, 0.03)),
-    rgba(11, 10, 21, 0.86);
-}
-
-.agent-row--deploy .agent-row__glyph {
-  color: var(--amber);
-  background: rgba(35, 23, 8, 0.96);
-}
-
-.agent-row--deploy .agent-row__body {
-  background:
-    linear-gradient(90deg, rgba(255, 200, 114, 0.14), rgba(255, 200, 114, 0.02)),
-    rgba(18, 12, 4, 0.84);
-}
-
-.agent-row--error .agent-row__glyph {
-  color: #fff0f0;
-  background: rgba(49, 11, 11, 0.98);
-}
-
-.agent-row--error .agent-row__body {
-  border-left: 3px solid var(--red);
-  background:
-    linear-gradient(90deg, rgba(255, 107, 107, 0.16), rgba(255, 107, 107, 0.02)),
-    rgba(24, 8, 8, 0.9);
-}
-
-.agent-row--header {
-  margin-top: 8px;
-  animation: pixelIn 150ms steps(3, end);
-}
-
-.agent-row--header .agent-row__glyph {
-  color: var(--amber);
-  border-color: rgba(255, 200, 114, 0.24);
-}
-
-.agent-row--header .agent-row__body {
-  color: var(--cream);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.agent-row--status .agent-row__body {
-  color: rgba(255, 230, 203, 0.7);
-  font-family: var(--font-mono);
-}
-
-.agent-row--divider .agent-row__body {
-  color: rgba(255, 230, 203, 0.2);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.agent-row--list .agent-row__glyph,
-.agent-row--numbered .agent-row__glyph {
-  color: var(--success);
-}
-
-.agent-row--link a {
-  color: var(--amber);
-  text-decoration: none;
-  border-bottom: 1px solid rgba(255, 200, 114, 0.24);
-}
-
-.agent-row--link a:hover {
-  color: var(--cream);
-  border-bottom-color: var(--cream);
+@keyframes crtFlicker {
+  0%, 6%, 10%, 60%, 62%, 100% { opacity: 1; }
+  7%, 9% { opacity: 0.94; }
+  61% { opacity: 0.88; }
 }
 
 .agent-code-block {
@@ -2720,71 +2238,6 @@ button { font-family: inherit; cursor: pointer; }
   word-break: break-word;
   color: rgba(224, 239, 225, 0.92);
   tab-size: 2;
-}
-
-.agent-terminal__footer {
-  padding: 0 16px 16px;
-}
-
-.agent-terminal__footer-label {
-  margin-bottom: 10px;
-  font-family: var(--font-mono);
-}
-
-.agent-terminal__inventory {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.agent-terminal__inventory-item {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 6px 10px;
-  align-items: start;
-  min-height: 64px;
-  padding: 10px 12px;
-  border: 1px dashed rgba(255, 230, 203, 0.16);
-  background:
-    linear-gradient(90deg, rgba(255, 230, 203, 0.05), rgba(255, 230, 203, 0.01)),
-    rgba(4, 15, 15, 0.94);
-  box-shadow: none;
-}
-
-.agent-terminal__inventory-item:first-child {
-  border-color: rgba(255, 200, 114, 0.26);
-  background:
-    linear-gradient(90deg, rgba(255, 200, 114, 0.1), rgba(255, 200, 114, 0.02)),
-    rgba(16, 20, 10, 0.94);
-}
-
-.agent-terminal__inventory-icon {
-  grid-row: 1 / span 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: transparent;
-  color: var(--success);
-  font-family: var(--font-mono);
-  font-size: 14px;
-}
-
-.agent-terminal__inventory-title {
-  min-width: 0;
-  color: var(--cream);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.agent-terminal__inventory-time {
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
 }
 
 /* ---- Hermes dock ---- */
@@ -3070,21 +2523,11 @@ button { font-family: inherit; cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   .tab-btn,
-  .agent-row,
-  .agent-row__body,
-  .agent-terminal__chip,
-  .agent-terminal__viewport,
-  .agent-terminal__inventory-item {
-    transition: none;
-  }
-
-  .agent-row--special,
-  .agent-row--header,
-  .agent-terminal__cursor,
-  .agent-terminal__quest-pips span,
-  .agent-terminal__chip--state.is-working .agent-terminal__state-led,
-  .agent-terminal__viewport::before {
+  .ascii-screen,
+  .ascii-screen__row--caret::after,
+  .ascii-screen__prompt-cursor {
     animation: none !important;
+    transition: none;
   }
 }
 
@@ -3811,149 +3254,3 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   text-transform: uppercase;
 }
 
-/* ─── Terminal: CRT bezel around the whole shell ──────────────────── */
-
-.agent-terminal {
-  position: relative;
-  border: 2px solid var(--cream-mid);
-  box-shadow:
-    6px 6px 0 0 var(--cream-dim),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 0 rgba(255, 230, 203, 0.08);
-  background:
-    radial-gradient(ellipse at 50% 120%, rgba(112, 255, 173, 0.04) 0%, transparent 60%),
-    rgba(2, 18, 18, 0.96);
-  border-radius: 0;
-}
-.agent-terminal::after {
-  /* subtle CRT vignette on the edges */
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse at center,
-    transparent 55%,
-    rgba(0, 0, 0, 0.35) 100%
-  );
-}
-
-/* ─── Terminal: box-drawn task header inside the viewport ─────────── */
-
-.agent-terminal__box {
-  margin: 0 0 12px 0;
-  padding: 0;
-  font-family: var(--font-mono);
-  color: rgba(112, 255, 173, 0.9);
-  font-size: 11.5px;
-  line-height: 1.2;
-  white-space: pre;
-  letter-spacing: 0;
-  text-shadow: 0 0 5px rgba(112, 255, 173, 0.35);
-  animation: boxIn 240ms steps(4, end);
-}
-@keyframes boxIn {
-  from { opacity: 0; clip-path: inset(0 100% 0 0); }
-  to   { opacity: 1; clip-path: inset(0 0 0 0); }
-}
-
-/* ─── Terminal: bottom statusline (tmux-style) ───────────────────── */
-
-.agent-terminal__statusline {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 16px;
-  align-items: center;
-  padding: 6px 14px;
-  border-top: 1px solid var(--cream-dim);
-  background:
-    linear-gradient(180deg, rgba(112, 255, 173, 0.06), rgba(0, 0, 0, 0.25)),
-    rgba(2, 18, 18, 0.92);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  color: rgba(255, 230, 203, 0.7);
-  text-transform: uppercase;
-}
-
-.agent-terminal__statusline-left,
-.agent-terminal__statusline-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.agent-terminal__statusline-right {
-  justify-content: flex-end;
-}
-.agent-terminal__statusline-tag {
-  padding: 2px 8px;
-  font-weight: 400;
-  color: var(--bg);
-  background: rgba(112, 255, 173, 0.85);
-  letter-spacing: 0.12em;
-  box-shadow: 1px 1px 0 0 rgba(0, 0, 0, 0.4);
-}
-.agent-terminal__statusline--offline .agent-terminal__statusline-tag,
-.agent-terminal__statusline--halted  .agent-terminal__statusline-tag {
-  background: rgba(255, 130, 130, 0.85);
-}
-.agent-terminal__statusline--verify .agent-terminal__statusline-tag,
-.agent-terminal__statusline--analyze .agent-terminal__statusline-tag {
-  background: rgba(255, 200, 114, 0.85);
-}
-.agent-terminal__statusline-host {
-  color: var(--cream);
-}
-.agent-terminal__statusline-center {
-  display: flex;
-  align-items: center;
-}
-.agent-terminal__statusline-bar {
-  font-family: var(--font-mono);
-  color: rgba(112, 255, 173, 0.85);
-  text-shadow: 0 0 4px rgba(112, 255, 173, 0.4);
-  letter-spacing: 2px;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.agent-terminal__statusline-clock {
-  color: rgba(255, 230, 203, 0.9);
-  letter-spacing: 0.12em;
-}
-.agent-terminal__statusline-heart {
-  color: #ff7a7a;
-  font-size: 13px;
-  text-shadow: 0 0 5px rgba(255, 122, 122, 0.45);
-  animation: pulse 1.2s steps(2, end) infinite;
-}
-
-/* ─── Terminal: timestamp prefix styling in rows ─────────────────── */
-
-/* Timestamps inside tool/command/thought rows get a subdued treatment
- * so the important event text still reads first. Selects the leading
- * [HH:MM:SS] we prepend from liveAgentFeed. */
-.agent-row__body {
-  /* keep: structural */
-}
-
-/* ─── Terminal: thicker block cursor ─────────────────────────────── */
-
-.agent-terminal__cursor {
-  display: inline-block;
-  width: 10px;
-  height: 18px;
-  margin-left: 4px;
-  margin-top: 4px;
-  background: rgba(112, 255, 173, 0.95);
-  box-shadow: 0 0 6px rgba(112, 255, 173, 0.6);
-  animation: cursorBlink 0.8s steps(2, end) infinite;
-  vertical-align: bottom;
-}
-
-/* ─── Terminal: tighten viewport background toward classic phosphor */
-
-.agent-terminal__viewport {
-  background:
-    linear-gradient(180deg, rgba(2, 19, 19, 0.4), rgba(0, 0, 0, 0.55)),
-    rgba(0, 8, 8, 0.98);
-}
