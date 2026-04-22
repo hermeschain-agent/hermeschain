@@ -1,14 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, apiUrl } from './api';
-import { startLiveAgentFeed } from './liveAgentFeed';
-import {
-  DEFAULT_COLS,
-  frameTop,
-  frameDivider,
-  motdBlock,
-  progressBar,
-  statusLine,
-} from './asciiScreen';
+import { startLiveAgentFeed, TerminalBlock, PathChip } from './liveAgentFeed';
 import {
   autocomplete,
   executeCommand,
@@ -98,10 +90,18 @@ const INITIAL_STATE: AgentState = {
   genesisTimestamp: 0,
 };
 
-const STREAM_STORAGE_KEY = 'hermeschain-terminal-stream';
-const MAX_STREAM_LINES = 400;
-const COLS = DEFAULT_COLS;
-const TERMINAL_VERSION = 'v0.4.2';
+const BLOCKS_STORAGE_KEY = 'hermeschain-terminal-blocks-v2';
+const MAX_BLOCKS = 80;
+const REAL_WORK_EVENTS = new Set([
+  'task_start',
+  'text',
+  'tool_start',
+  'tool_result',
+  'verification_start',
+  'verification_result',
+  'task_complete',
+  'error',
+]);
 
 function applyStatusPayload(payload: any, previous: AgentState): AgentState {
   const completedTasks =
@@ -164,7 +164,9 @@ function applyStatusPayload(payload: any, previous: AgentState): AgentState {
   };
 }
 
-function deriveStageLabel(state: AgentState, connected: boolean): string {
+type Stage = 'IDLE' | 'RUN' | 'VERIFY' | 'ANALYZE' | 'EXEC' | 'HALTED' | 'OFFLINE';
+
+function deriveStageLabel(state: AgentState, connected: boolean): Stage {
   if (!connected) return 'OFFLINE';
   if (state.mode === 'disabled') return 'HALTED';
   if (state.runStatus === 'verifying') return 'VERIFY';
@@ -185,24 +187,57 @@ function formatUptime(genesis: number, nowMs: number): string {
   return `${m}m`;
 }
 
-function formatIdle(idleMs: number): string {
-  if (idleMs < 3000) return `last: ${(idleMs / 1000).toFixed(1)}s`;
-  const s = Math.floor(idleMs / 1000);
-  if (s < 60) return `idle ${s}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  if (m < 60) return `idle ${m}m ${rem}s`;
-  const h = Math.floor(m / 60);
-  return `idle ${h}h ${m % 60}m`;
+function loadBlocks(): TerminalBlock[] {
+  try {
+    const raw = window.sessionStorage.getItem(BLOCKS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(-MAX_BLOCKS);
+  } catch {
+    return [];
+  }
+}
+
+function saveBlocks(blocks: TerminalBlock[]): void {
+  try {
+    window.sessionStorage.setItem(
+      BLOCKS_STORAGE_KEY,
+      JSON.stringify(blocks.slice(-MAX_BLOCKS)),
+    );
+  } catch {
+    /* noop */
+  }
 }
 
 /**
- * Split raw text from the event feed into individual lines, preserving
- * empty lines. Each line becomes a row in the stream.
+ * Render a paragraph with inline path chips wrapped in styled spans.
+ * Chips describe character offsets within the text; the renderer walks
+ * the text once and yields alternating plain-text / chip spans.
  */
-function toLines(text: string): string[] {
-  if (!text) return [];
-  return text.replace(/\r\n/g, '\n').split('\n');
+function renderParagraph(
+  text: string,
+  chips: PathChip[] | undefined,
+): React.ReactNode {
+  if (!chips || chips.length === 0) return text;
+  const sorted = [...chips].sort((a, b) => a.at - b.at);
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  sorted.forEach((chip, i) => {
+    if (chip.at > cursor) {
+      parts.push(text.slice(cursor, chip.at));
+    }
+    parts.push(
+      <span key={`chip-${i}`} className="terminal__path-chip">
+        {text.slice(chip.at, chip.at + chip.length)}
+      </span>,
+    );
+    cursor = chip.at + chip.length;
+  });
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+  return parts;
 }
 
 const AgentTerminal: React.FC<AgentTerminalProps> = ({
@@ -212,88 +247,89 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
 }) => {
   const [state, setState] = useState<AgentState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
-  const initialBuffer = (() => {
-    if (variant !== 'rail') return '';
-    try {
-      return window.sessionStorage.getItem(STREAM_STORAGE_KEY) || '';
-    } catch {
-      return '';
-    }
-  })();
-  const [displayedText, setDisplayedText] = useState(initialBuffer);
+  const [blocks, setBlocks] = useState<TerminalBlock[]>(() =>
+    variant === 'rail' ? loadBlocks() : [],
+  );
+  const [typedMap, setTypedMap] = useState<Record<string, number>>({});
   const [command, setCommand] = useState('');
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const historyRef = useRef<string[]>([]);
-  const textBufferRef = useRef(initialBuffer);
-  const displayIndexRef = useRef(initialBuffer.length);
-  const typeTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const lastEventAtRef = useRef<number>(Date.now());
-  const outputRef = useRef<HTMLDivElement>(null);
+  const typeTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+  const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const feedHandleRef = useRef<{ stop: () => void; pause: () => void } | null>(null);
-
-  // Variable-speed typewriter with per-char jitter and punctuation pauses.
-  const typewriterTick = useCallback(() => {
-    const buffer = textBufferRef.current;
-    const idx = displayIndexRef.current;
-    if (idx >= buffer.length) {
-      typeTimerRef.current = undefined;
-      return;
-    }
-    const ch = buffer[idx];
-    displayIndexRef.current = idx + 1;
-    setDisplayedText(buffer.slice(0, idx + 1));
-
-    let delay = 12 + Math.random() * 28;
-    if (ch === '.' || ch === '!' || ch === '?') delay = 80 + Math.random() * 80;
-    if (ch === '\n') delay = 40 + Math.random() * 40;
-    if (ch === ' ') delay = 6 + Math.random() * 18;
-    typeTimerRef.current = setTimeout(typewriterTick, delay);
-  }, []);
-
-  const appendText = useCallback(
-    (text: string) => {
-      textBufferRef.current += text;
-      lastEventAtRef.current = Date.now();
-      // Cap total buffer so it doesn't grow unbounded.
-      const lines = textBufferRef.current.split('\n');
-      if (lines.length > MAX_STREAM_LINES) {
-        const trimmed = lines.slice(lines.length - MAX_STREAM_LINES).join('\n');
-        textBufferRef.current = trimmed;
-        displayIndexRef.current = Math.min(
-          displayIndexRef.current,
-          trimmed.length,
-        );
-      }
-      try {
-        window.sessionStorage.setItem(
-          STREAM_STORAGE_KEY,
-          textBufferRef.current,
-        );
-      } catch {
-        /* noop */
-      }
-      if (!typeTimerRef.current) {
-        typeTimerRef.current = setTimeout(typewriterTick, 10);
-      }
-    },
-    [typewriterTick],
+  const feedHandleRef = useRef<{ stop: () => void; pause: () => void } | null>(
+    null,
   );
 
-  const resetOutput = useCallback(() => {
-    textBufferRef.current = '';
-    displayIndexRef.current = 0;
-    setDisplayedText('');
+  // Persist blocks to sessionStorage on every change (rail variant only).
+  useEffect(() => {
+    if (variant !== 'rail') return;
+    saveBlocks(blocks);
+  }, [blocks, variant]);
+
+  // Drive a variable-speed typewriter for each paragraph block.
+  const startTypewriter = useCallback((block: TerminalBlock) => {
+    if (block.kind !== 'paragraph') return;
+    if (block.instant) {
+      setTypedMap((m) => ({ ...m, [block.id]: block.text.length }));
+      return;
+    }
+    const existing = typeTimersRef.current.get(block.id);
+    if (existing) clearTimeout(existing);
+
+    const tick = (idx: number) => {
+      setTypedMap((m) => ({ ...m, [block.id]: idx }));
+      if (idx >= block.text.length) {
+        typeTimersRef.current.delete(block.id);
+        return;
+      }
+      const ch = block.text[idx];
+      let delay = 12 + Math.random() * 24;
+      if (ch === '.' || ch === '!' || ch === '?') delay = 90 + Math.random() * 90;
+      if (ch === ',') delay = 60 + Math.random() * 40;
+      if (ch === ' ') delay = 8 + Math.random() * 14;
+      const t = setTimeout(() => tick(idx + 1), delay);
+      typeTimersRef.current.set(block.id, t);
+    };
+    tick(0);
+  }, []);
+
+  const appendBlock = useCallback(
+    (block: TerminalBlock) => {
+      setBlocks((prev) => {
+        const next = [...prev, block].slice(-MAX_BLOCKS);
+        return next;
+      });
+      // code/commit blocks reveal fully; paragraphs animate.
+      if (block.kind === 'paragraph' && !block.instant) {
+        startTypewriter(block);
+      } else {
+        setTypedMap((m) => ({
+          ...m,
+          [block.id]: block.kind === 'paragraph' ? block.text.length : 0,
+        }));
+      }
+    },
+    [startTypewriter],
+  );
+
+  const resetBlocks = useCallback(() => {
+    // Don't wipe on task boundary — keep scrollback continuous. Hard reset
+    // is only exposed via the /clear command.
+  }, []);
+
+  const hardClear = useCallback(() => {
+    typeTimersRef.current.forEach((t) => clearTimeout(t));
+    typeTimersRef.current.clear();
+    setBlocks([]);
+    setTypedMap({});
     try {
-      window.sessionStorage.removeItem(STREAM_STORAGE_KEY);
+      window.sessionStorage.removeItem(BLOCKS_STORAGE_KEY);
     } catch {
       /* noop */
-    }
-    if (typeTimerRef.current) {
-      clearTimeout(typeTimerRef.current);
-      typeTimerRef.current = undefined;
     }
   }, []);
 
@@ -301,20 +337,14 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
     feedHandleRef.current?.pause();
   }, []);
 
-  // ── Clock tick ─────────────────────────────────────────────
+  // Scroll to bottom whenever content grows.
   useEffect(() => {
-    const tick = window.setInterval(() => setNowMs(Date.now()), 500);
-    return () => window.clearInterval(tick);
-  }, []);
-
-  // ── Scroll stream to bottom whenever new chars land ────────
-  useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    if (bodyRef.current) {
+      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     }
-  }, [displayedText]);
+  }, [blocks, typedMap]);
 
-  // ── Initial status fetch ───────────────────────────────────
+  // Initial status fetch.
   useEffect(() => {
     (async () => {
       try {
@@ -328,19 +358,29 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
     })();
   }, []);
 
-  // MOTD is rendered as a pinned banner (see `motdRows` below), not
-  // injected into the scrolling buffer — so refreshes don't reset the
-  // coding flow and the logo always stays visible at the top.
+  // On mount, make sure any rehydrated paragraph blocks get revealed instantly
+  // (we don't re-type them on refresh — that would be jarring).
+  useEffect(() => {
+    if (variant !== 'rail') return;
+    setTypedMap((prev) => {
+      const next = { ...prev };
+      for (const b of blocks) {
+        if (b.kind === 'paragraph' && next[b.id] === undefined) {
+          next[b.id] = b.text.length;
+        }
+      }
+      return next;
+    });
+    // intentionally only once after mount / initial load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Live agent feed ────────────────────────────────────────
+  // Live synthetic agent feed (rail variant).
   useEffect(() => {
     if (variant !== 'rail') return;
     const handle = startLiveAgentFeed({
-      appendText,
-      resetOutput: () => {
-        // do NOT wipe — we want continuous scrollback. Just mark new run.
-        appendText('\n' + frameDivider(COLS, { label: 'next-task' }) + '\n');
-      },
+      appendBlock,
+      resetBlocks,
       patchState: (updater) => setState((prev) => updater(prev) as AgentState),
     });
     feedHandleRef.current = handle;
@@ -348,9 +388,9 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
       handle.stop();
       feedHandleRef.current = null;
     };
-  }, [variant, appendText]);
+  }, [variant, appendBlock, resetBlocks]);
 
-  // ── SSE subscription (real worker events) ──────────────────
+  // SSE subscription (real worker events).
   useEffect(() => {
     let eventSource: EventSource | null = null;
     let reconnectTimeout: number | undefined;
@@ -361,22 +401,8 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
-          // Only yield the synthetic feed for events that represent real
-          // agent work. Passive telemetry (init/status/ping/heartbeat)
-          // fires on a 5s pulse and would otherwise starve the stream.
-          const REAL_WORK_EVENTS = new Set([
-            'task_start',
-            'text',
-            'tool_start',
-            'tool_result',
-            'verification_start',
-            'verification_result',
-            'task_complete',
-            'error',
-          ]);
           if (REAL_WORK_EVENTS.has(payload.type)) {
             pauseFeed();
-            lastEventAtRef.current = Date.now();
           }
           switch (payload.type) {
             case 'init':
@@ -408,53 +434,46 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
                   prev,
                 ),
               );
-              appendText(
-                `\n[${stampNow()}] > [TASK] ${payload.data?.task?.title || 'unknown task'}\n`,
-              );
+              if (payload.data?.task?.title) {
+                appendBlock({
+                  kind: 'paragraph',
+                  id: `sse-task-${Date.now()}`,
+                  text: `Starting task: ${payload.data.task.title}`,
+                  instant: true,
+                });
+              }
               break;
             case 'text':
-              appendText(payload.data || '');
-              break;
-            case 'tool_start':
-              appendText(
-                `\n[${stampNow()}] > [TOOL] ${payload.data?.tool || '?'} ${
-                  payload.data?.input?.path ||
-                  payload.data?.input?.pattern ||
-                  ''
-                }\n`,
-              );
-              break;
-            case 'tool_result':
-              appendText(
-                `[${stampNow()}] > [RESULT] ${shortRepr(payload.data?.result)}\n`,
-              );
-              break;
-            case 'verification_start':
-              appendText(
-                `\n[${stampNow()}] > [VERIFY] starting\n`,
-              );
-              break;
-            case 'verification_result':
-              appendText(
-                `[${stampNow()}] > [${payload.data?.success ? 'PASS' : 'FAIL'}] ${
-                  payload.data?.step || ''
-                }\n`,
-              );
+              if (typeof payload.data === 'string' && payload.data.trim()) {
+                appendBlock({
+                  kind: 'paragraph',
+                  id: `sse-${Date.now()}`,
+                  text: payload.data.trim(),
+                  instant: true,
+                });
+              }
               break;
             case 'task_complete':
-              appendText(
-                `[${stampNow()}] > [DONE] ${payload.data?.title || 'task complete'}\n`,
-              );
               setState((prev) => ({
                 ...prev,
                 isWorking: false,
                 runStatus: 'succeeded',
               }));
+              if (payload.data?.title) {
+                appendBlock({
+                  kind: 'commit',
+                  id: `sse-commit-${Date.now()}`,
+                  message: payload.data.title,
+                });
+              }
               break;
             case 'error':
-              appendText(
-                `[${stampNow()}] > [ERROR] ${payload.data?.message || 'unknown error'}\n`,
-              );
+              appendBlock({
+                kind: 'paragraph',
+                id: `sse-err-${Date.now()}`,
+                text: `Error: ${payload.data?.message || 'unknown error'}`,
+                instant: true,
+              });
               break;
             default:
               break;
@@ -476,59 +495,30 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
       if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
       eventSource?.close();
     };
-  }, [appendText, pauseFeed]);
+  }, [appendBlock, pauseFeed]);
 
-  // ── Derived state for UI ───────────────────────────────────
   const stage = deriveStageLabel(state, connected);
-  const clockStr = new Date(nowMs).toISOString().substring(11, 19);
-  const progress = progressBar(stage, Math.floor(nowMs / 800));
-  const idleText = formatIdle(nowMs - lastEventAtRef.current);
-  const heartbeat =
-    Math.floor(nowMs / 1000) % 2 === 0 ? '♥' : '♡';
+  const stageClass = stage.toLowerCase();
 
-  const topLine = frameTop('tty://hermes-agent', [], COLS);
-  const statusRow = statusLine(
-    {
-      stage,
-      host: 'hermes@hermeschain',
-      progress,
-      clock: `${clockStr} UTC`,
-      idleText,
-      heartbeat,
-    },
-    COLS,
-  );
-  const bottomLine = frameDivider(COLS, { kind: 'bottom' });
+  const viewers = state.viewerCount;
 
-  // ── Pinned MOTD (always shown at top, wrapped in walls) ────
-  const motdRows: string[] = useMemo(
-    () =>
-      motdBlock(
-        {
-          uptime: formatUptime(state.genesisTimestamp, nowMs),
-          lastCommitSha: recentCommits[0]?.shortHash,
-          lastCommitMessage: recentCommits[0]?.message,
-          version: TERMINAL_VERSION,
-        },
-        COLS,
-      ),
-    [state.genesisTimestamp, nowMs, recentCommits],
-  );
-  const motdDivider = frameDivider(COLS, { label: 'live-feed' });
-
-  // ── Render stream rows (raw, no wall truncation) ──────────
-  const streamRows: string[] = useMemo(() => toLines(displayedText), [
-    displayedText,
-  ]);
-
-  // ── Prompt execution ──────────────────────────────────────
   const runCommand = useCallback(
     (raw: string) => {
       const trimmed = raw.trim();
-      if (trimmed) historyRef.current.push(trimmed);
+      if (!trimmed) return;
+      // Accept a leading `/` (matches the input placeholder hint) but the
+      // dispatcher itself treats the rest as a plain command word.
+      const stripped = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
+      historyRef.current.push(trimmed);
       setHistoryIndex(-1);
-      // Echo the command
-      appendText(`\nhermes@hermeschain:~$ ${trimmed}\n`);
+
+      appendBlock({
+        kind: 'paragraph',
+        id: `cmd-in-${Date.now()}`,
+        text: `> ${trimmed}`,
+        instant: true,
+      });
+
       const ctx: TerminalCtx = {
         blockHeight: state.blockHeight,
         uptime: formatUptime(state.genesisTimestamp, Date.now()),
@@ -536,21 +526,26 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
         recentCommits,
         history: historyRef.current,
         handleTab: (tab) => handleTab?.(tab),
-        clear: () => resetOutput(),
+        clear: () => hardClear(),
       };
-      const result = executeCommand(trimmed, ctx);
+      const result = executeCommand(stripped, ctx);
       if (result.clearFirst) {
-        resetOutput();
+        hardClear();
         return;
       }
       if (result.lines.length > 0) {
-        appendText(result.lines.join('\n') + '\n');
+        appendBlock({
+          kind: 'paragraph',
+          id: `cmd-out-${Date.now()}`,
+          text: result.lines.join('\n'),
+          instant: true,
+        });
       }
     },
-    [appendText, handleTab, recentCommits, resetOutput, state.blockHeight, state.genesisTimestamp],
+    [appendBlock, handleTab, hardClear, recentCommits, state.blockHeight, state.genesisTimestamp],
   );
 
-  const onPromptKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const onInputKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault();
       runCommand(command);
@@ -589,100 +584,104 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
     }
     if (event.key === 'Tab') {
       event.preventDefault();
-      const match = autocomplete(command);
-      if (match) setCommand(match + ' ');
+      const seed = command.startsWith('/') ? command.slice(1) : command;
+      const match = autocomplete(seed);
+      if (match) {
+        setCommand((command.startsWith('/') ? '/' : '') + match + ' ');
+      }
       return;
-    }
-    if (event.key === 'l' && event.ctrlKey) {
-      event.preventDefault();
-      resetOutput();
-      return;
-    }
-    if (event.key === 'c' && event.ctrlKey) {
-      event.preventDefault();
-      appendText(`\n${command}^C\n`);
-      setCommand('');
     }
   };
 
+  const onSendClick = () => {
+    runCommand(command);
+    setCommand('');
+    inputRef.current?.focus();
+  };
+
+  const visibleBlocks = useMemo(() => blocks, [blocks]);
+
   return (
-    <div
-      className={`ascii-screen ascii-screen--${variant}`}
-      onClick={() => inputRef.current?.focus()}
-    >
-      <pre className="ascii-screen__row ascii-screen__row--frame">
-        {topLine}
-      </pre>
-
-      <div className="ascii-screen__motd">
-        {motdRows.map((row, i) => (
-          <pre key={`motd-${i}`} className="ascii-screen__row ascii-screen__row--motd">
-            {row}
-          </pre>
-        ))}
-        <pre className="ascii-screen__row ascii-screen__row--frame">
-          {motdDivider}
-        </pre>
+    <div className={`terminal terminal--${variant}`}>
+      <div className="terminal__header">
+        <div className="terminal__dots" aria-hidden="true">
+          <span className="terminal__dot terminal__dot--r" />
+          <span className="terminal__dot terminal__dot--y" />
+          <span className="terminal__dot terminal__dot--g" />
+        </div>
+        <div className="terminal__title">~/hermes-agent</div>
+        <div className="terminal__meta">
+          {viewers > 1 ? (
+            <span className="terminal__views">view {viewers}</span>
+          ) : null}
+          <span className={`terminal__stage terminal__stage--${stageClass}`}>
+            {stage}
+          </span>
+        </div>
       </div>
 
-      <div ref={outputRef} className="ascii-screen__stream">
-        {streamRows.length === 0 ? (
-          <pre className="ascii-screen__row ascii-screen__row--dim">
-            {'waiting for agent feed...'}
-          </pre>
+      <div ref={bodyRef} className="terminal__body">
+        {visibleBlocks.length === 0 ? (
+          <p className="terminal__empty">waiting for agent…</p>
         ) : (
-          streamRows.map((row, index) => (
-            <pre key={index} className="ascii-screen__row">
-              {row}
-            </pre>
-          ))
+          visibleBlocks.map((block) => {
+            if (block.kind === 'paragraph') {
+              const typed = typedMap[block.id] ?? block.text.length;
+              const shown = block.text.slice(0, typed);
+              return (
+                <p key={block.id} className="terminal__block terminal__block--p">
+                  {renderParagraph(shown, block.chips)}
+                  {typed < block.text.length ? (
+                    <span className="terminal__caret" aria-hidden="true" />
+                  ) : null}
+                </p>
+              );
+            }
+            if (block.kind === 'code') {
+              return (
+                <div key={block.id} className="terminal__block terminal__block--code">
+                  <pre className="terminal__code-body">
+                    <code>{block.code}</code>
+                  </pre>
+                </div>
+              );
+            }
+            if (block.kind === 'commit') {
+              return (
+                <p key={block.id} className="terminal__block terminal__block--commit">
+                  <span className="terminal__commit-label">committed</span>
+                  <span className="terminal__commit-msg">{block.message}</span>
+                </p>
+              );
+            }
+            return null;
+          })
         )}
-        <pre className="ascii-screen__row ascii-screen__row--caret" />
       </div>
 
-      <pre className="ascii-screen__row ascii-screen__row--frame">
-        {statusRow}
-      </pre>
-
-      <pre className="ascii-screen__row ascii-screen__row--prompt">
-        <span className="ascii-screen__prompt-prefix">
-          {'hermes@hermeschain:~$ '}
-        </span>
+      <div className="terminal__input-row">
         <input
           ref={inputRef}
-          className="ascii-screen__prompt-input"
+          className="terminal__input"
           value={command}
           onChange={(e) => setCommand(e.target.value)}
-          onKeyDown={onPromptKey}
+          onKeyDown={onInputKey}
           spellCheck={false}
           autoComplete="off"
+          placeholder="Message Hermes or type /help for commands…"
           aria-label="terminal input"
         />
-        <span className="ascii-screen__prompt-cursor" aria-hidden="true">
-          █
-        </span>
-      </pre>
-
-      <pre className="ascii-screen__row ascii-screen__row--frame">
-        {bottomLine}
-      </pre>
+        <button
+          type="button"
+          className="terminal__send"
+          onClick={onSendClick}
+          disabled={!command.trim()}
+        >
+          Send
+        </button>
+      </div>
     </div>
   );
 };
-
-function stampNow(): string {
-  return new Date().toISOString().substring(11, 19);
-}
-
-function shortRepr(value: unknown): string {
-  if (typeof value === 'string') return value.slice(0, 80);
-  if (value == null) return '(no result)';
-  try {
-    const str = JSON.stringify(value);
-    return str.length > 80 ? str.slice(0, 77) + '...' : str;
-  } catch {
-    return '[object]';
-  }
-}
 
 export default AgentTerminal;

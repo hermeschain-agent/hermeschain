@@ -57,22 +57,20 @@ function helpLines(): string[] {
   return [
     'Available commands:',
     '',
-    '  help             list commands',
-    '  clear            wipe the stream',
-    '  whoami           show current identity',
-    '  uname [-a]       kernel / chain identity',
-    '  uptime           how long Hermes has been running',
-    '  date             current UTC time',
-    '  pwd              current path',
-    '  ls               pseudo filesystem listing',
-    '  blocks           last block heights',
-    '  tail [commits]   last autonomous commits',
-    '  summon hermes    open the agent chat',
-    '  goto <tab>       navigate (terminal / explorer / wallet ...)',
-    '  history          command history',
-    '  echo <args>      echo back',
-    '  exit             refresh the tty',
-    '',
+    '  /help             list commands',
+    '  /clear            wipe the stream',
+    '  /whoami           show current identity',
+    '  /uname [-a]       kernel / chain identity',
+    '  /uptime           how long Hermes has been running',
+    '  /date             current UTC time',
+    '  /pwd              current path',
+    '  /ls               pseudo filesystem listing',
+    '  /blocks           last block heights',
+    '  /tail [commits]   last autonomous commits',
+    '  /summon hermes    open the agent chat',
+    '  /goto <tab>       navigate (terminal / explorer / wallet ...)',
+    '  /history          command history',
+    '  /echo <args>      echo back',
   ];
 }
 
@@ -210,7 +208,9 @@ export function executeCommand(raw: string, ctx: TerminalCtx): CommandResult {
       return { lines: ['^D'] };
 
     default:
-      return { lines: [`bash: ${cmd}: command not found`] };
+      return {
+        lines: [`Unknown command: /${cmd} — type /help for the list.`],
+      };
   }
 }
 

@@ -890,7 +890,7 @@ button { font-family: inherit; cursor: pointer; }
   background: rgba(2, 18, 18, 0.76);
 }
 
-.terminal-preview-frame > .ascii-screen {
+.terminal-preview-frame > .terminal {
   flex: 1;
   min-height: 0;
 }
@@ -2013,167 +2013,289 @@ button { font-family: inherit; cursor: pointer; }
   color: var(--fg-faint);
 }
 
-/* ---- Hermes terminal HUD ---- */
-
-/* ─── ASCII terminal screen ───────────────────────────────────────
- * The whole terminal is a single stack of <pre> rows rendered with
- * box-drawing characters. No chips, no bezel, no flex chrome — just
- * monospaced text inside a phosphor-green surface.
- */
+/* ---- Hermes terminal (macOS window aesthetic) ---- */
 
 :root {
-  --ascii-bg:     #110a02;
-  --ascii-fg:     #ffcf7a;
-  --ascii-dim:    #a87a38;
-  --ascii-accent: #ffe6a8;
-  --ascii-warn:   #ffb44a;
-  --ascii-error:  #ff7a7a;
+  --term-bg:       #0b0d0c;
+  --term-fg:       #e4e4e2;
+  --term-dim:      #7a7a78;
+  --term-accent:   #6ee8b8;
+  --term-chip-bg:  rgba(255, 110, 110, 0.14);
+  --term-chip-fg:  #ff9e9e;
+  --term-hairline: rgba(255, 255, 255, 0.07);
 }
 
-.ascii-screen {
+.terminal {
   position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 10px 12px 12px;
-  background: var(--ascii-bg);
-  color: var(--ascii-fg);
+  background: var(--term-bg);
+  color: var(--term-fg);
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.25;
-  letter-spacing: 0;
-  white-space: pre;
-  cursor: text;
+  font-size: 13.5px;
+  line-height: 1.55;
   overflow: hidden;
-  animation: crtFlicker 7.3s infinite steps(24, end);
 }
 
-.ascii-screen::before {
+.terminal--embedded {
+  border: 1px solid var(--term-hairline);
+}
+
+.terminal__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--term-hairline);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.terminal__dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.terminal__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #4a4a4a;
+}
+.terminal__dot--r { background: #ff5f57; }
+.terminal__dot--y { background: #febc2e; }
+.terminal__dot--g { background: #28c940; }
+
+.terminal__title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--term-dim);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--term-dim);
+  text-transform: lowercase;
+}
+
+.terminal__views {
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal__stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--term-accent);
+  background: rgba(110, 232, 184, 0.08);
+}
+
+.terminal__stage::before {
   content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    repeating-linear-gradient(
-      0deg,
-      transparent 0 3px,
-      rgba(255, 200, 114, 0.05) 3px 4px
-    );
-  opacity: 0.55;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--term-accent);
 }
 
-.ascii-screen::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse at center,
-    transparent 55%,
-    rgba(0, 0, 0, 0.5) 100%
-  );
+.terminal__stage--offline,
+.terminal__stage--halted {
+  color: #ff8a8a;
+  background: rgba(255, 138, 138, 0.08);
+}
+.terminal__stage--offline::before,
+.terminal__stage--halted::before {
+  background: #ff8a8a;
 }
 
-.ascii-screen--embedded {
-  border: 2px solid var(--cream-mid);
-  box-shadow:
-    6px 6px 0 0 var(--cream-dim),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.55);
+.terminal__stage--verify,
+.terminal__stage--analyze,
+.terminal__stage--exec,
+.terminal__stage--run {
+  color: var(--term-accent);
+  background: rgba(110, 232, 184, 0.1);
+}
+.terminal__stage--run::before,
+.terminal__stage--exec::before,
+.terminal__stage--analyze::before,
+.terminal__stage--verify::before {
+  animation: pulse 1.2s steps(2, end) infinite;
 }
 
-.ascii-screen__row {
-  margin: 0;
-  padding: 0;
-  font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  color: inherit;
-  white-space: pre;
-  position: relative;
-  z-index: 1;
-  text-shadow: 0 0 4px rgba(255, 200, 114, 0.28);
-}
-
-.ascii-screen__motd {
-  flex: 0 0 auto;
-  position: relative;
-  z-index: 1;
-}
-
-.ascii-screen__row--motd {
-  color: var(--ascii-accent);
-  text-shadow: 0 0 6px rgba(255, 220, 150, 0.35);
-}
-
-.ascii-screen__row--frame {
-  color: var(--ascii-fg);
-  letter-spacing: 0;
-}
-
-.ascii-screen__stream {
+.terminal__body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding: 18px 20px 12px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 200, 114, 0.25) transparent;
-  position: relative;
-  z-index: 1;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
 
-.ascii-screen__stream::-webkit-scrollbar { width: 6px; }
-.ascii-screen__stream::-webkit-scrollbar-thumb {
-  background: rgba(255, 200, 114, 0.25);
+.terminal__body::-webkit-scrollbar { width: 6px; }
+.terminal__body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
 }
 
-.ascii-screen__row--caret::after {
-  content: '█';
+.terminal__empty {
+  margin: 0;
+  color: var(--term-dim);
+  font-style: italic;
+}
+
+.terminal__block {
+  margin: 0 0 14px;
+  color: var(--term-fg);
+  word-break: break-word;
+}
+
+.terminal__block--p {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.terminal__caret {
   display: inline-block;
-  color: var(--ascii-accent);
-  animation: cursorBlink 0.9s steps(2, end) infinite;
+  width: 7px;
+  height: 15px;
   margin-left: 2px;
+  background: var(--term-fg);
+  vertical-align: -2px;
+  animation: cursorBlink 0.9s steps(2, end) infinite;
 }
 
-.ascii-screen__row--prompt {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  color: var(--ascii-fg);
+.terminal__path-chip {
+  display: inline;
+  padding: 1px 5px;
+  margin: 0 1px;
+  border-radius: 3px;
+  background: var(--term-chip-bg);
+  color: var(--term-chip-fg);
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+  white-space: nowrap;
 }
 
-.ascii-screen__prompt-prefix,
-.ascii-screen__prompt-suffix {
-  font-family: inherit;
-  color: var(--ascii-fg);
+.terminal__block--code {
+  margin: 12px 0 18px;
+  border: 1px solid var(--term-hairline);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.terminal__code-body {
+  margin: 0;
+  padding: 14px 18px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(228, 228, 226, 0.92);
   white-space: pre;
 }
 
-.ascii-screen__prompt-input {
-  flex: 0 0 auto;
-  min-width: 0;
-  border: none;
-  outline: none;
-  padding: 0;
-  margin: 0;
-  background: transparent;
-  color: var(--ascii-accent);
+.terminal__code-body code {
   font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  letter-spacing: 0;
-  caret-color: transparent;
+  color: inherit;
+  background: none;
 }
 
-.ascii-screen__prompt-cursor {
-  color: var(--ascii-accent);
-  animation: cursorBlink 0.9s steps(2, end) infinite;
-  margin-left: -2px;
+.terminal__block--commit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 6px 12px;
+  border-left: 2px solid var(--term-accent);
+  background: rgba(110, 232, 184, 0.05);
+  border-radius: 0 4px 4px 0;
 }
 
-@keyframes crtFlicker {
-  0%, 6%, 10%, 60%, 62%, 100% { opacity: 1; }
-  7%, 9% { opacity: 0.94; }
-  61% { opacity: 0.88; }
+.terminal__commit-label {
+  color: var(--term-accent);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.terminal__commit-msg {
+  color: var(--term-fg);
+}
+
+.terminal__input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--term-hairline);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.terminal__input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--term-hairline);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--term-fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.terminal__input::placeholder {
+  color: var(--term-dim);
+}
+.terminal__input:focus {
+  border-color: rgba(110, 232, 184, 0.4);
+}
+
+.terminal__send {
+  flex-shrink: 0;
+  padding: 9px 18px;
+  border: none;
+  border-radius: 8px;
+  background: var(--term-accent);
+  color: #0b0d0c;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: filter 120ms ease, opacity 120ms ease;
+}
+.terminal__send:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.terminal__send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .agent-code-block {
@@ -2534,9 +2656,9 @@ button { font-family: inherit; cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   .tab-btn,
-  .ascii-screen,
-  .ascii-screen__row--caret::after,
-  .ascii-screen__prompt-cursor {
+  .terminal,
+  .terminal__caret,
+  .terminal__stage::before {
     animation: none !important;
     transition: none;
   }

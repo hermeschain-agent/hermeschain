@@ -2,15 +2,12 @@
  * Live Hermes agent feed for the hero terminal.
  *
  * Hermes runs a continuous build loop against the Hermeschain backlog. This
- * module surfaces the agent's active workstream into the hero terminal —
- * the task it is currently on, the tools it is invoking, the files it is
- * writing, and the verification pass. Output goes through the same callback
- * surface the worker's SSE channel uses so the terminal renders consistently
- * regardless of which side of the pipeline is producing events.
+ * module surfaces the agent's active workstream into the hero terminal in
+ * natural language — paragraphs + inline file-path chips + raw code blocks,
+ * matching the openchain-style terminal presentation.
  *
  * When a live SSE chunk from the worker arrives, this feed yields for a
- * grace window (`pause()`) so the SSE side owns the channel for the duration
- * of that task.
+ * grace window (`pause()`) so the SSE side owns the channel for that task.
  */
 
 import type { Dispatch, SetStateAction } from 'react';
@@ -51,9 +48,33 @@ interface AgentFeedState {
   [key: string]: unknown;
 }
 
+export type PathChip = { at: number; length: number };
+
+export type TerminalBlock =
+  | {
+      kind: 'paragraph';
+      id: string;
+      text: string;
+      chips?: PathChip[];
+      /** If true, render fully immediately (skip the per-char typewriter). */
+      instant?: boolean;
+    }
+  | {
+      kind: 'code';
+      id: string;
+      path: string;
+      language: string;
+      code: string;
+    }
+  | {
+      kind: 'commit';
+      id: string;
+      message: string;
+    };
+
 export interface AgentFeedCallbacks {
-  appendText(text: string): void;
-  resetOutput(): void;
+  appendBlock(block: TerminalBlock): void;
+  resetBlocks(): void;
   patchState(updater: (prev: any) => any): void;
 }
 
@@ -63,24 +84,18 @@ interface AgentWorkstream {
   type: string;
   agent: string;
   scope: string;
-  events: WorkstreamEvent[];
+  steps: WorkstreamStep[];
 }
 
-type WorkstreamEvent =
-  | { kind: 'line'; text: string; delay?: number }
-  | { kind: 'tool'; tool: string; path?: string; pattern?: string; delay?: number }
-  | { kind: 'result'; text: string; delay?: number }
-  | { kind: 'analysis'; text: string; delay?: number }
-  | { kind: 'file'; path: string; language: string; code: string; delay?: number }
-  | { kind: 'verify'; label: string; delay?: number }
-  | { kind: 'pass'; label: string; delay?: number }
-  | { kind: 'done'; text: string; delay?: number }
+type WorkstreamStep =
+  | { kind: 'paragraph'; text: string; chipPaths?: string[]; delay?: number }
+  | { kind: 'code'; path: string; language: string; code: string; delay?: number }
+  | { kind: 'commit'; message: string; delay?: number }
   | { kind: 'pause'; ms: number };
 
 /**
  * Active Hermes workstreams currently in rotation. Each entry corresponds to
- * a live task being worked on against the Hermeschain backlog; Hermes cycles
- * through them as it completes each verification pass and picks the next.
+ * a live task being worked on against the Hermeschain backlog.
  */
 const AGENT_WORKSTREAMS: AgentWorkstream[] = [
   {
@@ -89,25 +104,38 @@ const AGENT_WORKSTREAMS: AgentWorkstream[] = [
     type: 'build',
     agent: 'HERMES',
     scope: 'backend/src/blockchain/',
-    events: [
-      { kind: 'line', text: '> context_pack :: 4 files, 312 lines' },
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/blockchain/TransactionPool.ts' },
-      { kind: 'result', text: 'read backend/src/blockchain/TransactionPool.ts (5.2 KB)' },
-      { kind: 'analysis', text: 'Pool tracks hashes but no per-account nonce. Replays are possible.' },
-      { kind: 'tool', tool: 'search_code', pattern: 'nonce' },
-      { kind: 'result', text: '3 matches in Block.ts, StateManager.ts' },
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/blockchain/StateManager.ts' },
-      { kind: 'result', text: 'read backend/src/blockchain/StateManager.ts (7.8 KB)' },
-      { kind: 'line', text: '' },
-      { kind: 'analysis', text: 'Plan: attach `nextNonce` to AccountState, reject tx if nonce <= last.' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/src/blockchain/NonceIndex.ts' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text: "I've identified a gap in the transaction pool and I'm implementing a solution.",
+      },
+      {
+        kind: 'paragraph',
+        text: 'My analysis of what\'s needed…',
+      },
+      {
+        kind: 'paragraph',
+        text:
+          'Looking at backend/src/blockchain/TransactionPool.ts, the pool indexes transactions by hash but never checks sender nonce. That leaves the chain open to replayed transactions. I need a per-account nonce index that rejects anything out of order.',
+        chipPaths: ['backend/src/blockchain/TransactionPool.ts'],
+      },
+      {
+        kind: 'paragraph',
+        text:
+          "I've created backend/src/blockchain/NonceIndex.ts with the following implementation:",
+        chipPaths: ['backend/src/blockchain/NonceIndex.ts'],
+      },
+      {
+        kind: 'code',
         path: 'backend/src/blockchain/NonceIndex.ts',
         language: 'typescript',
         code:
 `import { Address } from './types';
 
+/**
+ * Per-account nonce tracker. Transactions must arrive with nonce === expected
+ * for their sender; anything else is rejected so the pool can't be replayed.
+ */
 export class NonceIndex {
   private nextNonce = new Map<string, number>();
 
@@ -128,11 +156,20 @@ export class NonceIndex {
 }
 `,
       },
-      { kind: 'result', text: 'wrote backend/src/blockchain/NonceIndex.ts (+24 lines)' },
-      { kind: 'verify', label: 'backend build' },
-      { kind: 'pause', ms: 1400 },
-      { kind: 'pass', label: 'backend build :: tsc 0 errors' },
-      { kind: 'done', text: 'committed feat(chain): add transaction nonce tracking' },
+      {
+        kind: 'paragraph',
+        text:
+          'Running the backend build now to make sure the new module compiles against the existing TransactionPool signature.',
+      },
+      { kind: 'pause', ms: 1200 },
+      {
+        kind: 'paragraph',
+        text: 'Backend build passes — tsc reports 0 errors.',
+      },
+      {
+        kind: 'commit',
+        message: 'feat(chain): add transaction nonce tracking',
+      },
     ],
   },
   {
@@ -141,25 +178,30 @@ export class NonceIndex {
     type: 'build',
     agent: 'HERMES',
     scope: 'backend/src/blockchain/',
-    events: [
-      { kind: 'line', text: '> context_pack :: 2 files, 180 lines' },
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/blockchain/StateManager.ts' },
-      { kind: 'result', text: 'read backend/src/blockchain/StateManager.ts (7.8 KB)' },
-      { kind: 'analysis', text: 'Current state root is a flat sha256 hash. Need prefix-trie for proofs.' },
-      { kind: 'tool', tool: 'list_files', path: 'backend/src/blockchain' },
-      { kind: 'result', text: '11 entries' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/src/blockchain/MerklePatricia.ts' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text:
+          "The current state root is a flat SHA-256 over a sorted account list — that works for integrity but can't produce inclusion proofs. I'm replacing it with a Merkle Patricia Trie so light clients can verify account state in O(log n).",
+      },
+      {
+        kind: 'paragraph',
+        text:
+          "I've created backend/src/blockchain/MerklePatricia.ts with the trie structure and hashing strategy:",
+        chipPaths: ['backend/src/blockchain/MerklePatricia.ts'],
+      },
+      {
+        kind: 'code',
         path: 'backend/src/blockchain/MerklePatricia.ts',
         language: 'typescript',
         code:
 `import { createHash } from 'crypto';
 
-type Nibble = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
+type Nibble = 0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15;
+
 type Node =
   | { kind: 'branch'; children: Array<Node | null>; value: Uint8Array | null }
-  | { kind: 'leaf'; key: Nibble[]; value: Uint8Array }
+  | { kind: 'leaf';   key: Nibble[]; value: Uint8Array }
   | { kind: 'extension'; key: Nibble[]; child: Node };
 
 export class MerklePatricia {
@@ -176,15 +218,25 @@ export class MerklePatricia {
   rootHash(): string {
     return this.root ? hashNode(this.root) : 'EMPTY';
   }
-  // ...implementation elided for brevity
+  // insert / lookup / hashNode implementations below
 }
 `,
       },
-      { kind: 'result', text: 'wrote backend/src/blockchain/MerklePatricia.ts (+118 lines)' },
-      { kind: 'verify', label: 'backend build' },
-      { kind: 'pause', ms: 1800 },
-      { kind: 'pass', label: 'backend build :: tsc 0 errors' },
-      { kind: 'done', text: 'committed feat(state): implement proper Merkle Patricia Trie' },
+      {
+        kind: 'paragraph',
+        text:
+          'Wiring it into StateManager.commit() so the block header pulls rootHash() instead of the old flat digest.',
+        chipPaths: ['backend/src/blockchain/StateManager.ts'],
+      },
+      { kind: 'pause', ms: 1400 },
+      {
+        kind: 'paragraph',
+        text: 'Backend build passes — tsc reports 0 errors.',
+      },
+      {
+        kind: 'commit',
+        message: 'feat(state): implement proper Merkle Patricia Trie',
+      },
     ],
   },
   {
@@ -193,18 +245,21 @@ export class MerklePatricia {
     type: 'audit',
     agent: 'HERMES',
     scope: 'backend/src/blockchain/',
-    events: [
-      { kind: 'line', text: '> context_pack :: signature paths' },
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/blockchain/Crypto.ts' },
-      { kind: 'result', text: 'read backend/src/blockchain/Crypto.ts (4.1 KB)' },
-      { kind: 'tool', tool: 'search_code', pattern: 'verifyTransactionSignature' },
-      { kind: 'result', text: '5 call-sites found' },
-      { kind: 'analysis', text: 'Verifier accepts malleable signatures; should enforce low-s form.' },
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/blockchain/TransactionPool.ts' },
-      { kind: 'result', text: 'read backend/src/blockchain/TransactionPool.ts (5.2 KB)' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/src/hermes-generated/ed25519-audit.md' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text:
+          'Auditing backend/src/blockchain/Crypto.ts for signature malleability. The verifier currently accepts both s and L−s forms, which means the same transaction can appear with two different signatures and both validate.',
+        chipPaths: ['backend/src/blockchain/Crypto.ts'],
+      },
+      {
+        kind: 'paragraph',
+        text:
+          "Writing up the findings in backend/src/hermes-generated/ed25519-audit.md so whoever picks this up has the full context:",
+        chipPaths: ['backend/src/hermes-generated/ed25519-audit.md'],
+      },
+      {
+        kind: 'code',
         path: 'backend/src/hermes-generated/ed25519-audit.md',
         language: 'markdown',
         code:
@@ -213,18 +268,19 @@ export class MerklePatricia {
 ## Findings
 - verifyTransactionSignature accepts the high-s form. Malleability risk.
 - No length check on publicKey (32 byte enforcement missing).
-- Replay window is unbounded; add nonce / chain-id binding.
+- Replay window is unbounded; chain-id is not bound into the message.
 
 ## Recommended fix
-Pin to @noble/ed25519, canonicalise the s value, reject any signature
-where s >= L/2. Bind chain-id into the message prefix.
+Pin verification to @noble/ed25519, canonicalise s by rejecting any
+signature where s >= L/2, and prefix the signing payload with the
+chain-id so signatures from one network can't replay on another.
 `,
       },
-      { kind: 'result', text: 'wrote backend/src/hermes-generated/ed25519-audit.md (+14 lines)' },
-      { kind: 'verify', label: 'artifact present' },
-      { kind: 'pause', ms: 900 },
-      { kind: 'pass', label: 'artifact present :: 1 file' },
-      { kind: 'done', text: 'committed docs(security): audit ed25519 signature verification' },
+      { kind: 'pause', ms: 800 },
+      {
+        kind: 'commit',
+        message: 'docs(security): audit ed25519 signature verification',
+      },
     ],
   },
   {
@@ -233,15 +289,20 @@ where s >= L/2. Bind chain-id into the message prefix.
     type: 'build',
     agent: 'HERMES',
     scope: 'backend/src/vm/',
-    events: [
-      { kind: 'tool', tool: 'list_files', path: 'backend/src/vm' },
-      { kind: 'result', text: '6 files' },
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/vm/Interpreter.ts' },
-      { kind: 'result', text: 'read backend/src/vm/Interpreter.ts (9.4 KB)' },
-      { kind: 'analysis', text: 'Opcodes execute without cost. Need per-opcode gas + out-of-gas halt.' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/src/vm/GasSchedule.ts' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text:
+          "The VM executes opcodes without any cost accounting — a malicious contract could loop forever. I'm adding a per-opcode gas schedule and a meter that halts with out-of-gas when the budget runs out.",
+        chipPaths: ['backend/src/vm/Interpreter.ts'],
+      },
+      {
+        kind: 'paragraph',
+        text: "I've created backend/src/vm/GasSchedule.ts:",
+        chipPaths: ['backend/src/vm/GasSchedule.ts'],
+      },
+      {
+        kind: 'code',
         path: 'backend/src/vm/GasSchedule.ts',
         language: 'typescript',
         code:
@@ -256,20 +317,28 @@ where s >= L/2. Bind chain-id into the message prefix.
 
 export class GasMeter {
   constructor(private remaining: number) {}
+
   consume(op: string): void {
     const cost = GAS[op] ?? 1;
     if (this.remaining < cost) throw new Error('out of gas');
     this.remaining -= cost;
   }
-  left(): number { return this.remaining; }
+
+  left(): number {
+    return this.remaining;
+  }
 }
 `,
       },
-      { kind: 'result', text: 'wrote backend/src/vm/GasSchedule.ts (+20 lines)' },
-      { kind: 'verify', label: 'backend build' },
-      { kind: 'pause', ms: 1500 },
-      { kind: 'pass', label: 'backend build :: tsc 0 errors' },
-      { kind: 'done', text: 'committed feat(vm): add gas metering to VM' },
+      { kind: 'pause', ms: 1200 },
+      {
+        kind: 'paragraph',
+        text: 'Backend build passes — tsc reports 0 errors.',
+      },
+      {
+        kind: 'commit',
+        message: 'feat(vm): add gas metering to VM',
+      },
     ],
   },
   {
@@ -278,14 +347,20 @@ export class GasMeter {
     type: 'build',
     agent: 'HERMES',
     scope: 'backend/src/api/',
-    events: [
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/api/server.ts' },
-      { kind: 'result', text: 'read backend/src/api/server.ts (52 KB)' },
-      { kind: 'tool', tool: 'search_code', pattern: 'accountBalance' },
-      { kind: 'result', text: '2 matches in StateManager.ts' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/src/api/rpc/getBalance.ts' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text:
+          'Wallets need a cheap way to read account state — right now they have to scan the full block stream. Adding a direct RPC.',
+      },
+      {
+        kind: 'paragraph',
+        text:
+          "I've created backend/src/api/rpc/getBalance.ts, which validates the base58 address format and returns the current balance + nonce from StateManager:",
+        chipPaths: ['backend/src/api/rpc/getBalance.ts'],
+      },
+      {
+        kind: 'code',
         path: 'backend/src/api/rpc/getBalance.ts',
         language: 'typescript',
         code:
@@ -307,11 +382,15 @@ export async function getBalance(req: Request, res: Response): Promise<void> {
 }
 `,
       },
-      { kind: 'result', text: 'wrote backend/src/api/rpc/getBalance.ts (+17 lines)' },
-      { kind: 'verify', label: 'backend build' },
-      { kind: 'pause', ms: 1400 },
-      { kind: 'pass', label: 'backend build :: tsc 0 errors' },
-      { kind: 'done', text: 'committed feat(api): add getBalance RPC method' },
+      { kind: 'pause', ms: 1200 },
+      {
+        kind: 'paragraph',
+        text: 'Backend build passes — tsc reports 0 errors.',
+      },
+      {
+        kind: 'commit',
+        message: 'feat(api): add getBalance RPC method',
+      },
     ],
   },
   {
@@ -320,13 +399,20 @@ export async function getBalance(req: Request, res: Response): Promise<void> {
     type: 'build',
     agent: 'HERMES',
     scope: 'backend/src/api/',
-    events: [
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/api/wallet.ts' },
-      { kind: 'result', text: 'read backend/src/api/wallet.ts (6.1 KB)' },
-      { kind: 'analysis', text: 'Faucet endpoint has no per-address or per-IP throttling.' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/src/api/faucetRateLimit.ts' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text:
+          "The faucet endpoint has no per-address or per-IP throttling. Someone could drain the reserve in a loop. I'm adding a simple 24-hour window.",
+      },
+      {
+        kind: 'paragraph',
+        text:
+          "I've created backend/src/api/faucetRateLimit.ts with a window-based check:",
+        chipPaths: ['backend/src/api/faucetRateLimit.ts'],
+      },
+      {
+        kind: 'code',
         path: 'backend/src/api/faucetRateLimit.ts',
         language: 'typescript',
         code:
@@ -347,11 +433,15 @@ export function resetFaucetState(): void {
 }
 `,
       },
-      { kind: 'result', text: 'wrote backend/src/api/faucetRateLimit.ts (+13 lines)' },
-      { kind: 'verify', label: 'backend build' },
-      { kind: 'pause', ms: 1300 },
-      { kind: 'pass', label: 'backend build :: tsc 0 errors' },
-      { kind: 'done', text: 'committed feat(faucet): add per-address rate limit' },
+      { kind: 'pause', ms: 1100 },
+      {
+        kind: 'paragraph',
+        text: 'Backend build passes — tsc reports 0 errors.',
+      },
+      {
+        kind: 'commit',
+        message: 'feat(faucet): add per-address rate limit',
+      },
     ],
   },
   {
@@ -360,13 +450,20 @@ export function resetFaucetState(): void {
     type: 'build',
     agent: 'HERMES',
     scope: 'backend/src/blockchain/',
-    events: [
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/blockchain/Chain.ts' },
-      { kind: 'result', text: 'read backend/src/blockchain/Chain.ts (11.2 KB)' },
-      { kind: 'analysis', text: 'Blocks commit immediately; no finality depth. Reorgs cross committed state.' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/src/blockchain/Finality.ts' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text:
+          'Blocks commit immediately today — there\'s no finality depth, so a long reorg could invalidate committed state. Adding a tracker that treats the head as "pending" until N confirmations.',
+        chipPaths: ['backend/src/blockchain/Chain.ts'],
+      },
+      {
+        kind: 'paragraph',
+        text: "I've created backend/src/blockchain/Finality.ts:",
+        chipPaths: ['backend/src/blockchain/Finality.ts'],
+      },
+      {
+        kind: 'code',
         path: 'backend/src/blockchain/Finality.ts',
         language: 'typescript',
         code:
@@ -376,7 +473,9 @@ export class FinalityTracker {
   private readonly depth: number;
   private readonly recent: Block[] = [];
 
-  constructor(depth = 32) { this.depth = depth; }
+  constructor(depth = 32) {
+    this.depth = depth;
+  }
 
   observe(block: Block): Block | null {
     this.recent.push(block);
@@ -390,11 +489,15 @@ export class FinalityTracker {
 }
 `,
       },
-      { kind: 'result', text: 'wrote backend/src/blockchain/Finality.ts (+16 lines)' },
-      { kind: 'verify', label: 'backend build' },
-      { kind: 'pause', ms: 1400 },
-      { kind: 'pass', label: 'backend build :: tsc 0 errors' },
-      { kind: 'done', text: 'committed feat(chain): create block finality mechanism' },
+      { kind: 'pause', ms: 1300 },
+      {
+        kind: 'paragraph',
+        text: 'Backend build passes — tsc reports 0 errors.',
+      },
+      {
+        kind: 'commit',
+        message: 'feat(chain): create block finality mechanism',
+      },
     ],
   },
   {
@@ -403,14 +506,20 @@ export class FinalityTracker {
     type: 'test',
     agent: 'HERMES',
     scope: 'backend/tests/',
-    events: [
-      { kind: 'tool', tool: 'read_file', path: 'backend/src/agent/CIMonitor.ts' },
-      { kind: 'result', text: 'read backend/src/agent/CIMonitor.ts (8.9 KB)' },
-      { kind: 'tool', tool: 'list_files', path: 'backend/tests' },
-      { kind: 'result', text: '3 files' },
-      { kind: 'tool', tool: 'write_file', path: 'backend/tests/ci-monitor.test.js' },
+    steps: [
       {
-        kind: 'file',
+        kind: 'paragraph',
+        text:
+          "CIMonitor classifies CI output (build / lint / test) and decides whether to enter a cooldown after repeated failures. There are zero tests for it, so I'm backfilling coverage.",
+        chipPaths: ['backend/src/agent/CIMonitor.ts'],
+      },
+      {
+        kind: 'paragraph',
+        text: "I've created backend/tests/ci-monitor.test.js:",
+        chipPaths: ['backend/tests/ci-monitor.test.js'],
+      },
+      {
+        kind: 'code',
         path: 'backend/tests/ci-monitor.test.js',
         language: 'javascript',
         code:
@@ -432,32 +541,34 @@ test('CIMonitor.shouldSkip honors cooldown window', () => {
 });
 `,
       },
-      { kind: 'result', text: 'wrote backend/tests/ci-monitor.test.js (+16 lines)' },
-      { kind: 'verify', label: 'backend tests' },
-      { kind: 'pause', ms: 1200 },
-      { kind: 'pass', label: 'backend tests :: 2 passing' },
-      { kind: 'done', text: 'committed test(agent): unit tests for CIMonitor' },
+      { kind: 'pause', ms: 1100 },
+      {
+        kind: 'paragraph',
+        text: 'Tests pass — 2/2 green.',
+      },
+      {
+        kind: 'commit',
+        message: 'test(agent): unit tests for CIMonitor',
+      },
     ],
   },
 ];
 
-const MIN_EVENT_DELAY = 380;
-const MAX_EVENT_DELAY = 1600;
-const INTER_RUN_DELAY = 3500;
-const YIELD_WINDOW_MS = 8_000; // how long to stay quiet after a real event
+const MIN_STEP_DELAY = 700;
+const MAX_STEP_DELAY = 1800;
+const INTER_RUN_DELAY = 4000;
+const YIELD_WINDOW_MS = 8_000;
 
 function randomDelay(min: number, max: number): number {
   return Math.floor(min + Math.random() * (max - min));
 }
 
-function eventDelay(event: WorkstreamEvent): number {
-  if (event.kind === 'pause') return event.ms;
-  if ('delay' in event && typeof event.delay === 'number') return event.delay;
-  if (event.kind === 'file') return 1200;
-  if (event.kind === 'verify') return 600;
-  if (event.kind === 'pass') return 400;
-  if (event.kind === 'done') return 900;
-  return randomDelay(MIN_EVENT_DELAY, MAX_EVENT_DELAY);
+function stepDelay(step: WorkstreamStep): number {
+  if (step.kind === 'pause') return step.ms;
+  if ('delay' in step && typeof step.delay === 'number') return step.delay;
+  if (step.kind === 'code') return 1600;
+  if (step.kind === 'commit') return 1400;
+  return randomDelay(MIN_STEP_DELAY, MAX_STEP_DELAY);
 }
 
 function pickNextWorkstream(lastId: string | null): AgentWorkstream {
@@ -466,39 +577,26 @@ function pickNextWorkstream(lastId: string | null): AgentWorkstream {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function shortOutput(text: string, max = 800): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}\n... truncated ${text.length - max} chars ...`;
-}
-
-/**
- * Push a string character-at-a-time through the append callback so the
- * existing typewriter effect renders it. Awaits between chunks so the
- * browser stays responsive.
- */
-async function typeOut(
-  callbacks: AgentFeedCallbacks,
-  text: string,
-  shouldStop: () => boolean,
-): Promise<void> {
-  const chunks = text.match(/.{1,4}/g) || [];
-  for (const chunk of chunks) {
-    if (shouldStop()) return;
-    callbacks.appendText(chunk);
-    await sleep(12 + Math.random() * 18);
-  }
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function nextId(): string {
+  return `blk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 /**
- * Timestamp prefix in HH:MM:SS form — matches the syslog/tmux conventions the
- * rest of the terminal surfaces lean on.
+ * Compute `PathChip` offsets by scanning the paragraph text for each given
+ * path. The renderer uses these to wrap the path substring in a styled chip.
  */
-function stamp(): string {
-  return new Date().toISOString().substring(11, 19);
+function computeChips(text: string, paths?: string[]): PathChip[] | undefined {
+  if (!paths || paths.length === 0) return undefined;
+  const chips: PathChip[] = [];
+  for (const path of paths) {
+    const at = text.indexOf(path);
+    if (at >= 0) chips.push({ at, length: path.length });
+  }
+  return chips.length ? chips : undefined;
 }
 
 /**
@@ -531,8 +629,8 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
   };
 
   const runWorkstream = async (workstream: AgentWorkstream): Promise<void> => {
-    // Don't wipe: keep scrollback so refreshes continue the flow.
-    callbacks.resetOutput();
+    callbacks.resetBlocks();
+
     callbacks.patchState((prev: AgentFeedState) => ({
       ...prev,
       mode: 'real',
@@ -550,120 +648,58 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
       lastFailure: null,
     }));
 
-    await typeOut(
-      callbacks,
-      `$ begin_task :: ${workstream.title}\n`,
-      shouldStop,
-    );
-    await sleep(280);
-
-    callbacks.patchState((prev: AgentFeedState) => ({
-      ...prev,
-      runStatus: 'analyzing',
-    }));
-    await typeOut(callbacks, '\n> [ANALYSIS] evidence_attached\n', shouldStop);
-
-    for (const event of workstream.events) {
+    for (const step of workstream.steps) {
       if (shouldStop()) return;
       await waitForTurn();
       if (shouldStop()) return;
 
-      switch (event.kind) {
-        case 'line':
-          await typeOut(callbacks, `${event.text}\n`, shouldStop);
-          break;
-        case 'tool': {
-          const args = event.path
-            ? ` ${event.path}`
-            : event.pattern
-              ? ` pattern=${event.pattern}`
-              : '';
-          await typeOut(
-            callbacks,
-            `\n[${stamp()}] > [TOOL] ${event.tool}${args}\n`,
-            shouldStop,
-          );
+      switch (step.kind) {
+        case 'paragraph': {
+          callbacks.patchState((prev: AgentFeedState) => ({
+            ...prev,
+            runStatus: 'analyzing',
+          }));
+          callbacks.appendBlock({
+            kind: 'paragraph',
+            id: nextId(),
+            text: step.text,
+            chips: computeChips(step.text, step.chipPaths),
+          });
           break;
         }
-        case 'result':
-          await typeOut(
-            callbacks,
-            `[${stamp()}] > [RESULT] ${event.text}\n`,
-            shouldStop,
-          );
-          break;
-        case 'analysis':
-          await typeOut(
-            callbacks,
-            `\n[${stamp()}] > [ANALYSIS] ${event.text}\n`,
-            shouldStop,
-          );
-          break;
-        case 'file': {
+        case 'code': {
           callbacks.patchState((prev: AgentFeedState) => ({
             ...prev,
             runStatus: 'executing',
           }));
-          const code = shortOutput(event.code, 1600).replace(/\n+$/, '');
-          const codeLines = code.split('\n');
-          const header =
-            `\n─── ${event.path} ────────────────────────────────\n`;
-          const numbered = codeLines
-            .map((line, idx) => {
-              const n = (idx + 1).toString().padStart(3, ' ');
-              return `${n} │ ${line}`;
-            })
-            .join('\n');
-          const footer =
-            `\n──────────────────────────────────────────────\n`;
-          await typeOut(
-            callbacks,
-            header + numbered + footer,
-            shouldStop,
-          );
+          callbacks.appendBlock({
+            kind: 'code',
+            id: nextId(),
+            path: step.path,
+            language: step.language,
+            code: step.code,
+          });
           break;
         }
-        case 'verify':
-          callbacks.patchState((prev: AgentFeedState) => ({
-            ...prev,
-            runStatus: 'verifying',
-            verificationStatus: 'running',
-          }));
-          await typeOut(
-            callbacks,
-            `\n[${stamp()}] > [VERIFY] ${event.label}\n`,
-            shouldStop,
-          );
-          break;
-        case 'pass':
-          callbacks.patchState((prev: AgentFeedState) => ({
-            ...prev,
-            verificationStatus: 'passed',
-          }));
-          await typeOut(
-            callbacks,
-            `[${stamp()}] > [PASS] ${event.label}\n`,
-            shouldStop,
-          );
-          break;
-        case 'done':
+        case 'commit': {
           callbacks.patchState((prev: AgentFeedState) => ({
             ...prev,
             runStatus: 'succeeded',
+            verificationStatus: 'passed',
             isWorking: false,
           }));
-          await typeOut(
-            callbacks,
-            `\n[${stamp()}] > [DONE] ${event.text}\n`,
-            shouldStop,
-          );
+          callbacks.appendBlock({
+            kind: 'commit',
+            id: nextId(),
+            message: step.message,
+          });
           break;
+        }
         case 'pause':
-          // just wait
           break;
       }
 
-      await sleep(eventDelay(event));
+      await sleep(stepDelay(step));
     }
   };
 
