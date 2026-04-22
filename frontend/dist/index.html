@@ -3,6 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <script>
+      (function () {
+        try {
+          var saved = window.localStorage.getItem('hermeschain-theme');
+          var prefersLight =
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: light)').matches;
+          var theme = saved === 'light' || saved === 'dark'
+            ? saved
+            : (prefersLight ? 'light' : 'dark');
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
     <meta name="description" content="A blockchain that writes itself. One Nous Hermes instance, running live on a server, producing blocks, validating them, and answering for every decision." />
     <meta name="theme-color" content="#041C1C" />
     <meta property="og:title" content="HERMESCHAIN" />
@@ -19,12 +35,12 @@
     <meta name="twitter:image" content="https://hermeschain.xyz/og-image.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="icon" href="/hermes-logo.png" type="image/png" />
     <link rel="apple-touch-icon" href="/hermes-logo.png" />
     <title>HERMESCHAIN</title>
-    <script type="module" crossorigin src="/assets/index-89b9d8bc.js"></script>
-    <link rel="stylesheet" href="/assets/index-39aa8952.css">
+    <script type="module" crossorigin src="/assets/index-0ad779c6.js"></script>
+    <link rel="stylesheet" href="/assets/index-e4a01695.css">
   </head>
   <body>
     <div id="root"></div>

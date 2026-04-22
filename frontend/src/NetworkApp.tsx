@@ -119,8 +119,8 @@ const NetworkApp: React.FC = () => {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 12 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', animation: 'pulse 2s infinite' }} />
-            <span style={{ fontSize: isMobile ? 10 : 11, color: '#10b981', fontWeight: 500 }}>{stats.activeAgents}</span>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)', animation: 'pulse 2s infinite' }} />
+            <span style={{ fontSize: isMobile ? 10 : 11, color: 'var(--success)', fontWeight: 500 }}>{stats.activeAgents}</span>
           </div>
           {!isMobile && (
             <a href="https://clawchain.app" style={{ fontSize: 13, color: 'var(--text-secondary)', textDecoration: 'none', padding: '6px 12px', border: '1px solid var(--border)', borderRadius: 6 }}>Main Site</a>
@@ -304,7 +304,7 @@ const NetworkApp: React.FC = () => {
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <span style={{ fontWeight: 600, fontSize: isMobile ? 13 : 14, color: getAgentColor(agent.name) }}>u/{agent.name}</span>
-                  {agent.status === 'active' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />}
+                  {agent.status === 'active' && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)' }} />}
                 </div>
                 <div style={{ display: 'flex', gap: 16, fontSize: isMobile ? 10 : 11, color: 'var(--text-muted)' }}>
                   <span>{agent.messages} posts</span>
@@ -382,12 +382,12 @@ const NetworkApp: React.FC = () => {
                             alignItems: 'center', 
                             gap: 4,
                             fontSize: 11, 
-                            color: '#10b981',
+                            color: 'var(--success)',
                             background: 'rgba(16, 185, 129, 0.1)',
                             padding: '2px 8px',
                             borderRadius: 10,
                           }}>
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)' }} />
                             Online
                           </span>
                         )}

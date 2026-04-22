@@ -1,11 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, apiUrl } from './api';
 import { startLiveAgentFeed, TerminalBlock, PathChip } from './liveAgentFeed';
-import {
-  autocomplete,
-  executeCommand,
-  TerminalCtx,
-} from './terminalCommands';
 
 interface Task {
   id: string;
@@ -66,7 +61,6 @@ interface AgentState {
 
 interface AgentTerminalProps {
   variant?: 'rail' | 'embedded';
-  handleTab?: (tab: string) => void;
   recentCommits?: Array<{ shortHash: string; message: string; date: string }>;
 }
 
@@ -242,8 +236,6 @@ function renderParagraph(
 
 const AgentTerminal: React.FC<AgentTerminalProps> = ({
   variant = 'rail',
-  handleTab,
-  recentCommits = [],
 }) => {
   const [state, setState] = useState<AgentState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
@@ -251,15 +243,11 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
     variant === 'rail' ? loadBlocks() : [],
   );
   const [typedMap, setTypedMap] = useState<Record<string, number>>({});
-  const [command, setCommand] = useState('');
-  const [historyIndex, setHistoryIndex] = useState(-1);
 
-  const historyRef = useRef<string[]>([]);
   const typeTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
   const bodyRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const feedHandleRef = useRef<{ stop: () => void; pause: () => void } | null>(
     null,
   );
@@ -317,20 +305,7 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
   );
 
   const resetBlocks = useCallback(() => {
-    // Don't wipe on task boundary — keep scrollback continuous. Hard reset
-    // is only exposed via the /clear command.
-  }, []);
-
-  const hardClear = useCallback(() => {
-    typeTimersRef.current.forEach((t) => clearTimeout(t));
-    typeTimersRef.current.clear();
-    setBlocks([]);
-    setTypedMap({});
-    try {
-      window.sessionStorage.removeItem(BLOCKS_STORAGE_KEY);
-    } catch {
-      /* noop */
-    }
+    // Don't wipe on task boundary — keep scrollback continuous.
   }, []);
 
   const pauseFeed = useCallback(() => {
@@ -502,103 +477,6 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
 
   const viewers = state.viewerCount;
 
-  const runCommand = useCallback(
-    (raw: string) => {
-      const trimmed = raw.trim();
-      if (!trimmed) return;
-      // Accept a leading `/` (matches the input placeholder hint) but the
-      // dispatcher itself treats the rest as a plain command word.
-      const stripped = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
-      historyRef.current.push(trimmed);
-      setHistoryIndex(-1);
-
-      appendBlock({
-        kind: 'paragraph',
-        id: `cmd-in-${Date.now()}`,
-        text: `> ${trimmed}`,
-        instant: true,
-      });
-
-      const ctx: TerminalCtx = {
-        blockHeight: state.blockHeight,
-        uptime: formatUptime(state.genesisTimestamp, Date.now()),
-        genesisTimestamp: state.genesisTimestamp,
-        recentCommits,
-        history: historyRef.current,
-        handleTab: (tab) => handleTab?.(tab),
-        clear: () => hardClear(),
-      };
-      const result = executeCommand(stripped, ctx);
-      if (result.clearFirst) {
-        hardClear();
-        return;
-      }
-      if (result.lines.length > 0) {
-        appendBlock({
-          kind: 'paragraph',
-          id: `cmd-out-${Date.now()}`,
-          text: result.lines.join('\n'),
-          instant: true,
-        });
-      }
-    },
-    [appendBlock, handleTab, hardClear, recentCommits, state.blockHeight, state.genesisTimestamp],
-  );
-
-  const onInputKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      runCommand(command);
-      setCommand('');
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      const history = historyRef.current;
-      if (history.length === 0) return;
-      const nextIdx =
-        historyIndex < 0
-          ? history.length - 1
-          : Math.max(0, historyIndex - 1);
-      setHistoryIndex(nextIdx);
-      setCommand(history[nextIdx]);
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      const history = historyRef.current;
-      if (history.length === 0 || historyIndex < 0) {
-        setCommand('');
-        setHistoryIndex(-1);
-        return;
-      }
-      const nextIdx = historyIndex + 1;
-      if (nextIdx >= history.length) {
-        setHistoryIndex(-1);
-        setCommand('');
-      } else {
-        setHistoryIndex(nextIdx);
-        setCommand(history[nextIdx]);
-      }
-      return;
-    }
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      const seed = command.startsWith('/') ? command.slice(1) : command;
-      const match = autocomplete(seed);
-      if (match) {
-        setCommand((command.startsWith('/') ? '/' : '') + match + ' ');
-      }
-      return;
-    }
-  };
-
-  const onSendClick = () => {
-    runCommand(command);
-    setCommand('');
-    inputRef.current?.focus();
-  };
-
   const visibleBlocks = useMemo(() => blocks, [blocks]);
 
   return (
@@ -649,8 +527,10 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
             if (block.kind === 'commit') {
               return (
                 <p key={block.id} className="terminal__block terminal__block--commit">
-                  <span className="terminal__commit-label">committed</span>
-                  <span className="terminal__commit-msg">{block.message}</span>
+                  <span className="terminal__commit-dot" aria-hidden="true" />
+                  <span className="terminal__commit-msg">
+                    committed <code>{block.message}</code>
+                  </span>
                 </p>
               );
             }
@@ -659,27 +539,6 @@ const AgentTerminal: React.FC<AgentTerminalProps> = ({
         )}
       </div>
 
-      <div className="terminal__input-row">
-        <input
-          ref={inputRef}
-          className="terminal__input"
-          value={command}
-          onChange={(e) => setCommand(e.target.value)}
-          onKeyDown={onInputKey}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="Message Hermes or type /help for commands…"
-          aria-label="terminal input"
-        />
-        <button
-          type="button"
-          className="terminal__send"
-          onClick={onSendClick}
-          disabled={!command.trim()}
-        >
-          Send
-        </button>
-      </div>
     </div>
   );
 };

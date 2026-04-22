@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AgentTerminal from './AgentTerminal';
+import { useTheme } from './useTheme';
 import AdminDashboard from './AdminDashboard';
 import BlockExplorer from './BlockExplorer';
 import HermesDock from './HermesDock';
@@ -262,6 +263,7 @@ export default function App() {
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const [theme, toggleTheme] = useTheme();
   const liveState = useHermesDockState(API_BASE);
 
   const tabs = [
@@ -943,7 +945,6 @@ export default function App() {
             <div className="terminal-preview-frame">
               <AgentTerminal
                 variant="embedded"
-                handleTab={handleTab}
                 recentCommits={gitStatus?.recentCommits || []}
               />
             </div>
@@ -1703,6 +1704,33 @@ export default function App() {
             <GitHubIcon />
           </a>
 
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={
+              theme === 'dark'
+                ? 'Switch to light theme'
+                : 'Switch to dark theme'
+            }
+            title={
+              theme === 'dark'
+                ? 'Switch to light theme'
+                : 'Switch to dark theme'
+            }
+          >
+            {theme === 'dark' ? (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 3v1.5M12 19.5V21M4.22 4.22l1.06 1.06M18.72 18.72l1.06 1.06M3 12h1.5M19.5 12H21M4.22 19.78l1.06-1.06M18.72 5.28l1.06-1.06" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />
+              </svg>
+            )}
+          </button>
+
           {isMobile ? (
             <>
               <button className="agent-toggle" onClick={() => setDockSheetOpen(true)}>
@@ -1807,13 +1835,8 @@ export default function App() {
               }}
             />
             <div className="agent-panel-shell">
-              <div className="agent-panel-meta">
-                <span className="section-label">System console</span>
-                <p>The persistent live rail for Hermes work, status, and output.</p>
-              </div>
               <AgentTerminal
                 variant="rail"
-                handleTab={handleTab}
                 recentCommits={gitStatus?.recentCommits || []}
               />
             </div>

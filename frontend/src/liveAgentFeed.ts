@@ -56,6 +56,8 @@ export type TerminalBlock =
       id: string;
       text: string;
       chips?: PathChip[];
+      /** Heading-weight paragraphs (e.g. "My analysis of what's needed…"). */
+      heading?: boolean;
       /** If true, render fully immediately (skip the per-char typewriter). */
       instant?: boolean;
     }

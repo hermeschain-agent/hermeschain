@@ -1945,16 +1945,12 @@ button { font-family: inherit; cursor: pointer; }
 .agent-panel {
   width: 420px;
   border-left: 1px solid var(--cream-dim);
-  background:
-    linear-gradient(180deg, rgba(255, 230, 203, 0.04), transparent 20%),
-    var(--bg);
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  position: sticky;
-  top: calc(var(--app-header-h) + var(--app-nav-h));
-  align-self: flex-start;
-  height: calc(100dvh - var(--app-header-h) - var(--app-nav-h));
+  align-self: stretch;
+  min-height: calc(100dvh - var(--app-header-h) - var(--app-nav-h));
   overflow: hidden;
 }
 .agent-panel .resize-handle {
@@ -2013,16 +2009,17 @@ button { font-family: inherit; cursor: pointer; }
   color: var(--fg-faint);
 }
 
-/* ---- Hermes terminal (macOS window aesthetic) ---- */
+/* ---- Hermes terminal (macOS window aesthetic, site palette) ---- */
 
 :root {
-  --term-bg:       #0b0d0c;
-  --term-fg:       #e4e4e2;
-  --term-dim:      #7a7a78;
-  --term-accent:   #6ee8b8;
-  --term-chip-bg:  rgba(255, 110, 110, 0.14);
-  --term-chip-fg:  #ff9e9e;
-  --term-hairline: rgba(255, 255, 255, 0.07);
+  --term-bg:       #041C1C;                       /* site bg (deep teal) */
+  --term-fg:       var(--cream);                  /* #ffe6cb */
+  --term-body:     var(--fg-muted);               /* rgba(255,230,203,0.78) */
+  --term-dim:      var(--fg-faint);               /* rgba(255,230,203,0.45) */
+  --term-accent:   var(--success);                /* #a8e6a3 soft green */
+  --term-chip-bg:  rgba(255, 200, 114, 0.14);     /* amber tint */
+  --term-chip-fg:  var(--amber);                  /* #ffc872 */
+  --term-hairline: var(--cream-dim);              /* rgba(255,230,203,0.12) */
 }
 
 .terminal {
@@ -2033,23 +2030,23 @@ button { font-family: inherit; cursor: pointer; }
   min-height: 0;
   background: var(--term-bg);
   color: var(--term-fg);
-  font-family: var(--font-mono);
-  font-size: 13.5px;
-  line-height: 1.55;
+  font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco,
+    Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 15px;
+  line-height: 1.65;
   overflow: hidden;
 }
 
 .terminal--embedded {
-  border: 1px solid var(--term-hairline);
+  border: none;
 }
 
 .terminal__header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--term-hairline);
-  background: rgba(255, 255, 255, 0.015);
+  padding: 14px 20px 10px;
+  background: transparent;
 }
 
 .terminal__dots {
@@ -2060,23 +2057,23 @@ button { font-family: inherit; cursor: pointer; }
 }
 
 .terminal__dot {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
-  background: #4a4a4a;
+  background: var(--cream-dim);
 }
-.terminal__dot--r { background: #ff5f57; }
-.terminal__dot--y { background: #febc2e; }
-.terminal__dot--g { background: #28c940; }
+.terminal__dot--r { background: var(--red); }
+.terminal__dot--y { background: var(--amber); }
+.terminal__dot--g { background: var(--success); }
 
 .terminal__title {
   flex: 1;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 12px;
   font-size: 12px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   color: var(--term-dim);
-  text-align: center;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2101,13 +2098,13 @@ button { font-family: inherit; cursor: pointer; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 0;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.08em;
   color: var(--term-accent);
-  background: rgba(110, 232, 184, 0.08);
+  background: transparent;
+  text-transform: uppercase;
 }
 
 .terminal__stage::before {
@@ -2120,12 +2117,11 @@ button { font-family: inherit; cursor: pointer; }
 
 .terminal__stage--offline,
 .terminal__stage--halted {
-  color: #ff8a8a;
-  background: rgba(255, 138, 138, 0.08);
+  color: var(--red);
 }
 .terminal__stage--offline::before,
 .terminal__stage--halted::before {
-  background: #ff8a8a;
+  background: var(--red);
 }
 
 .terminal__stage--verify,
@@ -2133,7 +2129,6 @@ button { font-family: inherit; cursor: pointer; }
 .terminal__stage--exec,
 .terminal__stage--run {
   color: var(--term-accent);
-  background: rgba(110, 232, 184, 0.1);
 }
 .terminal__stage--run::before,
 .terminal__stage--exec::before,
@@ -2146,14 +2141,14 @@ button { font-family: inherit; cursor: pointer; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 20px 12px;
+  padding: 8px 20px 14px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
 
 .terminal__body::-webkit-scrollbar { width: 6px; }
 .terminal__body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--cream-dim);
   border-radius: 3px;
 }
 
@@ -2164,22 +2159,23 @@ button { font-family: inherit; cursor: pointer; }
 }
 
 .terminal__block {
-  margin: 0 0 14px;
-  color: var(--term-fg);
+  margin: 0 0 18px;
+  color: var(--term-body);
   word-break: break-word;
 }
 
 .terminal__block--p {
-  font-family: var(--font-mono);
-  font-size: 13.5px;
-  line-height: 1.55;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.65;
+  letter-spacing: -0.01em;
   white-space: pre-wrap;
 }
 
 .terminal__caret {
   display: inline-block;
   width: 7px;
-  height: 15px;
+  height: 16px;
   margin-left: 2px;
   background: var(--term-fg);
   vertical-align: -2px;
@@ -2199,21 +2195,20 @@ button { font-family: inherit; cursor: pointer; }
 }
 
 .terminal__block--code {
-  margin: 12px 0 18px;
-  border: 1px solid var(--term-hairline);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
+  margin: 4px 0 18px;
+  padding: 0;
+  background: transparent;
   overflow: hidden;
 }
 
 .terminal__code-body {
   margin: 0;
-  padding: 14px 18px;
+  padding: 2px 0 2px;
   overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.5;
-  color: rgba(228, 228, 226, 0.92);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--term-body);
   white-space: pre;
 }
 
@@ -2227,76 +2222,31 @@ button { font-family: inherit; cursor: pointer; }
   display: inline-flex;
   align-items: baseline;
   gap: 10px;
-  margin-top: 6px;
-  padding: 6px 12px;
-  border-left: 2px solid var(--term-accent);
-  background: rgba(110, 232, 184, 0.05);
-  border-radius: 0 4px 4px 0;
+  margin: 2px 0 14px;
+  padding: 0;
+  background: transparent;
 }
 
-.terminal__commit-label {
-  color: var(--term-accent);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.terminal__commit-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--term-accent);
+  flex-shrink: 0;
+  transform: translateY(-2px);
 }
 
 .terminal__commit-msg {
-  color: var(--term-fg);
-}
-
-.terminal__input-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px 12px;
-  border-top: 1px solid var(--term-hairline);
-  background: rgba(255, 255, 255, 0.015);
-}
-
-.terminal__input {
-  flex: 1;
-  min-width: 0;
-  padding: 10px 14px;
-  border: 1px solid var(--term-hairline);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.025);
-  color: var(--term-fg);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.4;
-  outline: none;
-  transition: border-color 120ms ease;
-}
-.terminal__input::placeholder {
   color: var(--term-dim);
+  font-size: 13.5px;
 }
-.terminal__input:focus {
-  border-color: rgba(110, 232, 184, 0.4);
+.terminal__commit-msg code {
+  color: var(--term-fg);
+  font-family: inherit;
+  background: none;
+  padding: 0;
 }
 
-.terminal__send {
-  flex-shrink: 0;
-  padding: 9px 18px;
-  border: none;
-  border-radius: 8px;
-  background: var(--term-accent);
-  color: #0b0d0c;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  transition: filter 120ms ease, opacity 120ms ease;
-}
-.terminal__send:hover:not(:disabled) {
-  filter: brightness(1.05);
-}
-.terminal__send:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 
 .agent-code-block {
   border: 1px dashed rgba(112, 255, 173, 0.18);
@@ -3385,5 +3335,99 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   letter-spacing: 0.14em;
   color: var(--fg-faint);
   text-transform: uppercase;
+}
+
+/* ───────────────── Light-mode overrides ───────────────────────────
+ * Activated via `[data-theme='light']` on <html>. The FOUC script in
+ * index.html sets this attribute before first paint so there's no
+ * flash. Re-maps the same CSS variable tokens used across the site so
+ * most components flip automatically.
+ */
+
+[data-theme='light'] {
+  --bg:          #f6f1e6;
+  --bg-raised:   #ffffff;
+  --bg-sunken:   #ebe4d4;
+  --bg-hover:    #e8dfca;
+
+  --cream:        #3d2a12;
+  --cream-dim:    rgba(15, 26, 26, 0.10);
+  --cream-mid:    rgba(15, 26, 26, 0.20);
+  --cream-strong: rgba(15, 26, 26, 0.50);
+
+  --fg:           #0f1a1a;
+  --fg-muted:     rgba(15, 26, 26, 0.74);
+  --fg-faint:     rgba(15, 26, 26, 0.42);
+
+  --border:        rgba(15, 26, 26, 0.14);
+  --border-strong: rgba(15, 26, 26, 0.32);
+
+  --red:     #c84646;
+  --amber:   #a9700e;
+  --success: #3fa770;
+  --violet:  #6c5db4;
+  --teal:    #2f8b7a;
+
+  --coral-bright: #3d2a12;
+  --red-dim: rgba(200, 70, 70, 0.10);
+
+  --px-shadow:        3px 3px 0 0 rgba(15, 26, 26, 0.18);
+  --px-shadow-hover:  4px 4px 0 0 rgba(15, 26, 26, 0.35);
+  --px-shadow-active: 0 0 0 0 rgba(15, 26, 26, 0);
+
+  /* Terminal stays dark regardless of page theme. */
+  --term-bg:       #041C1C;
+  --term-fg:       #ffe6cb;
+  --term-body:     rgba(255, 230, 203, 0.78);
+  --term-dim:      rgba(255, 230, 203, 0.45);
+  --term-accent:   #a8e6a3;
+  --term-chip-fg:  #ffc872;
+  --term-chip-bg:  rgba(255, 200, 114, 0.14);
+  --term-hairline: rgba(255, 230, 203, 0.12);
+}
+
+[data-theme='light'] body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+[data-theme='light'] .ambient-bg__drop {
+  color: rgba(15, 26, 26, 0.55);
+}
+
+/* ───────────────── Theme toggle button ──────────────────────────── */
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--cream-dim);
+  background: transparent;
+  color: var(--cream);
+  cursor: pointer;
+  transition: background 120ms var(--ease), border-color 120ms var(--ease);
+}
+
+.theme-toggle:hover {
+  background: var(--cream-dim);
+  border-color: var(--cream-mid);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--cream);
+  outline-offset: 2px;
+}
+
+.theme-toggle svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
