@@ -521,7 +521,7 @@ Live context:
     global.addLog = addLog;
     console.log('[LOGS] Logs system ready');
     // ========== SKILLS + AGENT CONFIG ==========
-    const { createAgentConfig, configureAgentSubsystems, skillManager, agentWorker, agentEvents, agentMemory, agentTaskStore, agentRuntimeStore, taskSources, gitIntegration, } = await Promise.resolve().then(() => __importStar(require('../agent')));
+    const { createAgentConfig, configureAgentSubsystems, skillManager, agentWorker, agentEvents, agentMemory, agentTaskStore, agentRuntimeStore, taskSources, gitIntegration, tokenBudget, } = await Promise.resolve().then(() => __importStar(require('../agent')));
     const agentConfig = createAgentConfig(process.cwd());
     configureAgentSubsystems(agentConfig);
     await skillManager.initialize();
@@ -733,6 +733,7 @@ Live context:
             blockHeight: chain.getChainLength(),
             transactionCount: chain.getStoredTransactionCount(),
             storedTransactionCount: chain.getStoredTransactionCount(),
+            tokenSpend: tokenBudget.snapshot(),
         };
     };
     // SSE endpoint for live agent work streaming

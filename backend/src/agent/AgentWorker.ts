@@ -12,6 +12,7 @@ import { agentRuntimeStore } from './AgentRuntimeStore';
 import { ciMonitor } from './CIMonitor';
 import { skillManager } from './SkillManager';
 import { COMMIT_WINDOW_MINUTES, getRuntimeCommitWindowMinutes } from './TaskBacklog';
+import { tokenBudget } from './TokenBudget';
 import {
   hermesChat,
   isConfigured,
@@ -379,19 +380,20 @@ class AgentWorker {
 
     const changedFiles = new Set<string>();
     let fullOutput = '';
-    // Haiku-friendly budget. 6 iterations was too tight for Haiku to plan +
-    // write. 10 still costs very little on Haiku. Configurable via env.
-    const maxIterations = Number(process.env.AGENT_MAX_ITERATIONS) || 10;
-    const maxTokensPerCall = Number(process.env.AGENT_MAX_TOKENS) || 1500;
+    // Tightened for cost. 5 iterations is plenty for a single write_file
+    // task when the system prompt + tool descriptions are cached. Envs let
+    // us override if a specific task genuinely needs more headroom.
+    const maxIterations = Number(process.env.AGENT_MAX_ITERATIONS) || 5;
+    const maxTokensPerCall = Number(process.env.AGENT_MAX_TOKENS) || 1200;
 
     this.currentAbortController = new AbortController();
     agentExecutor.setExecutionScopes(selection.editScopes);
 
-    // Track whether the agent has actually called write_file yet. If not
-    // by the halfway point, inject an explicit reminder; if still not by
-    // the final iteration, inject a last-chance imperative.
-    const writeReminderAt = Math.floor(maxIterations / 2);
-    const writeImperativeAt = maxIterations - 2;
+    // Track whether the agent has actually called write_file yet. With a
+    // 5-iter budget we want the nudge EARLY (iter 2) and a hard imperative
+    // on the second-to-last turn.
+    const writeReminderAt = Math.max(1, Math.floor(maxIterations / 2) - 1);
+    const writeImperativeAt = Math.max(writeReminderAt + 1, maxIterations - 2);
     let writeReminderInjected = false;
     let writeImperativeInjected = false;
     const hasWritten = () => changedFiles.size > 0;
@@ -897,6 +899,26 @@ class AgentWorker {
           });
           this.resetCurrentState();
           await this.delay(45000);
+          continue;
+        }
+
+        // Token-budget gate. If either the rolling hour or UTC-day bucket
+        // is over cap, skip task pickup entirely and nap for 5 min. Without
+        // this the agent would keep burning credit until Anthropic trips
+        // its own billing circuit breaker.
+        const budgetDecision = tokenBudget.shouldPause();
+        if (budgetDecision.paused) {
+          this.state.runStatus = 'blocked';
+          this.state.blockedReason = budgetDecision.reason || 'token budget reached';
+          this.persistRuntimeState();
+          this.broadcast('status', {
+            status: 'budget_paused',
+            mode: 'real',
+            runStatus: 'blocked',
+            blockedReason: this.state.blockedReason,
+            tokenSpend: tokenBudget.snapshot(),
+          });
+          await this.delay(5 * 60 * 1000);
           continue;
         }
 

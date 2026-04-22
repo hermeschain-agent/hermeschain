@@ -10,7 +10,7 @@ exports.getTotalEstimatedTime = getTotalEstimatedTime;
 exports.getNextBacklogTask = getNextBacklogTask;
 exports.markBacklogTaskComplete = markBacklogTaskComplete;
 exports.getBacklogProgress = getBacklogProgress;
-exports.COMMIT_WINDOW_MINUTES = 10;
+exports.COMMIT_WINDOW_MINUTES = 30;
 exports.TARGET_COMMIT_HOURS = 108;
 exports.TARGET_COMMIT_WINDOWS = 648;
 function getRuntimeCommitWindowMinutes() {

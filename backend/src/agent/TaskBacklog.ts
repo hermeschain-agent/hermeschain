@@ -87,7 +87,7 @@ interface PhaseBlueprint {
   workstreams: WorkstreamBlueprint[];
 }
 
-export const COMMIT_WINDOW_MINUTES = 10;
+export const COMMIT_WINDOW_MINUTES = 30;
 export const TARGET_COMMIT_HOURS = 108;
 export const TARGET_COMMIT_WINDOWS = 648;
 

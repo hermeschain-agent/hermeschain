@@ -1,11 +1,12 @@
 import * as dotenv from 'dotenv';
+import { tokenBudget } from '../agent/TokenBudget';
 
 dotenv.config();
 
 export type LLMProvider = 'anthropic';
 export const LLM_PROVIDER: LLMProvider = 'anthropic';
 export const HERMES_MODEL =
-  process.env.HERMES_MODEL || 'claude-sonnet-4-5-20250514';
+  process.env.HERMES_MODEL || 'claude-haiku-4-5-20251001';
 export const HERMES_BASE_URL =
   process.env.HERMES_BASE_URL || 'https://api.anthropic.com/v1';
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
@@ -255,16 +256,36 @@ function toAnthropicMessages(
   return converted;
 }
 
-function toAnthropicTools(tools?: HermesTool[]): Array<{
+/**
+ * Convert Hermes tool specs to Anthropic's shape. The last tool carries an
+ * ephemeral `cache_control` marker so Anthropic caches the full tool block
+ * (tools are read as a contiguous prefix — marking the last one caches
+ * everything up to and including it). The cache cuts input-token billing
+ * from ~$3/MTok to ~$0.30/MTok on cached re-reads across iterations.
+ */
+function toAnthropicTools(
+  tools?: HermesTool[],
+  cache: boolean = true,
+): Array<{
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
+  cache_control?: { type: 'ephemeral' };
 }> {
-  return (tools || []).map((tool) => ({
+  const list = (tools || []).map((tool) => ({
     name: tool.function.name,
     description: tool.function.description,
     input_schema: tool.function.parameters,
-  }));
+  })) as Array<{
+    name: string;
+    description: string;
+    input_schema: Record<string, unknown>;
+    cache_control?: { type: 'ephemeral' };
+  }>;
+  if (cache && list.length > 0) {
+    list[list.length - 1].cache_control = { type: 'ephemeral' };
+  }
+  return list;
 }
 
 function toAnthropicBody(params: HermesChatParams): Record<string, unknown> {
@@ -279,7 +300,20 @@ function toAnthropicBody(params: HermesChatParams): Record<string, unknown> {
     messages: toAnthropicMessages(params.messages),
   };
 
-  if (system) body.system = system;
+  if (system) {
+    // Structured system prompt with ephemeral cache_control so Anthropic
+    // can cache it across subsequent calls in the same task. The entire
+    // system string is a single cached block; the context pack that
+    // varies per task is already in user messages, so the cache stays
+    // warm iteration-to-iteration.
+    body.system = [
+      {
+        type: 'text',
+        text: system,
+        cache_control: { type: 'ephemeral' },
+      },
+    ];
+  }
   if (params.temperature !== undefined) body.temperature = params.temperature;
   if (params.topP !== undefined) body.top_p = params.topP;
 
@@ -404,6 +438,18 @@ async function fetchAnthropic(body: Record<string, unknown>): Promise<any> {
     const data: any = await response.json();
     if (!data || !Array.isArray(data.content)) {
       throw createError('bad_response');
+    }
+
+    // Record token spend for the hour/day budget so the worker can pause
+    // itself before Anthropic tripping the billing-level circuit breaker.
+    if (data.usage) {
+      tokenBudget.record(data.usage);
+      const cacheRead = Number(data.usage.cache_read_input_tokens || 0);
+      if (cacheRead > 0) {
+        console.log(
+          `[HERMES] usage — in:${data.usage.input_tokens} out:${data.usage.output_tokens} cache_read:${cacheRead}`,
+        );
+      }
     }
 
     return data;

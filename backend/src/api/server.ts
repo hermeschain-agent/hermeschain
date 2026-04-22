@@ -578,6 +578,7 @@ Live context:
     agentRuntimeStore,
     taskSources,
     gitIntegration,
+    tokenBudget,
   } = await import('../agent');
   const agentConfig = createAgentConfig(process.cwd());
   configureAgentSubsystems(agentConfig);
@@ -815,6 +816,7 @@ Live context:
       blockHeight: chain.getChainLength(),
       transactionCount: chain.getStoredTransactionCount(),
       storedTransactionCount: chain.getStoredTransactionCount(),
+      tokenSpend: tokenBudget.snapshot(),
     };
   };
   

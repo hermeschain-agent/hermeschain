@@ -33,7 +33,7 @@ export interface BacklogPhaseSummary {
     description: string;
     tags: string[];
 }
-export declare const COMMIT_WINDOW_MINUTES = 10;
+export declare const COMMIT_WINDOW_MINUTES = 30;
 export declare const TARGET_COMMIT_HOURS = 108;
 export declare const TARGET_COMMIT_WINDOWS = 648;
 export declare function getRuntimeCommitWindowMinutes(): number;

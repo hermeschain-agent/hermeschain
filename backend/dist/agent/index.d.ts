@@ -13,6 +13,8 @@ export { taskSources } from './TaskSources';
 export { ciMonitor } from './CIMonitor';
 export { browserAutomation, BROWSER_TOOLS } from './BrowserAutomation';
 export { skillManager } from './SkillManager';
+export { tokenBudget, TokenBudget } from './TokenBudget';
+export type { TokenBudgetSnapshot } from './TokenBudget';
 import type { AgentConfig } from './config';
 export declare function configureAgentSubsystems(config: AgentConfig): void;
 export type { Memory, WorkingContext, CompletedTaskRecord } from './AgentMemory';

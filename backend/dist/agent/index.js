@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.skillManager = exports.BROWSER_TOOLS = exports.browserAutomation = exports.ciMonitor = exports.taskSources = exports.gitIntegration = exports.AGENT_TOOLS = exports.agentExecutor = exports.agentGoals = exports.chainObserver = exports.agentMemory = exports.agentRuntimeStore = exports.agentTaskStore = exports.resolveRepoRoot = exports.createAgentConfig = exports.TaskGenerator = exports.agentEvents = exports.agentWorker = void 0;
+exports.TokenBudget = exports.tokenBudget = exports.skillManager = exports.BROWSER_TOOLS = exports.browserAutomation = exports.ciMonitor = exports.taskSources = exports.gitIntegration = exports.AGENT_TOOLS = exports.agentExecutor = exports.agentGoals = exports.chainObserver = exports.agentMemory = exports.agentRuntimeStore = exports.agentTaskStore = exports.resolveRepoRoot = exports.createAgentConfig = exports.TaskGenerator = exports.agentEvents = exports.agentWorker = void 0;
 exports.configureAgentSubsystems = configureAgentSubsystems;
 var AgentWorker_1 = require("./AgentWorker");
 Object.defineProperty(exports, "agentWorker", { enumerable: true, get: function () { return AgentWorker_1.agentWorker; } });
@@ -35,6 +35,9 @@ Object.defineProperty(exports, "browserAutomation", { enumerable: true, get: fun
 Object.defineProperty(exports, "BROWSER_TOOLS", { enumerable: true, get: function () { return BrowserAutomation_1.BROWSER_TOOLS; } });
 var SkillManager_1 = require("./SkillManager");
 Object.defineProperty(exports, "skillManager", { enumerable: true, get: function () { return SkillManager_1.skillManager; } });
+var TokenBudget_1 = require("./TokenBudget");
+Object.defineProperty(exports, "tokenBudget", { enumerable: true, get: function () { return TokenBudget_1.tokenBudget; } });
+Object.defineProperty(exports, "TokenBudget", { enumerable: true, get: function () { return TokenBudget_1.TokenBudget; } });
 const AgentWorker_2 = require("./AgentWorker");
 const AgentExecutor_2 = require("./AgentExecutor");
 const GitIntegration_2 = require("./GitIntegration");
