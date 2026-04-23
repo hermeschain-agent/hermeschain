@@ -281,20 +281,26 @@ a:hover { text-decoration-color: var(--cream); }
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 16px;
+  gap: 22px;
 }
 
 .header-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: 13px;
   color: var(--fg-faint);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
+  white-space: nowrap;
 }
 
 .header-stat span {
   color: var(--cream);
-  font-weight: 400;
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.02em;
 }
 
 /* ---- Navigation tabs ---- */

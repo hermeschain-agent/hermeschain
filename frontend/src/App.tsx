@@ -1712,9 +1712,6 @@ export default function App() {
                   </span>
                 </span>
               ) : null}
-              <span className="header-stat">
-                VIEWERS <span>{liveState.viewerCount.toLocaleString()}</span>
-              </span>
             </>
           ) : null}
 
