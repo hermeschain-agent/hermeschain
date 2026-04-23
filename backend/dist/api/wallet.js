@@ -8,6 +8,19 @@ const express_1 = require("express");
 const db_1 = require("../database/db");
 const crypto_1 = __importDefault(require("crypto"));
 const StateManager_1 = require("../blockchain/StateManager");
+const Crypto_1 = require("../blockchain/Crypto");
+const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
+/** Canonical payload the client must sign for a wallet send. */
+function buildSendMessage(input) {
+    return JSON.stringify({
+        kind: 'wallet.send.v1',
+        from: input.fromAddress,
+        to: input.toAddress,
+        amount: String(input.amount),
+        nonce: input.nonce,
+        timestampMs: input.timestampMs,
+    });
+}
 const walletRouter = (0, express_1.Router)();
 exports.walletRouter = walletRouter;
 // In-memory fallback for when DB is unavailable
@@ -390,7 +403,7 @@ walletRouter.get('/faucet/status/:address', async (req, res) => {
 // Send tokens
 walletRouter.post('/send', async (req, res) => {
     try {
-        const { fromAddress, toAddress, amount } = req.body;
+        const { fromAddress, toAddress, amount, signature, nonce, timestampMs } = req.body;
         if (!fromAddress || !toAddress || !amount) {
             return res.status(400).json({ success: false, error: 'Missing required fields' });
         }
@@ -400,10 +413,58 @@ walletRouter.post('/send', async (req, res) => {
         if (fromAddress === toAddress) {
             return res.status(400).json({ success: false, error: 'Cannot send to yourself' });
         }
+        // Authorization gate: require a signed payload that includes
+        // from/to/amount/nonce/timestamp. The fromAddress is the base58 ed25519
+        // public key, so signature verification confirms the holder of the
+        // matching private key authorized this transfer.
+        if (typeof signature !== 'string' || !signature) {
+            return res
+                .status(401)
+                .json({ success: false, error: 'Missing signature — wallet transfers require a signed payload' });
+        }
+        if (typeof nonce !== 'number' || !Number.isInteger(nonce) || nonce < 0) {
+            return res
+                .status(400)
+                .json({ success: false, error: 'nonce must be a non-negative integer' });
+        }
+        if (typeof timestampMs !== 'number' || !Number.isFinite(timestampMs)) {
+            return res
+                .status(400)
+                .json({ success: false, error: 'timestampMs must be a number' });
+        }
+        const skew = Math.abs(Date.now() - timestampMs);
+        if (skew > MAX_TIMESTAMP_SKEW_MS) {
+            return res
+                .status(401)
+                .json({ success: false, error: 'timestamp outside ±5 min skew window' });
+        }
         // Get sender
         const sender = await getWallet(fromAddress);
         if (!sender) {
             return res.status(404).json({ success: false, error: 'Sender wallet not found' });
+        }
+        // Expected nonce = sender.tx_count. Rejects replays + wrong-order sends.
+        const expectedNonce = sender.tx_count || 0;
+        if (nonce !== expectedNonce) {
+            return res
+                .status(409)
+                .json({
+                success: false,
+                error: `nonce mismatch — expected ${expectedNonce}, got ${nonce}`,
+            });
+        }
+        const message = buildSendMessage({
+            fromAddress,
+            toAddress,
+            amount,
+            nonce,
+            timestampMs,
+        });
+        const signatureValid = (0, Crypto_1.verify)(message, signature, fromAddress);
+        if (!signatureValid) {
+            return res
+                .status(401)
+                .json({ success: false, error: 'Invalid signature for this transfer' });
         }
         if ((sender.balance || 0) < amount) {
             return res.status(400).json({ success: false, error: 'Insufficient balance' });

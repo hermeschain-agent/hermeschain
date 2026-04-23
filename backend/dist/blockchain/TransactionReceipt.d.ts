@@ -37,5 +37,7 @@ export declare function calculateReceiptsRoot(receipts: TransactionReceipt[]): s
 export declare function encodeReceipt(receipt: TransactionReceipt): string;
 export declare function storeReceipt(receipt: TransactionReceipt): void;
 export declare function getReceipt(txHash: string): TransactionReceipt | undefined;
+export declare function loadReceipt(txHash: string): Promise<TransactionReceipt | undefined>;
 export declare function getBlockReceipts(blockNumber: number): TransactionReceipt[];
+export declare function loadBlockReceipts(blockNumber: number): Promise<TransactionReceipt[]>;
 //# sourceMappingURL=TransactionReceipt.d.ts.map

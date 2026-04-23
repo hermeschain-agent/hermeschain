@@ -45,6 +45,27 @@ CREATE INDEX IF NOT EXISTS idx_transactions_from ON transactions(from_address);
 CREATE INDEX IF NOT EXISTS idx_transactions_to ON transactions(to_address);
 CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
 
+-- Transaction receipts (per-tx execution outcome, persisted so wallets
+-- and /api/tx/:hash/receipt survive server restarts).
+CREATE TABLE IF NOT EXISTS receipts (
+  tx_hash TEXT PRIMARY KEY,
+  tx_index INTEGER NOT NULL,
+  block_hash TEXT NOT NULL,
+  block_number BIGINT NOT NULL,
+  from_address TEXT NOT NULL,
+  to_address TEXT NOT NULL,
+  gas_used TEXT NOT NULL,
+  cumulative_gas_used TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  logs_json TEXT NOT NULL DEFAULT '[]',
+  logs_bloom TEXT NOT NULL,
+  state_root TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_receipts_block ON receipts(block_number);
+CREATE INDEX IF NOT EXISTS idx_receipts_from ON receipts(from_address);
+CREATE INDEX IF NOT EXISTS idx_receipts_to ON receipts(to_address);
+
 -- Accounts table
 CREATE TABLE IF NOT EXISTS accounts (
   address TEXT PRIMARY KEY,

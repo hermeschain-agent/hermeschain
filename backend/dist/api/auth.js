@@ -79,6 +79,34 @@ function hashApiKey(key) {
 // Create a new API key
 authRouter.post('/keys', async (req, res) => {
     try {
+        // Gate: require ADMIN_TOKEN header OR an already-valid parent key
+        // with the "keys:create" permission. Previously ungated, which let
+        // any caller mint unlimited keys and defeat the entire rate-limit
+        // gate downstream.
+        const adminToken = process.env.ADMIN_TOKEN;
+        const providedAdmin = req.header('x-admin-token') || '';
+        const hasAdmin = adminToken && providedAdmin && providedAdmin === adminToken;
+        let hasParentKey = false;
+        if (!hasAdmin) {
+            const provided = req.header('x-api-key') || '';
+            if (provided) {
+                const providedHash = hashApiKey(provided);
+                for (const existing of apiKeys.values()) {
+                    if (existing.active &&
+                        existing.key === providedHash &&
+                        Array.isArray(existing.permissions) &&
+                        existing.permissions.includes('keys:create')) {
+                        hasParentKey = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!hasAdmin && !hasParentKey) {
+            return res.status(403).json({
+                error: 'Key creation requires X-Admin-Token (operator) or X-API-Key with keys:create permission.',
+            });
+        }
         const { name, permissions = ['read'], rateLimit = 60 } = req.body;
         if (!name) {
             return res.status(400).json({ error: 'Name is required' });

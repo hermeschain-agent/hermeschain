@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { Transaction, generateHash } from './Block';
+import { db } from '../database/db';
 
 // Transaction execution status
 export enum TransactionStatus {
@@ -159,23 +160,135 @@ export function encodeReceipt(receipt: TransactionReceipt): string {
   });
 }
 
-// Storage for receipts by transaction hash
-const receiptStore = new Map<string, TransactionReceipt>();
+// In-memory cache keyed by tx hash. Populated on write + lazy-filled on
+// read-miss from the DB. Survives the single process; DB is authoritative.
+const receiptCache = new Map<string, TransactionReceipt>();
 
-// Store a receipt
+function serializeLogs(logs: Log[]): string {
+  try {
+    return JSON.stringify(logs);
+  } catch {
+    return '[]';
+  }
+}
+
+function parseLogs(raw: string | null | undefined): Log[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function rowToReceipt(row: any): TransactionReceipt {
+  return {
+    transactionHash: row.tx_hash,
+    transactionIndex: Number(row.tx_index ?? 0),
+    blockHash: row.block_hash,
+    blockNumber: Number(row.block_number ?? 0),
+    from: row.from_address,
+    to: row.to_address,
+    gasUsed: BigInt(row.gas_used ?? '0'),
+    cumulativeGasUsed: BigInt(row.cumulative_gas_used ?? '0'),
+    status: Number(row.status ?? TransactionStatus.FAILURE) as TransactionStatus,
+    logs: parseLogs(row.logs_json),
+    logsBloom: row.logs_bloom ?? '',
+    stateRoot: row.state_root || undefined,
+  };
+}
+
+// Store a receipt — writes to both the in-memory cache and the receipts table.
+// If the DB write fails (no PG, transient error), the cache still serves reads
+// for the lifetime of this process.
 export function storeReceipt(receipt: TransactionReceipt): void {
-  receiptStore.set(receipt.transactionHash, receipt);
+  receiptCache.set(receipt.transactionHash, receipt);
+  void db
+    .query(
+      `
+      INSERT INTO receipts (
+        tx_hash, tx_index, block_hash, block_number, from_address, to_address,
+        gas_used, cumulative_gas_used, status, logs_json, logs_bloom, state_root
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      ON CONFLICT (tx_hash) DO UPDATE SET
+        tx_index = EXCLUDED.tx_index,
+        block_hash = EXCLUDED.block_hash,
+        block_number = EXCLUDED.block_number,
+        from_address = EXCLUDED.from_address,
+        to_address = EXCLUDED.to_address,
+        gas_used = EXCLUDED.gas_used,
+        cumulative_gas_used = EXCLUDED.cumulative_gas_used,
+        status = EXCLUDED.status,
+        logs_json = EXCLUDED.logs_json,
+        logs_bloom = EXCLUDED.logs_bloom,
+        state_root = EXCLUDED.state_root
+      `,
+      [
+        receipt.transactionHash,
+        receipt.transactionIndex,
+        receipt.blockHash,
+        receipt.blockNumber,
+        receipt.from,
+        receipt.to,
+        receipt.gasUsed.toString(),
+        receipt.cumulativeGasUsed.toString(),
+        receipt.status,
+        serializeLogs(receipt.logs),
+        receipt.logsBloom,
+        receipt.stateRoot || null,
+      ]
+    )
+    .catch((err) => {
+      console.warn('[RECEIPTS] Persistence write failed:', err?.message || err);
+    });
 }
 
-// Get a receipt by transaction hash
+// Synchronous getter — returns the cached value if present. For the
+// post-restart path where the cache is cold, call loadReceipt() below.
 export function getReceipt(txHash: string): TransactionReceipt | undefined {
-  return receiptStore.get(txHash);
+  return receiptCache.get(txHash);
 }
 
-// Get all receipts for a block
+// Async loader that falls through to the DB when the cache doesn't have it.
+// Populates the cache on a hit so subsequent reads are sync-fast.
+export async function loadReceipt(txHash: string): Promise<TransactionReceipt | undefined> {
+  const cached = receiptCache.get(txHash);
+  if (cached) return cached;
+  try {
+    const result = await db.query(
+      `SELECT * FROM receipts WHERE tx_hash = $1 LIMIT 1`,
+      [txHash]
+    );
+    if (result.rows.length === 0) return undefined;
+    const receipt = rowToReceipt(result.rows[0]);
+    receiptCache.set(txHash, receipt);
+    return receipt;
+  } catch (err: any) {
+    console.warn('[RECEIPTS] Load failed:', err?.message || err);
+    return undefined;
+  }
+}
+
+// All receipts for a block. Falls back to DB when the cache is incomplete.
 export function getBlockReceipts(blockNumber: number): TransactionReceipt[] {
-  return Array.from(receiptStore.values())
-    .filter(r => r.blockNumber === blockNumber);
+  return Array.from(receiptCache.values())
+    .filter((r) => r.blockNumber === blockNumber);
+}
+
+export async function loadBlockReceipts(blockNumber: number): Promise<TransactionReceipt[]> {
+  try {
+    const result = await db.query(
+      `SELECT * FROM receipts WHERE block_number = $1 ORDER BY tx_index ASC`,
+      [blockNumber]
+    );
+    const receipts = result.rows.map(rowToReceipt);
+    for (const r of receipts) receiptCache.set(r.transactionHash, r);
+    return receipts;
+  } catch (err: any) {
+    console.warn('[RECEIPTS] Load block failed:', err?.message || err);
+    return getBlockReceipts(blockNumber);
+  }
 }
 
 console.log('[RECEIPTS] Transaction receipt system loaded');
