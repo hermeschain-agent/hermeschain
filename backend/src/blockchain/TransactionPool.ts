@@ -118,7 +118,7 @@ export class TransactionPool {
     for (const hash of hashes) {
       this.pendingTransactions.delete(hash);
     }
-    
+
     if (hashes.length > 0) {
       try {
         await db.query(`
@@ -130,6 +130,55 @@ export class TransactionPool {
         console.error('[POOL] Error updating transaction status:', error);
       }
     }
+  }
+
+  /**
+   * Re-check every pending tx against the current head and drop any that
+   * no longer validate (bad nonce, insufficient balance, stale hash, bad
+   * signature). Called from the reorg resolver so an orphaned block's
+   * transactions don't persist in the pool in a now-invalid state.
+   *
+   * Returns the list of dropped hashes + reasons so the caller can log.
+   */
+  async evictInvalid(): Promise<Array<{ hash: string; reason: string }>> {
+    const dropped: Array<{ hash: string; reason: string }> = [];
+    const hashes = Array.from(this.pendingTransactions.keys());
+    for (const hash of hashes) {
+      const tx = this.pendingTransactions.get(hash);
+      if (!tx) continue;
+      const validation = await this.validateTransaction(tx);
+      if (!validation.valid) {
+        this.pendingTransactions.delete(hash);
+        this.knownHashes.delete(hash);
+        dropped.push({ hash, reason: validation.error || 'invalid' });
+      }
+    }
+    if (dropped.length > 0) {
+      console.log(`[POOL] Evicted ${dropped.length} tx(s) post-reorg`);
+    }
+    return dropped;
+  }
+
+  /**
+   * Re-admit orphaned-block transactions to the pool so they can be mined
+   * on the new canonical chain. Each tx goes through full validation
+   * again; txs that no longer validate (e.g., their nonce is now behind)
+   * are silently dropped. Returns the list of hashes that were re-admitted.
+   */
+  async readmitOrphaned(orphaned: readonly Transaction[]): Promise<string[]> {
+    const readmitted: string[] = [];
+    for (const tx of orphaned) {
+      // Clear replay state for this hash so validateTransaction doesn't
+      // reject it as "already known".
+      this.knownHashes.delete(tx.hash);
+      this.pendingTransactions.delete(tx.hash);
+      const result = await this.addTransaction(tx);
+      if (result.valid) readmitted.push(tx.hash);
+    }
+    if (readmitted.length > 0) {
+      console.log(`[POOL] Re-admitted ${readmitted.length} orphaned tx(s)`);
+    }
+    return readmitted;
   }
 
   private async validateTransaction(tx: Transaction): Promise<ValidationResult> {

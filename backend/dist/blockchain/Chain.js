@@ -3,7 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Chain = void 0;
 const Block_1 = require("./Block");
 const db_1 = require("../database/db");
+const Consensus_1 = require("./Consensus");
 const EventBus_1 = require("../events/EventBus");
+const StateManager_1 = require("./StateManager");
 // Genesis parent hash in base58 format
 const GENESIS_PARENT_HASH = 'OPENChainGenesisBlock00000000000000000000000';
 // Fork resolution configuration
@@ -21,6 +23,13 @@ class Chain {
         this.genesisTime = HERMESCHAIN_GENESIS_MS;
         this.totalTransactions = 0;
         this.orphanedBlocks = []; // Blocks waiting for parent
+        this.transactionPool = null;
+    }
+    /** Injected late by server.ts so Chain can call pool.evictInvalid /
+     *  pool.readmitOrphaned from reorg paths without importing a module-
+     *  level singleton (TransactionPool is instantiated, not exported). */
+    setTransactionPool(pool) {
+        this.transactionPool = pool;
     }
     async loadPersistedBlocks() {
         const [blockRows, txRows, txCountResult] = await Promise.all([
@@ -147,6 +156,36 @@ class Chain {
     }
     async addBlock(block) {
         const lastBlock = this.getLatestBlock();
+        // Fork routing: if the incoming block's parent is not our current head,
+        // hand the decision to ForkManager. It decides whether the block is an
+        // extension of an existing fork, a new fork, or an orphan. When a fork
+        // overtakes the main chain, ForkManager emits reorg=true and we route
+        // through handleReorg() to revert state + re-admit orphaned txs.
+        if (lastBlock &&
+            block.header.parentHash !== lastBlock.header.hash) {
+            const fork = Consensus_1.forkManager.addBlock(block, {
+                valid: true,
+                confidence: 1,
+                consensusReached: true,
+                aiVotes: [],
+            });
+            if (fork.reorg) {
+                const ancestorHeight = this.findCommonAncestor([block]);
+                if (ancestorHeight >= 0) {
+                    await this.handleReorg([block], ancestorHeight);
+                    return true;
+                }
+            }
+            if (fork.orphaned.length > 0) {
+                this.orphanedBlocks.push(...fork.orphaned);
+                console.warn(`[CHAIN] Block ${block.header.height} orphaned (parent ${block.header.parentHash.slice(0, 12)}... not on chain)`);
+                return false;
+            }
+            // Block landed on a side fork that isn't canonical yet — not added to
+            // main chain; ForkManager tracks it internally. Return true so the
+            // producer / gossip layer doesn't re-submit.
+            return fork.added;
+        }
         if (this.blocks.length > 0 && !block.isValid(lastBlock)) {
             console.error('Invalid block rejected');
             return false;
@@ -293,9 +332,21 @@ class Chain {
             return result;
         }
         console.log(`[CHAIN] Reorganizing: depth=${reorgDepth}, orphaning ${result.orphaned.length} blocks, adding ${newBlocks.length}`);
-        // Truncate main chain to common ancestor
+        // 1. Revert state for each orphaned block in LIFO order so balance +
+        //    nonce match the common-ancestor state before we apply the new
+        //    canonical branch. Without this, a re-sent tx would hit a nonce
+        //    bumped by a block that no longer exists (double-spend window).
+        for (let i = result.orphaned.length - 1; i >= 0; i -= 1) {
+            try {
+                await StateManager_1.stateManager.revertBlock(result.orphaned[i]);
+            }
+            catch (err) {
+                console.error(`[CHAIN] revertBlock failed for orphan ${result.orphaned[i].header.height}:`, err);
+            }
+        }
+        // 2. Truncate main chain to common ancestor.
         this.blocks = this.blocks.slice(0, commonAncestorHeight + 1);
-        // Add new blocks
+        // 3. Apply new canonical blocks.
         for (const block of newBlocks) {
             const added = await this.addBlock(block);
             if (added) {
@@ -308,6 +359,27 @@ class Chain {
                     await this.addBlock(orphan);
                 }
                 return result;
+            }
+        }
+        // 4. Re-admit txs from the orphaned branch into the mempool. Some will
+        //    be invalid against the new head (nonce, balance); pool.evictInvalid
+        //    runs right after so they never linger.
+        if (this.transactionPool && result.orphaned.length > 0) {
+            const orphanTxs = result.orphaned.flatMap((b) => b.transactions);
+            try {
+                await this.transactionPool.readmitOrphaned(orphanTxs);
+            }
+            catch (err) {
+                console.warn('[CHAIN] readmitOrphaned failed:', err);
+            }
+        }
+        // 5. Evict any pending txs that no longer validate against new head.
+        if (this.transactionPool) {
+            try {
+                await this.transactionPool.evictInvalid();
+            }
+            catch (err) {
+                console.warn('[CHAIN] evictInvalid failed:', err);
             }
         }
         // Move orphaned blocks to orphan pool for potential reprocessing

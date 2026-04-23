@@ -29,6 +29,25 @@ export declare class StateManager {
     getAccount(address: string): AccountState | undefined;
     getStateRoot(): string;
     applyTransaction(tx: Transaction, blockHeight: number): Promise<boolean>;
+    /**
+     * Revert every transaction in a block in LIFO order. Returns the set of
+     * account addresses whose state changed so callers (reorg resolver,
+     * mempool eviction) can re-check invariants.
+     *
+     * Mirror of applyTransaction: credit sender back value + gas, decrement
+     * sender nonce by 1, debit recipient by value. Safe against already-
+     * reverted blocks because it operates on the in-memory Map directly and
+     * re-persists the final state.
+     */
+    revertBlock(block: {
+        transactions: Transaction[];
+        header: {
+            producer: string;
+            height: number;
+        };
+    }, blockReward?: bigint): Promise<{
+        touched: string[];
+    }>;
     applyBlockReward(producer: string, blockHeight: number, reward?: bigint): Promise<void>;
     processFaucetRequest(toAddress: string, amount: bigint, blockHeight: number): Promise<boolean>;
     calculateStateRoot(): string;

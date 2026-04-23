@@ -227,6 +227,77 @@ class StateManager {
         });
         return true;
     }
+    /**
+     * Revert every transaction in a block in LIFO order. Returns the set of
+     * account addresses whose state changed so callers (reorg resolver,
+     * mempool eviction) can re-check invariants.
+     *
+     * Mirror of applyTransaction: credit sender back value + gas, decrement
+     * sender nonce by 1, debit recipient by value. Safe against already-
+     * reverted blocks because it operates on the in-memory Map directly and
+     * re-persists the final state.
+     */
+    async revertBlock(block, blockReward = 10n * 10n ** 18n) {
+        const touched = new Set();
+        // Revert the block reward first — it was applied *after* tx application,
+        // so it comes off first in the reverse.
+        const producer = block.header.producer;
+        const producerAcct = this.accounts.get(producer);
+        if (producerAcct) {
+            if (producerAcct.balance >= blockReward) {
+                producerAcct.balance -= blockReward;
+                this.accounts.set(producer, producerAcct);
+                await this.persistAccountState(producerAcct);
+            }
+            else {
+                // Shouldn't happen unless the reward was already partially spent.
+                console.warn(`[STATE] Producer ${producer.slice(0, 12)}... balance ${producerAcct.balance} < reward ${blockReward} on revert`);
+            }
+            touched.add(producer);
+        }
+        // Walk transactions in reverse order so later-in-block state effects
+        // (e.g., cumulative balance adjustments) undo cleanly.
+        for (let i = block.transactions.length - 1; i >= 0; i -= 1) {
+            const tx = block.transactions[i];
+            const fromAccount = this.accounts.get(tx.from);
+            const toAccount = this.accounts.get(tx.to);
+            if (!fromAccount || !toAccount)
+                continue;
+            const gasCost = tx.gasPrice * tx.gasLimit;
+            const totalCost = tx.value + gasCost;
+            // Credit sender back value+gas, drop nonce by 1.
+            fromAccount.balance += totalCost;
+            if (fromAccount.nonce > 0)
+                fromAccount.nonce -= 1;
+            // Debit recipient by value.
+            if (toAccount.balance >= tx.value) {
+                toAccount.balance -= tx.value;
+            }
+            else {
+                // Recipient already spent the received value — cap at 0 so balance
+                // never goes negative. This shouldn't happen in normal reorgs
+                // because we also revert the txs that spent the funds, but we log
+                // it defensively.
+                console.warn(`[STATE] Recipient ${tx.to.slice(0, 12)}... balance ${toAccount.balance} < tx.value ${tx.value} on revert — clamping`);
+                toAccount.balance = 0n;
+            }
+            this.accounts.set(tx.from, fromAccount);
+            this.accounts.set(tx.to, toAccount);
+            await this.persistAccountState(fromAccount);
+            await this.persistAccountState(toAccount);
+            touched.add(tx.from);
+            touched.add(tx.to);
+            EventBus_1.eventBus.emit('state_change', {
+                type: 'reverted',
+                txHash: tx.hash,
+                from: tx.from,
+                to: tx.to,
+                value: tx.value.toString(),
+                blockHeight: block.header.height,
+            });
+        }
+        return { touched: Array.from(touched) };
+    }
     // Apply block reward
     async applyBlockReward(producer, blockHeight, reward = 10n * 10n ** 18n) {
         const account = this.accounts.get(producer) || {

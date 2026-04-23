@@ -1,10 +1,16 @@
 import { Block } from './Block';
+import type { TransactionPool } from './TransactionPool';
 export declare class Chain {
     private blocks;
     private difficulty;
     private genesisTime;
     private totalTransactions;
     private orphanedBlocks;
+    private transactionPool;
+    /** Injected late by server.ts so Chain can call pool.evictInvalid /
+     *  pool.readmitOrphaned from reorg paths without importing a module-
+     *  level singleton (TransactionPool is instantiated, not exported). */
+    setTransactionPool(pool: TransactionPool): void;
     private loadPersistedBlocks;
     initialize(): Promise<void>;
     refreshFromDb(): Promise<void>;

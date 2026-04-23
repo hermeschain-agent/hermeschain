@@ -91,6 +91,9 @@ async function main() {
     await txPool.initialize();
     await StateManager_1.stateManager.initialize();
     await validatorManager.initialize();
+    // Late-inject the pool so Chain can call evictInvalid + readmitOrphaned
+    // from reorg paths without a module-level import cycle.
+    chain.setTransactionPool(txPool);
     global.transactionPool = txPool;
     console.log('[STATE] Initial state loaded:');
     console.log(`   State Root: ${StateManager_1.stateManager.getStateRoot().substring(0, 20)}...`);
