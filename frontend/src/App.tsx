@@ -293,15 +293,18 @@ export default function App() {
   }, [isMobile]);
 
   useEffect(() => {
+    // Canonical Hermeschain genesis: 2026-04-14 03:00:00 UTC. Pinned
+    // client-side so uptime is correct regardless of what the live API
+    // returns (prevents stale chainAgeMs from a not-yet-redeployed
+    // backend from showing wrong numbers).
+    const HERMES_GENESIS_MS = Date.UTC(2026, 3, 14, 3, 0, 0);
+
     const updateUptime = () => {
-      if (liveState.chainAgeMs === null || liveState.lastUpdatedAt === null) {
+      const elapsed = Date.now() - HERMES_GENESIS_MS;
+      if (elapsed < 0) {
         setUptime('Syncing');
         return;
       }
-
-      const elapsed =
-        liveState.chainAgeMs +
-        Math.max(0, Date.now() - liveState.lastUpdatedAt);
       const days = Math.floor(elapsed / 86400000);
       const hours = Math.floor((elapsed / 3600000) % 24);
       const minutes = Math.floor((elapsed / 60000) % 60);
@@ -315,7 +318,7 @@ export default function App() {
     updateUptime();
     const interval = window.setInterval(updateUptime, 1000);
     return () => window.clearInterval(interval);
-  }, [liveState.chainAgeMs, liveState.lastUpdatedAt]);
+  }, []);
 
   useEffect(() => {
     const path = location.pathname.slice(1) || 'terminal';

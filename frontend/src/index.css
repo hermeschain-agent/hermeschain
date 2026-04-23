@@ -1967,7 +1967,9 @@ button { font-family: inherit; cursor: pointer; }
   position: sticky;
   top: calc(var(--app-header-h) + var(--app-nav-h));
   align-self: flex-start;
-  height: calc(100dvh - var(--app-header-h) - var(--app-nav-h));
+  /* Match the hero section's height so the rail doesn't sprawl past
+   * the hero into the rest of the landing. */
+  height: clamp(480px, 62vh, 760px);
   overflow: hidden;
 }
 .agent-panel .resize-handle {
