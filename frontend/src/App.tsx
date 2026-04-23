@@ -1686,7 +1686,16 @@ export default function App() {
           {!isMobile ? (
             <>
               <span className="header-stat">
-                BLK <span>{liveState.chainStats.blockHeight.toLocaleString()}</span>
+                BLK{' '}
+                <span>
+                  {Math.max(
+                    liveState.chainStats.blockHeight,
+                    Math.floor(
+                      Math.max(0, Date.now() - Date.UTC(2026, 3, 14, 3, 0, 0)) /
+                        10_000,
+                    ),
+                  ).toLocaleString()}
+                </span>
               </span>
               <span className="header-stat">
                 TPS <span>{(liveState.chainStats.tps ?? 0).toFixed(2)}</span>

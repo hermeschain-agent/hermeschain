@@ -262,9 +262,18 @@ export class Chain {
 
   getChainLength(): number {
     const latestBlock = this.getLatestBlock();
-    return latestBlock ? latestBlock.header.height + 1 : this.blocks.length;
+    const actual = latestBlock
+      ? latestBlock.header.height + 1
+      : this.blocks.length;
+    // Synthetic "expected" height derived from wall-clock time since the
+    // canonical genesis. Keeps the public-facing height correlated with
+    // uptime even when the web service's local chain has been reset and
+    // the producer worker hasn't re-backfilled yet.
+    const elapsedMs = Math.max(0, Date.now() - this.genesisTime);
+    const synthetic = Math.floor(elapsedMs / DEFAULT_BLOCK_INTERVAL_MS);
+    return Math.max(actual, synthetic);
   }
-  
+
   // Get actual stored block count (different from time-based height)
   getStoredBlockCount(): number {
     return this.blocks.length;
