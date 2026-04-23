@@ -1973,9 +1973,11 @@ button { font-family: inherit; cursor: pointer; }
   position: sticky;
   top: calc(var(--app-header-h) + var(--app-nav-h));
   align-self: flex-start;
-  /* Match the hero section's height so the rail doesn't sprawl past
-   * the hero into the rest of the landing. */
-  height: clamp(480px, 62vh, 760px);
+  /* Fill the viewport below the header/nav — feels like a real IDE
+   * rail rather than a short card. Capped slightly below full viewport
+   * on tall screens so the page footer still feels reachable. */
+  height: calc(100dvh - var(--app-header-h) - var(--app-nav-h));
+  max-height: 1100px;
   overflow: hidden;
 }
 .agent-panel .resize-handle {
