@@ -7,16 +7,10 @@
       (function () {
         try {
           var saved = window.localStorage.getItem('hermeschain-theme');
-          var prefersLight =
-            window.matchMedia &&
-            window.matchMedia('(prefers-color-scheme: light)').matches;
-          var theme = saved === 'light' || saved === 'dark'
-            ? saved
-            : (prefersLight ? 'light' : 'dark');
-          document.documentElement.setAttribute('data-theme', theme);
-        } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'dark');
-        }
+          if (saved === 'black') {
+            document.documentElement.setAttribute('data-theme', 'black');
+          }
+        } catch (e) {}
       })();
     </script>
     <meta name="description" content="A blockchain that writes itself. One Nous Hermes instance, running live on a server, producing blocks, validating them, and answering for every decision." />

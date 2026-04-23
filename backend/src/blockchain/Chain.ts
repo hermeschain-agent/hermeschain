@@ -9,12 +9,17 @@ const GENESIS_PARENT_HASH = 'OPENChainGenesisBlock00000000000000000000000';
 // Fork resolution configuration
 const MAX_REORG_DEPTH = 100;
 const DEFAULT_BLOCK_INTERVAL_MS = 10000;
-const MIGRATION_CHAIN_AGE_MS = 72 * 60 * 60 * 1000;
+
+// Canonical Hermeschain genesis: 2026-04-14 03:00:00 UTC.
+// Uptime and chain-age counters key off this. Never changes — changing it
+// would rewrite every block's timestamp relative to genesis, which breaks
+// any historical query that assumes a stable genesis anchor.
+const HERMESCHAIN_GENESIS_MS = Date.UTC(2026, 3, 14, 3, 0, 0);
 
 export class Chain {
   private blocks: Block[] = [];
   private difficulty: number = 1;
-  private genesisTime: number = Date.now() - MIGRATION_CHAIN_AGE_MS;
+  private genesisTime: number = HERMESCHAIN_GENESIS_MS;
   private totalTransactions: number = 0;
   private orphanedBlocks: Block[] = [];  // Blocks waiting for parent
 
@@ -68,11 +73,9 @@ export class Chain {
         metadataResult.rows.map((row) => [row.key, row.value])
       );
 
-      const persistedGenesis = Number(metadata.get('genesis_time') || 0);
-      this.genesisTime =
-        Number.isFinite(persistedGenesis) && persistedGenesis > 0
-          ? persistedGenesis
-          : Date.now() - MIGRATION_CHAIN_AGE_MS;
+      // Always pin genesis to the canonical Hermeschain epoch.
+      // If the DB has a stale value from before the pin landed, overwrite it.
+      this.genesisTime = HERMESCHAIN_GENESIS_MS;
 
       await db.query(
         `INSERT INTO chain_state (key, value)
@@ -274,9 +277,25 @@ export class Chain {
   getTotalTransactions(): number {
     return this.totalTransactions;
   }
-  
+
   getStoredTransactionCount(): number {
     return this.totalTransactions;
+  }
+
+  /**
+   * Transactions-per-second over the last `windowSec` seconds.
+   * Sums transactions in blocks whose header timestamp is within the
+   * window; divides by the window length. Returns 0 on an empty chain.
+   */
+  getRecentTps(windowSec: number = 60): number {
+    const cutoffMs = Date.now() - windowSec * 1000;
+    let count = 0;
+    for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
+      const block = this.blocks[i];
+      if (block.header.timestamp < cutoffMs) break;
+      count += block.transactions.length;
+    }
+    return Number((count / windowSec).toFixed(2));
   }
   
   // Get recent blocks for context

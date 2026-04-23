@@ -112,25 +112,25 @@ function publicError(
   const defaults: Record<HermesErrorCode, Omit<HermesPublicError, 'code'>> = {
     missing_key: {
       message:
-        'Hermes is not configured yet. Set ANTHROPIC_API_KEY to wake the Claude runtime.',
+        'Hermes is resting. Wake him up via operator config.',
       status: 503,
       retryable: false,
       provider: 'anthropic',
     },
     provider_error: {
-      message: 'Anthropic rejected the request. Hermes could not answer right now.',
+      message: 'Hermes could not answer right now. Try again in a moment.',
       status: 502,
       retryable: true,
       provider: 'anthropic',
     },
     timeout: {
-      message: 'Anthropic timed out while Hermes was thinking. Try again in a moment.',
+      message: 'Hermes is still thinking. Try again in a moment.',
       status: 504,
       retryable: true,
       provider: 'anthropic',
     },
     bad_response: {
-      message: 'Anthropic returned an unexpected response format.',
+      message: 'Hermes returned an unexpected response. Try again.',
       status: 502,
       retryable: true,
       provider: 'anthropic',

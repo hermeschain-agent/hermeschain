@@ -27,6 +27,15 @@
   --bg-sunken: #021212;
   --bg-hover:  #0b3333;
 
+  /* RGB triplets used by the panel-tint rgbas scattered across the
+   * stylesheet. They default to the Hermes teal surfaces; the black
+   * theme overrides all three to `0, 0, 0` so those surfaces go true
+   * black without touching every hardcoded rgba() call.
+   */
+  --surface-hi-rgb: 7, 39, 39;
+  --surface-md-rgb: 4, 28, 28;
+  --surface-lo-rgb: 2, 18, 18;
+
   --cream:     #ffe6cb;
   --cream-dim: rgba(255, 230, 203, 0.12);
   --cream-mid: rgba(255, 230, 203, 0.22);
@@ -205,7 +214,7 @@ a:hover { text-decoration-color: var(--cream); }
   z-index: 100;
   flex-shrink: 0;
   backdrop-filter: blur(8px);
-  background: rgba(4, 28, 28, 0.88);
+  background: rgba(var(--surface-md-rgb), 0.88);
 }
 
 /* Logo occupies column 1, spans both rows of the top band. */
@@ -387,7 +396,7 @@ a:hover { text-decoration-color: var(--cream); }
   opacity: 1;
   color: var(--bg);
   background:
-    linear-gradient(180deg, rgba(4, 28, 28, 0.04), rgba(4, 28, 28, 0)),
+    linear-gradient(180deg, rgba(var(--surface-md-rgb), 0.04), rgba(var(--surface-md-rgb), 0)),
     var(--cream);
   border-color: var(--cream);
   box-shadow: 4px 4px 0 0 rgba(255, 255, 255, 0.6);
@@ -596,7 +605,7 @@ button { font-family: inherit; cursor: pointer; }
   border: 1px solid var(--cream-dim);
   background:
     linear-gradient(180deg, rgba(255, 230, 203, 0.04), rgba(255, 230, 203, 0) 48%),
-    linear-gradient(180deg, rgba(7, 39, 39, 0.96), rgba(2, 18, 18, 0.96));
+    linear-gradient(180deg, rgba(var(--surface-hi-rgb), 0.96), rgba(var(--surface-lo-rgb), 0.96));
   overflow: hidden;
 }
 
@@ -669,7 +678,7 @@ button { font-family: inherit; cursor: pointer; }
   gap: 8px;
   padding: 8px 12px;
   border: 1px solid var(--cream-dim);
-  background: rgba(7, 39, 39, 0.9);
+  background: rgba(var(--surface-hi-rgb), 0.9);
   color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -768,7 +777,7 @@ button { font-family: inherit; cursor: pointer; }
   border: 1px solid var(--cream-dim);
   background:
     linear-gradient(180deg, rgba(255, 230, 203, 0.05), rgba(255, 230, 203, 0.01)),
-    rgba(7, 39, 39, 0.92);
+    rgba(var(--surface-hi-rgb), 0.92);
   box-shadow: 3px 3px 0 0 rgba(255, 230, 203, 0.08);
 }
 
@@ -887,7 +896,7 @@ button { font-family: inherit; cursor: pointer; }
   height: min(72vh, 760px);
   overflow: hidden;
   border: 1px solid var(--cream-dim);
-  background: rgba(2, 18, 18, 0.76);
+  background: rgba(var(--surface-lo-rgb), 0.76);
 }
 
 .terminal-preview-frame > .terminal {
@@ -1488,7 +1497,7 @@ button { font-family: inherit; cursor: pointer; }
 .log-filter-chip {
   padding: 8px 12px;
   border: 1px solid var(--cream-dim);
-  background: rgba(7, 39, 39, 0.9);
+  background: rgba(var(--surface-hi-rgb), 0.9);
   color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -1518,6 +1527,12 @@ button { font-family: inherit; cursor: pointer; }
 }
 .live-dot.on { background: var(--success); box-shadow: 0 0 10px rgba(168, 230, 163, 0.6); }
 .live-dot.off { background: var(--red); }
+
+/* Streaming: amplify the dot animation when SSE is actively pushing. */
+.live-status-chip.streaming .live-dot.on {
+  animation: pulse 0.9s steps(2, end) infinite;
+  box-shadow: 0 0 14px rgba(168, 230, 163, 0.9);
+}
 
 /* ---- Updates ---- */
 
@@ -1583,7 +1598,7 @@ button { font-family: inherit; cursor: pointer; }
 .wallet-banner {
   padding: 14px 16px;
   border: 1px solid var(--cream-dim);
-  background: rgba(7, 39, 39, 0.9);
+  background: rgba(var(--surface-hi-rgb), 0.9);
   font-size: var(--fs-sm);
   color: var(--fg-muted);
 }
@@ -1673,7 +1688,7 @@ button { font-family: inherit; cursor: pointer; }
   display: block;
   padding: 10px 12px;
   border: 1px solid var(--cream-dim);
-  background: rgba(2, 18, 18, 0.84);
+  background: rgba(var(--surface-lo-rgb), 0.84);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--cream);
@@ -1949,8 +1964,10 @@ button { font-family: inherit; cursor: pointer; }
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  align-self: stretch;
-  min-height: calc(100dvh - var(--app-header-h) - var(--app-nav-h));
+  position: sticky;
+  top: calc(var(--app-header-h) + var(--app-nav-h));
+  align-self: flex-start;
+  height: calc(100dvh - var(--app-header-h) - var(--app-nav-h));
   overflow: hidden;
 }
 .agent-panel .resize-handle {
@@ -2329,7 +2346,7 @@ button { font-family: inherit; cursor: pointer; }
   width: clamp(320px, 26vw, 380px);
   flex-shrink: 0;
   border-left: 1px solid var(--cream-dim);
-  background: rgba(2, 18, 18, 0.94);
+  background: rgba(var(--surface-lo-rgb), 0.94);
   overflow-y: auto;
 }
 
@@ -2441,7 +2458,7 @@ button { font-family: inherit; cursor: pointer; }
   gap: 16px;
   padding: 14px 18px;
   border: 1px solid var(--cream-mid);
-  background: rgba(4, 28, 28, 0.94);
+  background: rgba(var(--surface-md-rgb), 0.94);
   color: var(--cream);
   font-family: var(--font-display);
   font-size: var(--fs-sm);
@@ -2699,7 +2716,7 @@ button { font-family: inherit; cursor: pointer; }
   inset: 0;
   z-index: 2000;
   background:
-    radial-gradient(ellipse at center, rgba(4, 28, 28, 0.92) 0%, rgba(1, 8, 8, 1) 70%),
+    radial-gradient(ellipse at center, rgba(var(--surface-md-rgb), 0.92) 0%, rgba(var(--surface-lo-rgb), 1) 70%),
     #010808;
   display: flex;
   align-items: center;
@@ -2730,7 +2747,7 @@ button { font-family: inherit; cursor: pointer; }
   z-index: 1;
   width: min(720px, 94vw);
   border: 1px solid rgba(112, 255, 173, 0.35);
-  background: rgba(4, 28, 28, 0.9);
+  background: rgba(var(--surface-md-rgb), 0.9);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.7),
     0 0 32px rgba(112, 255, 173, 0.18),
@@ -2934,7 +2951,7 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   max-width: var(--content-max);
   padding: 16px var(--content-pad);
   border-block: 1px solid var(--cream-dim);
-  background: rgba(4, 28, 28, 0.6);
+  background: rgba(var(--surface-md-rgb), 0.6);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -3016,6 +3033,15 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   font-size: 10px;
   letter-spacing: 0.08em;
 }
+.commit-marquee__author {
+  color: var(--fg-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ─── Manifesto section ───────────────────────────────────────────── */
 
@@ -3040,7 +3066,7 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   border-left: 2px solid var(--cream);
   background:
     linear-gradient(90deg, rgba(255, 230, 203, 0.04), transparent 80%),
-    rgba(4, 28, 28, 0.6);
+    rgba(var(--surface-md-rgb), 0.6);
   box-shadow: 4px 4px 0 0 var(--cream-dim);
   display: flex;
   gap: 18px;
@@ -3249,7 +3275,7 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
 .cmd-palette__panel {
   position: relative;
   width: min(640px, 92vw);
-  background: rgba(4, 28, 28, 0.96);
+  background: rgba(var(--surface-md-rgb), 0.96);
   border: 1px solid rgba(112, 255, 173, 0.4);
   box-shadow:
     0 0 32px rgba(112, 255, 173, 0.25),
@@ -3337,62 +3363,29 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   text-transform: uppercase;
 }
 
-/* ───────────────── Light-mode overrides ───────────────────────────
- * Activated via `[data-theme='light']` on <html>. The FOUC script in
- * index.html sets this attribute before first paint so there's no
- * flash. Re-maps the same CSS variable tokens used across the site so
- * most components flip automatically.
+/* ───────────────── Black-mode overrides ──────────────────────────
+ * Default theme is Hermes green-teal (see :root above). Toggle flips
+ * `data-theme` to 'black' on <html> and we remap just the bg tokens
+ * + the bundled panel tint RGBs to pure black. Semantic colors, text,
+ * and accents (cream, amber, success) stay untouched so the brand
+ * reads the same, only the canvas goes to true black.
  */
 
-[data-theme='light'] {
-  --bg:          #f6f1e6;
-  --bg-raised:   #ffffff;
-  --bg-sunken:   #ebe4d4;
-  --bg-hover:    #e8dfca;
+[data-theme='black'] {
+  --bg:        #000000;
+  --bg-raised: #0b0b0b;
+  --bg-sunken: #000000;
+  --bg-hover:  #141414;
 
-  --cream:        #3d2a12;
-  --cream-dim:    rgba(15, 26, 26, 0.10);
-  --cream-mid:    rgba(15, 26, 26, 0.20);
-  --cream-strong: rgba(15, 26, 26, 0.50);
+  --surface-hi-rgb: 12, 12, 12;
+  --surface-md-rgb: 0, 0, 0;
+  --surface-lo-rgb: 0, 0, 0;
 
-  --fg:           #0f1a1a;
-  --fg-muted:     rgba(15, 26, 26, 0.74);
-  --fg-faint:     rgba(15, 26, 26, 0.42);
-
-  --border:        rgba(15, 26, 26, 0.14);
-  --border-strong: rgba(15, 26, 26, 0.32);
-
-  --red:     #c84646;
-  --amber:   #a9700e;
-  --success: #3fa770;
-  --violet:  #6c5db4;
-  --teal:    #2f8b7a;
-
-  --coral-bright: #3d2a12;
-  --red-dim: rgba(200, 70, 70, 0.10);
-
-  --px-shadow:        3px 3px 0 0 rgba(15, 26, 26, 0.18);
-  --px-shadow-hover:  4px 4px 0 0 rgba(15, 26, 26, 0.35);
-  --px-shadow-active: 0 0 0 0 rgba(15, 26, 26, 0);
-
-  /* Terminal stays dark regardless of page theme. */
-  --term-bg:       #041C1C;
-  --term-fg:       #ffe6cb;
-  --term-body:     rgba(255, 230, 203, 0.78);
-  --term-dim:      rgba(255, 230, 203, 0.45);
-  --term-accent:   #a8e6a3;
-  --term-chip-fg:  #ffc872;
-  --term-chip-bg:  rgba(255, 200, 114, 0.14);
-  --term-hairline: rgba(255, 230, 203, 0.12);
+  --term-bg:   #000000;
 }
 
-[data-theme='light'] body {
+[data-theme='black'] body {
   background: var(--bg);
-  color: var(--fg);
-}
-
-[data-theme='light'] .ambient-bg__drop {
-  color: rgba(15, 26, 26, 0.55);
 }
 
 /* ───────────────── Theme toggle button ──────────────────────────── */

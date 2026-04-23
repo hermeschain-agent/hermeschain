@@ -9,12 +9,16 @@ const GENESIS_PARENT_HASH = 'OPENChainGenesisBlock00000000000000000000000';
 // Fork resolution configuration
 const MAX_REORG_DEPTH = 100;
 const DEFAULT_BLOCK_INTERVAL_MS = 10000;
-const MIGRATION_CHAIN_AGE_MS = 72 * 60 * 60 * 1000;
+// Canonical Hermeschain genesis: 2026-04-14 03:00:00 UTC.
+// Uptime and chain-age counters key off this. Never changes — changing it
+// would rewrite every block's timestamp relative to genesis, which breaks
+// any historical query that assumes a stable genesis anchor.
+const HERMESCHAIN_GENESIS_MS = Date.UTC(2026, 3, 14, 3, 0, 0);
 class Chain {
     constructor() {
         this.blocks = [];
         this.difficulty = 1;
-        this.genesisTime = Date.now() - MIGRATION_CHAIN_AGE_MS;
+        this.genesisTime = HERMESCHAIN_GENESIS_MS;
         this.totalTransactions = 0;
         this.orphanedBlocks = []; // Blocks waiting for parent
     }
@@ -57,11 +61,9 @@ class Chain {
         try {
             const metadataResult = await db_1.db.query(`SELECT key, value FROM chain_state WHERE key IN ('genesis_time', 'chain_id', 'network_name')`);
             const metadata = new Map(metadataResult.rows.map((row) => [row.key, row.value]));
-            const persistedGenesis = Number(metadata.get('genesis_time') || 0);
-            this.genesisTime =
-                Number.isFinite(persistedGenesis) && persistedGenesis > 0
-                    ? persistedGenesis
-                    : Date.now() - MIGRATION_CHAIN_AGE_MS;
+            // Always pin genesis to the canonical Hermeschain epoch.
+            // If the DB has a stale value from before the pin landed, overwrite it.
+            this.genesisTime = HERMESCHAIN_GENESIS_MS;
             await db_1.db.query(`INSERT INTO chain_state (key, value)
          VALUES ('genesis_time', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`, [String(this.genesisTime)]).catch(() => { });
@@ -228,6 +230,22 @@ class Chain {
     }
     getStoredTransactionCount() {
         return this.totalTransactions;
+    }
+    /**
+     * Transactions-per-second over the last `windowSec` seconds.
+     * Sums transactions in blocks whose header timestamp is within the
+     * window; divides by the window length. Returns 0 on an empty chain.
+     */
+    getRecentTps(windowSec = 60) {
+        const cutoffMs = Date.now() - windowSec * 1000;
+        let count = 0;
+        for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
+            const block = this.blocks[i];
+            if (block.header.timestamp < cutoffMs)
+                break;
+            count += block.transactions.length;
+        }
+        return Number((count / windowSec).toFixed(2));
     }
     // Get recent blocks for context
     getRecentBlocks(count = 10) {

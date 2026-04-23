@@ -302,9 +302,14 @@ export default function App() {
       const elapsed =
         liveState.chainAgeMs +
         Math.max(0, Date.now() - liveState.lastUpdatedAt);
-      const hours = Math.floor(elapsed / 3600000);
+      const days = Math.floor(elapsed / 86400000);
+      const hours = Math.floor((elapsed / 3600000) % 24);
       const minutes = Math.floor((elapsed / 60000) % 60);
-      setUptime(`${hours}h ${minutes}m`);
+      if (days > 0) {
+        setUptime(`${days}d ${hours}h ${minutes}m`);
+      } else {
+        setUptime(`${hours}h ${minutes}m`);
+      }
     };
 
     updateUptime();
@@ -1681,12 +1686,31 @@ export default function App() {
                 BLK <span>{liveState.chainStats.blockHeight.toLocaleString()}</span>
               </span>
               <span className="header-stat">
+                TPS <span>{(liveState.chainStats.tps ?? 0).toFixed(2)}</span>
+              </span>
+              <span className="header-stat">
+                UP <span>{uptime}</span>
+              </span>
+              {liveState.chainStats.validatorsTotal > 0 ? (
+                <span className="header-stat">
+                  VAL{' '}
+                  <span>
+                    {liveState.chainStats.validatorsOnline}/
+                    {liveState.chainStats.validatorsTotal}
+                  </span>
+                </span>
+              ) : null}
+              <span className="header-stat">
                 VIEWERS <span>{liveState.viewerCount.toLocaleString()}</span>
               </span>
             </>
           ) : null}
 
-          <div className={`live-status-chip ${liveState.connectionState}`}>
+          <div
+            className={`live-status-chip ${liveState.connectionState} ${
+              liveState.connectionState === 'live' ? 'streaming' : ''
+            }`}
+          >
             <span
               className={`live-dot ${
                 liveState.connectionState === 'offline' ? 'off' : 'on'
@@ -1709,24 +1733,24 @@ export default function App() {
             className="theme-toggle"
             onClick={toggleTheme}
             aria-label={
-              theme === 'dark'
-                ? 'Switch to light theme'
-                : 'Switch to dark theme'
+              theme === 'hermes'
+                ? 'Switch to black theme'
+                : 'Switch to Hermes theme'
             }
             title={
-              theme === 'dark'
-                ? 'Switch to light theme'
-                : 'Switch to dark theme'
+              theme === 'hermes'
+                ? 'Switch to black theme'
+                : 'Switch to Hermes theme'
             }
           >
-            {theme === 'dark' ? (
+            {theme === 'hermes' ? (
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 3v1.5M12 19.5V21M4.22 4.22l1.06 1.06M18.72 18.72l1.06 1.06M3 12h1.5M19.5 12H21M4.22 19.78l1.06-1.06M18.72 5.28l1.06-1.06" />
+                <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />
               </svg>
             ) : (
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 3v1.5M12 19.5V21M4.22 4.22l1.06 1.06M18.72 18.72l1.06 1.06M3 12h1.5M19.5 12H21M4.22 19.78l1.06-1.06M18.72 5.28l1.06-1.06" />
               </svg>
             )}
           </button>

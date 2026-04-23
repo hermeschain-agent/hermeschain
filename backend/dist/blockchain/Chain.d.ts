@@ -20,6 +20,12 @@ export declare class Chain {
     getGenesisTime(): number;
     getTotalTransactions(): number;
     getStoredTransactionCount(): number;
+    /**
+     * Transactions-per-second over the last `windowSec` seconds.
+     * Sums transactions in blocks whose header timestamp is within the
+     * window; divides by the window length. Returns 0 on an empty chain.
+     */
+    getRecentTps(windowSec?: number): number;
     getRecentBlocks(count?: number): Block[];
     handleReorg(newBlocks: Block[], commonAncestorHeight: number): Promise<{
         success: boolean;

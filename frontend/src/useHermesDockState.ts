@@ -102,39 +102,103 @@ export interface HermesDockState {
   chainStats: {
     blockHeight: number;
     transactionCount: number;
+    tps: number;
+    validatorsOnline: number;
+    validatorsTotal: number;
+    mempoolPending: number;
+    genesisTimestamp: number;
   };
   chainAgeMs: number | null;
   lastUpdatedAt: number | null;
   error: string | null;
 }
 
-const INITIAL_STATE: HermesDockState = {
-  connectionState: 'offline',
-  mode: 'disabled',
-  streamMode: 'disabled',
-  runStatus: 'idle',
-  verificationStatus: 'pending',
-  blockedReason: null,
-  lastFailure: null,
-  repoRootHealth: 'missing',
-  agentEnabled: false,
-  startupIssues: [],
-  viewerCount: 0,
-  isWorking: false,
-  currentTask: null,
-  activeTool: null,
-  recentActivity: [],
-  recentRuns: [],
-  latestBlock: null,
-  latestCommit: null,
+const HUD_CACHE_KEY = 'hermeschain-hud-cache-v1';
+
+interface HudCachePayload {
+  viewerCount: number;
   chainStats: {
-    blockHeight: 0,
-    transactionCount: 0,
-  },
-  chainAgeMs: null,
-  lastUpdatedAt: null,
-  error: null,
-};
+    blockHeight: number;
+    transactionCount: number;
+    tps: number;
+    validatorsOnline: number;
+    validatorsTotal: number;
+    mempoolPending: number;
+    genesisTimestamp: number;
+  };
+  chainAgeMs: number | null;
+  savedAtMs: number;
+}
+
+function loadHudCache(): Partial<HudCachePayload> | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(HUD_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as HudCachePayload;
+    if (!parsed.chainStats) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveHudCache(state: HermesDockState): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: HudCachePayload = {
+      viewerCount: state.viewerCount,
+      chainStats: state.chainStats,
+      chainAgeMs: state.chainAgeMs,
+      savedAtMs: Date.now(),
+    };
+    window.sessionStorage.setItem(HUD_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    /* noop */
+  }
+}
+
+const DEFAULT_CHAIN_STATS = Object.freeze({
+  blockHeight: 0,
+  transactionCount: 0,
+  tps: 0,
+  validatorsOnline: 0,
+  validatorsTotal: 0,
+  mempoolPending: 0,
+  genesisTimestamp: 0,
+});
+
+function initialState(): HermesDockState {
+  const cached = loadHudCache();
+  return {
+    connectionState: 'offline',
+    mode: 'disabled',
+    streamMode: 'disabled',
+    runStatus: 'idle',
+    verificationStatus: 'pending',
+    blockedReason: null,
+    lastFailure: null,
+    repoRootHealth: 'missing',
+    agentEnabled: false,
+    startupIssues: [],
+    viewerCount: cached?.viewerCount ?? 0,
+    isWorking: false,
+    currentTask: null,
+    activeTool: null,
+    recentActivity: [],
+    recentRuns: [],
+    latestBlock: null,
+    latestCommit: null,
+    chainStats: cached?.chainStats
+      ? { ...DEFAULT_CHAIN_STATS, ...cached.chainStats }
+      : { ...DEFAULT_CHAIN_STATS },
+    chainAgeMs: cached?.chainAgeMs ?? null,
+    lastUpdatedAt: null,
+    error: null,
+  };
+}
+
+const INITIAL_STATE: HermesDockState = initialState();
 
 function getActivityLabel(type: string): string {
   const labels: Record<string, string> = {
@@ -219,6 +283,26 @@ function applyStatusPayload(
         payload?.storedTransactionCount ??
         payload?.transactionCount ??
         previous.chainStats.transactionCount,
+      tps:
+        typeof payload?.tps === 'number'
+          ? payload.tps
+          : previous.chainStats.tps ?? 0,
+      validatorsOnline:
+        typeof payload?.validatorsOnline === 'number'
+          ? payload.validatorsOnline
+          : previous.chainStats.validatorsOnline ?? 0,
+      validatorsTotal:
+        typeof payload?.validatorsTotal === 'number'
+          ? payload.validatorsTotal
+          : previous.chainStats.validatorsTotal ?? 0,
+      mempoolPending:
+        typeof payload?.mempoolPending === 'number'
+          ? payload.mempoolPending
+          : previous.chainStats.mempoolPending ?? 0,
+      genesisTimestamp:
+        typeof payload?.genesisTimestamp === 'number'
+          ? payload.genesisTimestamp
+          : previous.chainStats.genesisTimestamp ?? 0,
     },
     chainAgeMs:
       typeof payload?.chainAgeMs === 'number'
@@ -231,6 +315,23 @@ function applyStatusPayload(
 
 export function useHermesDockState(apiBase: string): HermesDockState {
   const [state, setState] = useState<HermesDockState>(INITIAL_STATE);
+
+  // Persist HUD cache on every meaningful change so a page refresh hydrates
+  // from the last-known state rather than flashing zeroes.
+  useEffect(() => {
+    if (state.chainStats.blockHeight > 0 || state.viewerCount > 0) {
+      saveHudCache(state);
+    }
+  }, [
+    state.chainStats.blockHeight,
+    state.chainStats.tps,
+    state.chainStats.validatorsOnline,
+    state.chainStats.validatorsTotal,
+    state.chainStats.mempoolPending,
+    state.chainStats.genesisTimestamp,
+    state.viewerCount,
+    state.chainAgeMs,
+  ]);
 
   useEffect(() => {
     const liveConnections = { agent: false, logs: false };
@@ -339,6 +440,7 @@ export function useHermesDockState(apiBase: string): HermesDockState {
                 ? Date.now() - data.genesisTime
                 : prev.chainAgeMs,
           chainStats: {
+            ...prev.chainStats,
             blockHeight:
               typeof data?.chainLength === 'number'
                 ? data.chainLength

@@ -733,6 +733,10 @@ Live context:
             blockHeight: chain.getChainLength(),
             transactionCount: chain.getStoredTransactionCount(),
             storedTransactionCount: chain.getStoredTransactionCount(),
+            tps: chain.getRecentTps(60),
+            validatorsOnline: validatorManager.getAllValidators().length,
+            validatorsTotal: validatorManager.getAllValidators().length,
+            mempoolPending: txPool.getPendingCount(),
             tokenSpend: tokenBudget.snapshot(),
         };
     };

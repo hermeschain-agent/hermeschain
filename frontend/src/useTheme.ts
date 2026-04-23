@@ -1,33 +1,36 @@
 import { useEffect, useState } from 'react';
 
-export type Theme = 'light' | 'dark';
+export type Theme = 'hermes' | 'black';
 
 const STORAGE_KEY = 'hermeschain-theme';
 
 function readInitial(): Theme {
-  if (typeof window === 'undefined') return 'dark';
+  if (typeof window === 'undefined') return 'hermes';
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
-    if (saved === 'light' || saved === 'dark') return saved;
+    if (saved === 'hermes' || saved === 'black') return saved;
   } catch {
     /* noop */
   }
-  const prefersLight =
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-color-scheme: light)').matches;
-  return prefersLight ? 'light' : 'dark';
+  return 'hermes';
 }
 
 /**
- * Tiny theme state hook. Writes `data-theme` onto <html> and persists the
- * choice in localStorage. The FOUC-prevention script in index.html sets
- * the attribute before first paint so React picks up in the correct mode.
+ * Hermes-theme / black-theme toggle. Default is the Hermes teal/cream
+ * canvas; toggle flips to pure black. Writes `data-theme` on <html>
+ * (blank for Hermes, "black" for dark) so the default palette in :root
+ * keeps ruling.
  */
 export function useTheme(): [Theme, () => void] {
   const [theme, setTheme] = useState<Theme>(() => readInitial());
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    const root = document.documentElement;
+    if (theme === 'black') {
+      root.setAttribute('data-theme', 'black');
+    } else {
+      root.removeAttribute('data-theme');
+    }
     try {
       window.localStorage.setItem(STORAGE_KEY, theme);
     } catch {
@@ -36,7 +39,7 @@ export function useTheme(): [Theme, () => void] {
   }, [theme]);
 
   const toggle = () =>
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+    setTheme((prev) => (prev === 'hermes' ? 'black' : 'hermes'));
 
   return [theme, toggle];
 }

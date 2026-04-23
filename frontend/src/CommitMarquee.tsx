@@ -76,6 +76,11 @@ const CommitMarquee: React.FC<CommitMarqueeProps> = ({ commits, loading }) => {
                   {type}
                 </span>
                 <span className="commit-marquee__title">{title}</span>
+                {commit.author ? (
+                  <span className="commit-marquee__author">
+                    by {commit.author}
+                  </span>
+                ) : null}
                 <span className="commit-marquee__age">{relativeTime(commit.date)} ago</span>
               </a>
             );
