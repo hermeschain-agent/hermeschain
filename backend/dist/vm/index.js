@@ -1,6 +1,15 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VirtualMachine = void 0;
+exports.VirtualMachine = exports.logGasCost = exports.GAS_COSTS = exports.GasMeter = exports.parseVmProgram = exports.interpreter = exports.Interpreter = void 0;
+var Interpreter_1 = require("./Interpreter");
+Object.defineProperty(exports, "Interpreter", { enumerable: true, get: function () { return Interpreter_1.Interpreter; } });
+Object.defineProperty(exports, "interpreter", { enumerable: true, get: function () { return Interpreter_1.interpreter; } });
+Object.defineProperty(exports, "parseVmProgram", { enumerable: true, get: function () { return Interpreter_1.parseVmProgram; } });
+var GasMeter_1 = require("./GasMeter");
+Object.defineProperty(exports, "GasMeter", { enumerable: true, get: function () { return GasMeter_1.GasMeter; } });
+Object.defineProperty(exports, "GAS_COSTS", { enumerable: true, get: function () { return GasMeter_1.GAS_COSTS; } });
+Object.defineProperty(exports, "logGasCost", { enumerable: true, get: function () { return GasMeter_1.logGasCost; } });
+/** Legacy byte-opcode stub — retained for any caller still importing it. */
 class VirtualMachine {
     constructor() {
         this.stack = [];

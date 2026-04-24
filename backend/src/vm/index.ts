@@ -1,3 +1,8 @@
+export { Interpreter, interpreter, parseVmProgram } from './Interpreter';
+export type { VmOp, ExecutionContext, ExecutionResult } from './Interpreter';
+export { GasMeter, GAS_COSTS, logGasCost } from './GasMeter';
+
+/** Legacy byte-opcode stub — retained for any caller still importing it. */
 export class VirtualMachine {
   private stack: number[] = [];
   private bytecodeIndex = 0;

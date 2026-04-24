@@ -44,6 +44,9 @@ class CIMonitor {
         this.isRunning = false;
         this.checkInterval = null;
         this.lastCheckAt = null;
+        this.watchers = [];
+        this.watchDebounce = null;
+        this.isCheckInFlight = false;
         this.projectRoot = projectRoot || process.cwd();
     }
     configure(config) {
@@ -222,19 +225,77 @@ class CIMonitor {
             return;
         this.isRunning = true;
         console.log(`[CI] Starting periodic monitoring every ${intervalMs / 1000}s`);
-        void this.runAllChecks().then((results) => {
-            this.handleResults(results);
-        });
+        void this.runChecksOnce('initial');
         this.checkInterval = setInterval(async () => {
+            await this.runChecksOnce('poll');
+        }, intervalMs);
+        this.startFileWatch();
+    }
+    /**
+     * fs.watch on backend/src and frontend/src. Any change triggers a
+     * 5-second-debounced runAllChecks, so bulk saves (a single "git pull"
+     * or editor autosave burst) collapse to one CI run. Polling stays on
+     * as a safety net for filesystems where recursive watch isn't available.
+     */
+    startFileWatch() {
+        if (this.watchers.length > 0)
+            return;
+        const base = this.config?.repoRoot || this.projectRoot;
+        const targets = ['backend/src', 'frontend/src'];
+        for (const rel of targets) {
+            const dir = path.join(base, rel);
+            if (!fs.existsSync(dir))
+                continue;
+            try {
+                const watcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
+                    if (!filename)
+                        return;
+                    this.debouncedRun(`watch:${rel}/${filename}`);
+                });
+                this.watchers.push(watcher);
+                console.log(`[CI] Watching ${rel} for changes`);
+            }
+            catch (err) {
+                console.warn(`[CI] Could not watch ${rel}:`, err?.message || err);
+            }
+        }
+    }
+    debouncedRun(trigger) {
+        if (this.watchDebounce)
+            clearTimeout(this.watchDebounce);
+        this.watchDebounce = setTimeout(() => {
+            void this.runChecksOnce(trigger);
+        }, 5000);
+    }
+    async runChecksOnce(trigger) {
+        if (this.isCheckInFlight)
+            return;
+        this.isCheckInFlight = true;
+        EventBus_1.eventBus.emit('ci_watch_triggered', { trigger, timestamp: Date.now() });
+        try {
             const results = await this.runAllChecks();
             this.handleResults(results);
-        }, intervalMs);
+        }
+        finally {
+            this.isCheckInFlight = false;
+        }
     }
     stop() {
         if (this.checkInterval) {
             clearInterval(this.checkInterval);
             this.checkInterval = null;
         }
+        if (this.watchDebounce) {
+            clearTimeout(this.watchDebounce);
+            this.watchDebounce = null;
+        }
+        for (const w of this.watchers) {
+            try {
+                w.close();
+            }
+            catch { /* noop */ }
+        }
+        this.watchers = [];
         this.isRunning = false;
         console.log('[CI] Monitoring stopped');
     }

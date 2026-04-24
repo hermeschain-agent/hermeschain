@@ -1,0 +1,1 @@
+{"version":3,"file":"announce.d.ts","sourceRoot":"","sources":["../../src/network/announce.ts"],"names":[],"mappings":"AAEA;;;;GAIG;AAEH,MAAM,WAAW,YAAY;IAC3B,MAAM,EAAE,MAAM,CAAC;IACf,GAAG,EAAE,MAAM,CAAC;IACZ,SAAS,EAAE,MAAM,CAAC;IAClB,cAAc,EAAE,MAAM,MAAM,CAAC;CAC9B;AAgDD,wBAAgB,uBAAuB,CAAC,IAAI,EAAE,YAAY,GAAG,IAAI,CAYhE;AAED,wBAAgB,sBAAsB,IAAI,IAAI,CAK7C"}

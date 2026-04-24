@@ -39,6 +39,9 @@ export declare class CIMonitor {
     private isRunning;
     private checkInterval;
     private lastCheckAt;
+    private watchers;
+    private watchDebounce;
+    private isCheckInFlight;
     constructor(projectRoot?: string);
     configure(config: AgentConfig): void;
     private getPackageTargets;
@@ -52,6 +55,15 @@ export declare class CIMonitor {
     runBuild(): Promise<BuildResult>;
     runLint(): Promise<LintResult>;
     start(intervalMs?: number): void;
+    /**
+     * fs.watch on backend/src and frontend/src. Any change triggers a
+     * 5-second-debounced runAllChecks, so bulk saves (a single "git pull"
+     * or editor autosave burst) collapse to one CI run. Polling stays on
+     * as a safety net for filesystems where recursive watch isn't available.
+     */
+    startFileWatch(): void;
+    private debouncedRun;
+    private runChecksOnce;
     stop(): void;
     private handleResults;
     getStatus(): {

@@ -602,6 +602,22 @@ Live context:
     const { walletRouter } = await Promise.resolve().then(() => __importStar(require('./wallet')));
     app.use('/api/wallet', walletRouter);
     console.log('[WALLET] Wallet & faucet system ready');
+    // ========== PEER MESH ==========
+    const { createMeshRouter } = await Promise.resolve().then(() => __importStar(require('../network/api')));
+    const { startBootstrapHeartbeat } = await Promise.resolve().then(() => __importStar(require('../network/announce')));
+    app.use('/api/mesh', createMeshRouter(chain));
+    const selfPeerId = process.env.HERMES_PEER_ID || `hermes-${process.pid}`;
+    const selfPublicUrl = process.env.HERMES_PUBLIC_URL || '';
+    const selfPublicKey = process.env.HERMES_PUBLIC_KEY || '';
+    if (selfPublicUrl) {
+        startBootstrapHeartbeat({
+            peerId: selfPeerId,
+            url: selfPublicUrl,
+            publicKey: selfPublicKey,
+            getChainHeight: () => chain.getChainLength(),
+        });
+    }
+    console.log('[MESH] Peer registry routes mounted at /api/mesh/*');
     // ========== AGENT NETWORK ==========
     const { default: networkRouter, initializeNetworkStore, startNetworkHeartbeat, stopNetworkHeartbeat, } = await Promise.resolve().then(() => __importStar(require('./network')));
     await initializeNetworkStore();

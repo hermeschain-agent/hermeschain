@@ -6,6 +6,7 @@ const StateManager_1 = require("./StateManager");
 const Consensus_1 = require("./Consensus");
 const TransactionReceipt_1 = require("./TransactionReceipt");
 const Crypto_1 = require("./Crypto");
+const Interpreter_1 = require("../vm/Interpreter");
 // Block limits
 const MAX_BLOCK_GAS = 30000000n;
 const MAX_TRANSACTIONS_PER_BLOCK = 500;
@@ -44,12 +45,12 @@ class BlockProducer {
     async produceBlock() {
         const startTime = Date.now();
         try {
-            const validator = await this.validatorManager.selectProducer();
+            const blockHeight = this.chain.getChainLength();
+            const validator = await this.validatorManager.selectProducer(blockHeight);
             if (!validator) {
                 console.error('[PRODUCER] No validator available for block production');
                 return;
             }
-            const blockHeight = this.chain.getChainLength();
             const difficulty = Consensus_1.difficultyManager.getCurrentDifficulty();
             console.log(`\n[PRODUCER] ===== Block #${blockHeight} =====`);
             console.log(`[PRODUCER] Producer: ${validator.name}`);
@@ -79,10 +80,34 @@ class BlockProducer {
                 const applied = await StateManager_1.stateManager.applyTransaction(tx, blockHeight);
                 if (applied) {
                     validTxs.push(tx);
-                    totalGasUsed += tx.gasLimit;
-                    cumulativeGas += tx.gasLimit;
-                    // Create success receipt
-                    const receipt = (0, TransactionReceipt_1.createReceipt)(tx, validTxs.length - 1, '', blockHeight, tx.gasLimit, cumulativeGas, TransactionReceipt_1.TransactionStatus.SUCCESS);
+                    // VM dispatch — if the tx carries `data: 'vm:...'`, run the
+                    // interpreter and derive real gasUsed + logs. Otherwise fall
+                    // back to the static tx.gasLimit accounting for plain transfers.
+                    const program = (0, Interpreter_1.parseVmProgram)(tx.data);
+                    let txGasUsed = tx.gasLimit;
+                    let txLogs = [];
+                    let txStatus = TransactionReceipt_1.TransactionStatus.SUCCESS;
+                    if (program) {
+                        const result = Interpreter_1.interpreter.execute(program, tx.gasLimit, {
+                            contractAddress: tx.to,
+                            txHash: tx.hash,
+                            transactionIndex: validTxs.length - 1,
+                            blockNumber: blockHeight,
+                            blockHash: '',
+                        });
+                        txGasUsed = result.gasUsed;
+                        txLogs = result.logs;
+                        if (result.status === 'revert') {
+                            txStatus = TransactionReceipt_1.TransactionStatus.OUT_OF_GAS;
+                            console.log(`   VM REVERT: ${tx.hash.substring(0, 12)}... (${result.error || 'no reason'})`);
+                        }
+                        else {
+                            console.log(`   VM OK: ${tx.hash.substring(0, 12)}... gas=${txGasUsed} logs=${txLogs.length}`);
+                        }
+                    }
+                    totalGasUsed += txGasUsed;
+                    cumulativeGas += txGasUsed;
+                    const receipt = (0, TransactionReceipt_1.createReceipt)(tx, validTxs.length - 1, '', blockHeight, txGasUsed, cumulativeGas, txStatus, txLogs);
                     receipts.push(receipt);
                     (0, TransactionReceipt_1.storeReceipt)(receipt);
                     console.log(`   TX: ${tx.from.substring(0, 8)}... -> ${tx.to.substring(0, 8)}... (${StateManager_1.stateManager.formatBalance(tx.value)})`);

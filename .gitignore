@@ -4,6 +4,9 @@ node_modules/
 # Build output (tracked for Railway/vercel convenience in dist/, ignore elsewhere)
 backend/dist/
 
+# Runtime data (peers.json, agent_stats.json, network_messages.json, etc.)
+backend/data/
+
 # Environment
 .env
 .env.local

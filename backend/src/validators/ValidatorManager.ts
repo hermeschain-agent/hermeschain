@@ -2,13 +2,13 @@ import { Block } from '../blockchain/Block';
 import { BaseValidator } from './BaseValidator';
 import { Hermes } from './personalities/Hermes';
 import { db } from '../database/db';
+import { eventBus } from '../events/EventBus';
 
 /**
- * Hermeschain runs single-agent consensus — one Hermes instance validates,
- * produces, and finalizes every block. This manager keeps the
- * multi-validator method signatures so the rest of the chain code
- * (BlockProducer, consensus events, relationships) doesn't need to change,
- * but internally only ever holds one validator.
+ * Multi-validator consensus. Producer rotates by `height mod n`.
+ * Finalization requires a 2/3 quorum of approvals across registered
+ * validators. Single-validator mode (n=1) still works — threshold of
+ * ceil(1 * 2/3) = 1, so Hermes-only chains finalize exactly like before.
  */
 export class ValidatorManager {
   private validators: Map<string, BaseValidator> = new Map();
@@ -19,8 +19,15 @@ export class ValidatorManager {
 
     const hermes = new Hermes();
     await hermes.initialize();
-    this.validators.set(hermes.address, hermes);
-    this.validatorOrder.push(hermes.address);
+    await this.addValidator(hermes);
+
+    console.log(`[VALIDATORS] ${hermes.symbol} ${hermes.name} online — ${this.validatorOrder.length}-validator consensus`);
+  }
+
+  async addValidator(personality: BaseValidator): Promise<void> {
+    if (this.validators.has(personality.address)) return;
+    this.validators.set(personality.address, personality);
+    this.validatorOrder.push(personality.address);
 
     await db.query(
       `
@@ -38,28 +45,31 @@ export class ValidatorManager {
         philosophy = EXCLUDED.philosophy
       `,
       [
-        hermes.address,
-        hermes.name,
-        hermes.symbol,
-        hermes.model,
-        hermes.provider,
-        hermes.role,
-        hermes.personality,
-        hermes.philosophy,
+        personality.address,
+        personality.name,
+        personality.symbol,
+        personality.model,
+        personality.provider,
+        personality.role,
+        personality.personality,
+        personality.philosophy,
       ],
     );
-
-    console.log(`[VALIDATORS] ${hermes.symbol} ${hermes.name} online — single-agent consensus`);
   }
 
-  async selectProducer(): Promise<BaseValidator | null> {
-    const address = this.validatorOrder[0];
+  async selectProducer(nextHeight?: number): Promise<BaseValidator | null> {
+    if (this.validatorOrder.length === 0) return null;
+    const idx = typeof nextHeight === 'number'
+      ? ((nextHeight % this.validatorOrder.length) + this.validatorOrder.length) % this.validatorOrder.length
+      : 0;
+    const address = this.validatorOrder[idx];
     return this.validators.get(address) || null;
   }
 
   /**
-   * Single-agent chain — the producing validator is also the only voter,
-   * so consensus is trivially reached unless local validation fails.
+   * Quorum: each registered validator runs validateBlock; we need
+   * ceil(n * 2/3) approvals. n=1 means 1 approval required (self-approve
+   * equivalent). n=2 means 2. n=3 means 2. Etc.
    */
   async getConsensus(block: Block): Promise<boolean> {
     const producer = this.validators.get(block.header.producer);
@@ -68,7 +78,28 @@ export class ValidatorManager {
       return false;
     }
 
-    const ok = await producer.validateBlock(block);
+    const total = this.validatorOrder.length;
+    const required = Math.ceil((total * 2) / 3);
+
+    const votes = await Promise.all(
+      this.validatorOrder.map(async (addr) => {
+        const v = this.validators.get(addr)!;
+        try {
+          const ok = await v.validateBlock(block);
+          return { addr, name: v.name, ok };
+        } catch (err: any) {
+          console.log(`   [CONSENSUS] validator ${v.name} threw: ${err?.message || err}`);
+          return { addr, name: v.name, ok: false };
+        }
+      }),
+    );
+
+    const approvals = votes.filter((v) => v.ok).length;
+    const finalized = approvals >= required;
+
+    for (const vote of votes) {
+      console.log(`   [CONSENSUS] ${vote.name}: ${vote.ok ? 'APPROVE' : 'REJECT'}`);
+    }
 
     await db.query(
       `
@@ -76,15 +107,31 @@ export class ValidatorManager {
       VALUES ($1, $2, $3, $4)
       `,
       [
-        ok ? 'self-approve' : 'self-reject',
+        finalized ? 'quorum-approve' : 'quorum-reject',
         block.header.height,
-        `Hermes ${ok ? 'finalized' : 'rejected'} block #${block.header.height}`,
-        JSON.stringify({ producer: producer.name }),
+        `Block #${block.header.height} ${finalized ? 'finalized' : 'rejected'} (${approvals}/${total}, required ${required})`,
+        JSON.stringify({
+          producer: producer.name,
+          approvals,
+          required,
+          total,
+          votes: votes.map((v) => ({ name: v.name, ok: v.ok })),
+        }),
       ],
     );
 
-    console.log(`   [CONSENSUS] ${ok ? 'FINALIZED' : 'REJECTED'} block #${block.header.height}`);
-    return ok;
+    eventBus.emit('consensus_quorum', {
+      blockHeight: block.header.height,
+      approvals,
+      required,
+      total,
+      finalized,
+    });
+
+    console.log(
+      `   [CONSENSUS] ${finalized ? 'FINALIZED' : 'REJECTED'} block #${block.header.height} (${approvals}/${total}, req ${required})`,
+    );
+    return finalized;
   }
 
   async recordBlockProduced(address: string) {
