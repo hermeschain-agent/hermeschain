@@ -39,9 +39,21 @@ const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const EventBus_1 = require("../events/EventBus");
 const config_1 = require("./config");
-// Auto-deploy configuration — disabled by default to prevent rogue commits.
-// Set AUTO_GIT_PUSH=true explicitly to enable autonomous pushes.
-const AUTO_PUSH_ENABLED = process.env.AUTO_GIT_PUSH === 'true';
+// Auto-deploy configuration.
+// Default: enabled when a GITHUB_TOKEN is present (a deployment with creds
+// is implicitly opted in to pushing the agent's work). Opt out by setting
+// AUTO_GIT_PUSH=false explicitly. Setting =true forces it on even without
+// a token (for local SSH-agent setups where the token isn't in env).
+function resolveAutoPush() {
+    const raw = (process.env.AUTO_GIT_PUSH || '').toLowerCase();
+    if (raw === 'true' || raw === '1')
+        return true;
+    if (raw === 'false' || raw === '0')
+        return false;
+    // Unset → default based on whether we appear to have credentials.
+    return Boolean(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
+}
+const AUTO_PUSH_ENABLED = resolveAutoPush();
 const GIT_USER_NAME = process.env.GIT_USER_NAME || 'hermes agent';
 const GIT_USER_EMAIL = process.env.GIT_USER_EMAIL || 'hermeschain-agent@users.noreply.github.com';
 class GitIntegration {
@@ -158,8 +170,10 @@ class GitIntegration {
             // containers never self-clone.
             const token = process.env.GITHUB_TOKEN;
             const repo = process.env.GITHUB_REPO;
+            // Honor the same resolveAutoPush gate so the clone logic stays in
+            // lockstep with the push logic (unset-env + token present → enabled).
             const shouldClone = process.env.AGENT_ROLE === 'worker' &&
-                process.env.AUTO_GIT_PUSH === 'true' &&
+                AUTO_PUSH_ENABLED &&
                 token &&
                 repo;
             if (shouldClone) {

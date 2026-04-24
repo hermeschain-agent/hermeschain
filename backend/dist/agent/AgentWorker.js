@@ -758,6 +758,15 @@ class AgentWorker {
                     await this.delay(15000);
                     continue;
                 }
+                // Emit task_select so the landing rail can surface the pick
+                // *before* the LLM call kicks off — gives SSE consumers a chance
+                // to render "about to work on X" before the first tool_start.
+                this.broadcast('task_select', {
+                    sourceTaskId: selection.sourceTask.id,
+                    task: selection.task,
+                    editScopes: selection.editScopes.map((s) => s.path),
+                    reason: 'picked by taskSources.getNextTask',
+                });
                 const runStartedAtMs = Date.now();
                 const contextPack = await this.buildContextPack(selection);
                 const run = await AgentTaskStore_1.agentTaskStore.startRun(selection.sourceTask, 'real', contextPack);

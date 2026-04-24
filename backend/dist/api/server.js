@@ -204,6 +204,114 @@ async function main() {
             res.status(404).json({ error: 'Block not found' });
         }
     });
+    // GET /api/tx/:hash — look up a transaction by its hash across all
+    // blocks + its receipt. Returns 200 {status:'unknown'} when the hash
+    // isn't found so wallets can poll during propagation without treating
+    // a 404 as a hard error. Set include=raw to return the full tx.
+    app.get('/api/tx/:hash', async (req, res) => {
+        try {
+            await syncSharedReadState();
+            const hash = String(req.params.hash || '').trim();
+            if (!hash) {
+                return res.status(400).json({ error: 'hash required' });
+            }
+            const { loadReceipt } = await Promise.resolve().then(() => __importStar(require('../blockchain/TransactionReceipt')));
+            const receipt = await loadReceipt(hash);
+            const includeRaw = req.query.include === 'raw';
+            // Fast path — look up the block via the receipt's blockNumber.
+            if (receipt) {
+                const block = chain.getBlockByHeight(receipt.blockNumber);
+                const tx = block?.transactions.find((t) => t.hash === hash);
+                return res.json({
+                    status: 'included',
+                    hash,
+                    blockHeight: receipt.blockNumber,
+                    blockHash: receipt.blockHash,
+                    txIndex: receipt.transactionIndex,
+                    gasUsed: receipt.gasUsed.toString(),
+                    receiptStatus: receipt.status,
+                    logs: receipt.logs,
+                    ...(includeRaw && tx
+                        ? {
+                            tx: {
+                                hash: tx.hash,
+                                from: tx.from,
+                                to: tx.to,
+                                value: tx.value.toString(),
+                                gasPrice: tx.gasPrice.toString(),
+                                gasLimit: tx.gasLimit.toString(),
+                                nonce: tx.nonce,
+                                data: tx.data ?? null,
+                                signature: tx.signature,
+                            },
+                        }
+                        : {}),
+                });
+            }
+            // Slow path — walk recent blocks for the hash (covers the window
+            // before receipts are persisted on a fresh chain).
+            for (const block of chain.getRecentBlocks(256)) {
+                const tx = block.transactions.find((t) => t.hash === hash);
+                if (tx) {
+                    return res.json({
+                        status: 'included',
+                        hash,
+                        blockHeight: block.header.height,
+                        blockHash: block.header.hash,
+                        ...(includeRaw
+                            ? {
+                                tx: {
+                                    hash: tx.hash,
+                                    from: tx.from,
+                                    to: tx.to,
+                                    value: tx.value.toString(),
+                                    gasPrice: tx.gasPrice.toString(),
+                                    gasLimit: tx.gasLimit.toString(),
+                                    nonce: tx.nonce,
+                                    data: tx.data ?? null,
+                                    signature: tx.signature,
+                                },
+                            }
+                            : {}),
+                    });
+                }
+            }
+            // Mempool check.
+            const pending = await txPool.getPendingTransactions(1000);
+            if (pending.find((t) => t.hash === hash)) {
+                return res.json({ status: 'pending', hash });
+            }
+            return res.json({ status: 'unknown', hash });
+        }
+        catch (error) {
+            console.error('[API] /api/tx/:hash failed:', error?.message || error);
+            res.status(500).json({ error: 'tx lookup failed' });
+        }
+    });
+    // GET /api/account/:addr — alias for /api/state/account/:address so
+    // wallets + explorers can use the conventional shape. Returns balance,
+    // nonce, codeHash, and the computed state root for verifiability.
+    app.get('/api/account/:addr', async (req, res) => {
+        try {
+            await syncSharedReadState();
+            const address = String(req.params.addr || '').trim();
+            if (!address) {
+                return res.status(400).json({ error: 'address required' });
+            }
+            const account = StateManager_1.stateManager.getAccount(address);
+            res.json({
+                address,
+                balance: (account?.balance ?? 0n).toString(),
+                nonce: account?.nonce ?? 0,
+                codeHash: account?.codeHash || null,
+                stateRoot: StateManager_1.stateManager.getStateRoot(),
+            });
+        }
+        catch (error) {
+            console.error('[API] /api/account/:addr failed:', error?.message || error);
+            res.status(500).json({ error: 'account lookup failed' });
+        }
+    });
     app.get('/api/validators', async (req, res) => {
         const validators = validatorManager.getAllValidators();
         res.json(validators.map(v => ({
@@ -277,10 +385,11 @@ async function main() {
             res.status(500).json({ error: error.message });
         }
     });
-    // Terminal chat endpoint — powered by Nous Hermes
-    app.post('/api/personality/:validator', ipRateLimit(20), async (req, res) => {
+    // Terminal chat handler — powered by Nous Hermes. Shared by the
+    // canonical /api/personality/:validator route and the /api/hermes/chat
+    // alias so SDK callers don't need to know the validator name.
+    const chatHandler = async (req, res) => {
         try {
-            // Accept both 'message' and 'command' for flexibility
             const userMessage = req.body.message || req.body.command;
             const userContext = req.body.context || {};
             if (!userMessage) {
@@ -291,17 +400,15 @@ async function main() {
             if (!validator) {
                 return res.status(404).json({ error: 'No validators available', message: 'No Hermes validator is currently available.' });
             }
-            // Merge context from request with chain state
             const context = {
                 blockHeight: userContext.blockHeight || chain.getChainLength(),
                 tps: userContext.tps || txPool.getPendingCount(),
                 validators: validators.length,
                 gasPrice: userContext.gasPrice || 5,
-                chainId: userContext.chainId || 1337
+                chainId: userContext.chainId || 1337,
             };
             console.log('[TERMINAL] Chat request:', userMessage.substring(0, 50) + '...');
             const response = await validator.chat(userMessage, context);
-            // Return in format frontend expects
             res.json({ message: response, response });
         }
         catch (error) {
@@ -314,7 +421,9 @@ async function main() {
                 message: providerError.message,
             });
         }
-    });
+    };
+    app.post('/api/personality/:validator', ipRateLimit(20), chatHandler);
+    app.post('/api/hermes/chat', ipRateLimit(20), chatHandler);
     app.post('/api/personality/hermes/ritual', ipRateLimit(20), async (req, res) => {
         try {
             const ritual = req.body.ritual;
