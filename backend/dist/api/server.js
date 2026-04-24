@@ -51,6 +51,7 @@ const EventBus_1 = require("../events/EventBus");
 const StateManager_1 = require("../blockchain/StateManager");
 const db_1 = require("../database/db");
 const schema_1 = require("../database/schema");
+const migrations_1 = require("../database/migrations");
 const hermesClient_1 = require("../llm/hermesClient");
 const dotenv = __importStar(require("dotenv"));
 dotenv.config();
@@ -70,8 +71,18 @@ async function main() {
         // Connect to database
         const connected = await db_1.db.connect();
         if (connected) {
-            // Create tables if they don't exist
+            // Create tables if they don't exist (legacy schema).
             await db_1.db.exec(schema_1.createTables);
+            // Apply any pending NNNN_*.sql migrations in lexicographic order.
+            // Idempotent; tracked in schema_migrations. Future schema changes
+            // go through this runner rather than editing schema.ts inline.
+            try {
+                await (0, migrations_1.applyPendingMigrations)();
+            }
+            catch (err) {
+                console.error('[MIGRATIONS] Migration failed — halting boot:', err?.message || err);
+                throw err;
+            }
             console.log('[DB] PostgreSQL database ready\n');
         }
         else {

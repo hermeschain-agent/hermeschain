@@ -12,6 +12,7 @@ import { EventBus } from '../events/EventBus';
 import { stateManager } from '../blockchain/StateManager';
 import { db, cache } from '../database/db';
 import { createTables } from '../database/schema';
+import { applyPendingMigrations } from '../database/migrations';
 import { getHermesConfigStatus, getPublicHermesError } from '../llm/hermesClient';
 import * as dotenv from 'dotenv';
 
@@ -35,8 +36,17 @@ async function main() {
     // Connect to database
     const connected = await db.connect();
     if (connected) {
-      // Create tables if they don't exist
+      // Create tables if they don't exist (legacy schema).
       await db.exec(createTables);
+      // Apply any pending NNNN_*.sql migrations in lexicographic order.
+      // Idempotent; tracked in schema_migrations. Future schema changes
+      // go through this runner rather than editing schema.ts inline.
+      try {
+        await applyPendingMigrations();
+      } catch (err: any) {
+        console.error('[MIGRATIONS] Migration failed — halting boot:', err?.message || err);
+        throw err;
+      }
       console.log('[DB] PostgreSQL database ready\n');
     } else {
       console.log('[DB] Running without persistent database\n');

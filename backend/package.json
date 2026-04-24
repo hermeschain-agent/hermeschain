@@ -5,7 +5,7 @@
   "main": "dist/api/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/api/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/database/migrations','dist/database/migrations',{recursive:true})\"",
     "start": "node dist/api/server.js",
     "test": "npm run build && node --test tests/*.test.js"
   },
