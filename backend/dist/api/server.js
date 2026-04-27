@@ -84,6 +84,16 @@ async function main() {
                 throw err;
             }
             console.log('[DB] PostgreSQL database ready\n');
+            // Pre-warm Redis with hot reads (TASK-328). Off in dev unless
+            // explicitly enabled; on by default in production.
+            const warmEnabled = process.env.CACHE_WARMER_ENABLED ??
+                (process.env.NODE_ENV === 'production' ? 'true' : 'false');
+            if (warmEnabled === 'true') {
+                const { warmCache } = await Promise.resolve().then(() => __importStar(require('../database/cacheWarmer')));
+                warmCache().catch((err) => {
+                    console.warn('[CACHE WARMER] failed (non-fatal):', err?.message || err);
+                });
+            }
         }
         else {
             console.log('[DB] Running without persistent database\n');
