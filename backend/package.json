@@ -13,7 +13,8 @@
     "migrate:status": "node scripts/migrate-status.js",
     "audit:redis-ttl": "node scripts/audit-redis-ttl.js",
     "backup": "node scripts/backup-db.js",
-    "restore": "node scripts/restore-db.js"
+    "restore": "node scripts/restore-db.js",
+    "schema:diff": "node scripts/schema-diff.js"
   },
   "keywords": [
     "blockchain",
