@@ -39,6 +39,16 @@ export interface MigrationResult {
 }
 
 /** Load every .sql file from `dir` sorted lexicographically. */
+// Exposed so the migrate:down CLI (TASK-325) and dry-run mode (TASK-326)
+// can reuse the same loader the boot path uses.
+export function loadMigrationsFromDir(dir: string): MigrationFile[] {
+  return loadMigrationsFrom(dir);
+}
+
+export function getMigrationsDir(): string {
+  return resolveMigrationsDir();
+}
+
 function loadMigrationsFrom(dir: string): MigrationFile[] {
   let entries: string[] = [];
   try {
@@ -107,7 +117,13 @@ function resolveMigrationsDir(): string {
   return srcCandidate;
 }
 
-export async function applyPendingMigrations(): Promise<MigrationResult[]> {
+export interface ApplyOptions {
+  /** When true, log the SQL each pending migration would execute and exit
+   *  without touching the database. Used by `npm run migrate:status -- --dry-run`. */
+  readonly dryRun?: boolean;
+}
+
+export async function applyPendingMigrations(opts: ApplyOptions = {}): Promise<MigrationResult[]> {
   await ensureMigrationsTable();
   const gotLock = await acquireLock();
   try {
@@ -118,6 +134,13 @@ export async function applyPendingMigrations(): Promise<MigrationResult[]> {
     for (const migration of migrations) {
       if (applied.has(migration.name)) continue;
       const startedAt = Date.now();
+
+      if (opts.dryRun) {
+        console.log(`[DRY-RUN] ${migration.name}\n${migration.up}\n---`);
+        results.push({ name: migration.name, success: true, durationMs: 0 });
+        continue;
+      }
+
       try {
         await db.exec(migration.up);
         await db.query(
