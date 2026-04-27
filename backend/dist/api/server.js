@@ -104,6 +104,12 @@ async function main() {
         console.log('Continuing with in-memory fallback...\n');
     }
     const eventBus = EventBus_1.EventBus.getInstance();
+    // Cross-replica event bridge (TASK-330). Off when REDIS_URL absent or
+    // explicitly disabled. Replicas converge on the same SSE stream.
+    if (process.env.REDIS_URL && process.env.REDIS_BRIDGE_ENABLED !== 'false') {
+        const { attachRedisBridge } = await Promise.resolve().then(() => __importStar(require('../events/RedisBridge')));
+        attachRedisBridge(eventBus, process.env.REDIS_URL);
+    }
     const chain = new Chain_1.Chain();
     const txPool = new TransactionPool_1.TransactionPool();
     const validatorManager = new ValidatorManager_1.ValidatorManager();

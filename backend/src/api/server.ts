@@ -68,6 +68,14 @@ async function main() {
   }
 
   const eventBus = EventBus.getInstance();
+
+  // Cross-replica event bridge (TASK-330). Off when REDIS_URL absent or
+  // explicitly disabled. Replicas converge on the same SSE stream.
+  if (process.env.REDIS_URL && process.env.REDIS_BRIDGE_ENABLED !== 'false') {
+    const { attachRedisBridge } = await import('../events/RedisBridge');
+    attachRedisBridge(eventBus, process.env.REDIS_URL);
+  }
+
   const chain = new Chain();
   const txPool = new TransactionPool();
   const validatorManager = new ValidatorManager();
