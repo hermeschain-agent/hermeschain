@@ -1,0 +1,536 @@
+# Tier-3 → 1000 Commit Backlog
+
+Source-of-truth task queue. Each unchecked item = one commit on this branch.
+The paced-push script (`backend/scripts/paced-push.ts`) reads `data/push_pointer.txt`
+and advances `origin/main` by `PUSH_RATE_PER_DAY / (1440/PUSH_INTERVAL_MIN)` commits per fire.
+
+**Target: 60 commits/day → ~8.2 days to clear.**
+
+## Chain & consensus
+
+- [ ] 1. Block.fromJSON deserializer
+- [ ] 2. Wire /api/mesh/block to call chain.addBlock after fromJSON
+- [ ] 3. Header-only sync endpoint /api/mesh/headers?from=&to=
+- [ ] 4. Bulk block fetch /api/mesh/blocks?from=&to= with 100-block cap
+- [ ] 5. Peer head poller (query each peer's /api/mesh/head every 30s)
+- [ ] 6. Auto-sync on start: pick highest-height peer, pull missing
+- [ ] 7. Reorg-on-sync: walk back to common ancestor
+- [ ] 8. Finalized block flag at depth N-12 in chainState
+- [ ] 9. Reject reorg attempts past finality depth (409)
+- [ ] 10. VRF-style proposer rotation hash(prev_hash + height) mod n
+- [ ] 11. validator_slashes table + read endpoint
+- [ ] 12. Slash on equivocation (same height, different blocks)
+- [ ] 13. validators.stake column + weighted producer selection
+- [ ] 14. Quorum weight by stake instead of head count
+- [ ] 15. Block timestamp drift check (>30s future = reject)
+- [ ] 16. Min block time enforcement (<2s after parent = reject)
+- [ ] 17. Difficulty retarget every 100 blocks
+- [ ] 18. Persist mempool to disk on shutdown, restore on boot
+- [ ] 19. Tx replacement-by-fee (same nonce, higher gasPrice)
+- [ ] 20. Mempool size cap 10k with lowest-gasPrice eviction
+- [ ] 21. Pending tx TTL 1h
+- [ ] 22. Block size limit 1MB serialized
+- [ ] 23. logs_topic0_idx index migration
+- [ ] 24. /api/logs?fromBlock=&toBlock=&address=&topic0=
+- [ ] 25. /api/logs/bloom-check helper endpoint
+- [ ] 26. Block uncles tracking
+- [ ] 27. GHOST fork-choice weighting
+- [ ] 28. /api/chain/export?from=&to= NDJSON stream
+- [ ] 29. backend/scripts/import-chain.ts
+- [ ] 30. Genesis parameterization via genesis.json
+- [ ] 31. Genesis hash verification at boot
+- [ ] 32. Validator handoff record on rotation
+- [ ] 33. Per-block VRF beacon for randomness
+- [ ] 34. State pruning for zero/dead accounts
+- [ ] 35. State snapshot every 10k blocks
+- [ ] 36. /api/mesh/snapshot/:height
+- [ ] 37. Tx fee distribution: 80% producer, 20% burned
+- [ ] 38. Burn counter on chain stats
+- [ ] 39. Per-validator block reward via env
+- [ ] 40. Coinbase tx representation in receipts
+- [ ] 41. Migration 0002: block_hash index
+- [ ] 42. Migration: tx (from_address, nonce) compound index
+- [ ] 43. Account-history rebuild script
+- [ ] 44. CLI: npm run verify-chain
+- [ ] 45. State root mismatch alarm event
+- [ ] 46. Receipt root verification at sync
+- [ ] 47. SSE /api/logs/subscribe?topic0=
+- [ ] 48. SSE /api/mempool/subscribe
+- [ ] 49. SSE /api/forks/subscribe
+- [ ] 50. Per-block aggregate gas price stats
+- [ ] 51. /api/chain/tps?window=60
+- [ ] 52. /api/chain/block-times histogram
+- [ ] 53. Validator uptime metric
+- [ ] 54. Mempool depth chart endpoint
+- [ ] 55. /api/tx/simulate (VM dry-run)
+- [ ] 56. /api/tx/estimate-gas
+- [ ] 57. /api/account/:addr/next-nonce
+- [ ] 58. /api/account/:addr/history paginated
+- [ ] 59. /api/validator/:addr/blocks paginated
+- [ ] 60. /api/chain/reorgs (last 50)
+
+## VM expansion
+
+- [ ] 61. MUL opcode
+- [ ] 62. DIV opcode
+- [ ] 63. MOD opcode
+- [ ] 64. EQ / LT / GT comparison ops
+- [ ] 65. AND / OR / NOT bitwise ops
+- [ ] 66. JUMP / JUMPI control flow
+- [ ] 67. JUMPDEST validation pass
+- [ ] 68. SLOAD opcode (read storage)
+- [ ] 69. Storage persistence to contract_storage table
+- [ ] 70. CALL opcode
+- [ ] 71. RETURN opcode + return-data buffer
+- [ ] 72. CALLDATA opcode
+- [ ] 73. CALLER / ORIGIN ops
+- [ ] 74. VALUE op (msg.value)
+- [ ] 75. BALANCE(addr) op
+- [ ] 76. BLOCKNUMBER / TIMESTAMP / DIFFICULTY ops
+- [ ] 77. SHA256 / KECCAK precompile
+- [ ] 78. ECRECOVER precompile
+- [ ] 79. CREATE opcode (contract deployment)
+- [ ] 80. Contract address derivation keccak(sender+nonce)
+- [ ] 81. contract_code table + storage
+- [ ] 82. Code-loaded execution path in BlockProducer
+- [ ] 83. /api/tx/:hash/trace endpoint
+- [ ] 84. /api/tx/:hash/gas-profile per-op breakdown
+- [ ] 85. STATICCALL (read-only nested)
+- [ ] 86. SELFDESTRUCT op
+- [ ] 87. SSTORE refund for zero-set
+- [ ] 88. Cold/warm SLOAD pricing
+- [ ] 89. Memory model byte-addressable scratch
+- [ ] 90. MLOAD / MSTORE / MSTORE8
+- [ ] 91. Memory expansion gas
+- [ ] 92. Stack depth limit 1024
+- [ ] 93. Call depth limit 1024
+- [ ] 94. REVERT with return data
+- [ ] 95. Try-catch CALL semantics
+- [ ] 96. EVENT opcode separate from LOG
+- [ ] 97. Event ABI registry per contract
+- [ ] 98. /api/contract/:addr/source verifier
+- [ ] 99. /api/contract/:addr/disasm endpoint
+- [ ] 100. /api/contract/:addr/storage browser
+- [ ] 101. contract_metadata table
+- [ ] 102. VM unit test fixtures (30 sample programs)
+- [ ] 103. /docs/vm spec
+- [ ] 104. Compiler stub: tiny DSL → JSON-op
+- [ ] 105. Sample contracts: counter / erc20-like / multisig / vrf
+
+## Wallet & accounts
+
+- [ ] 106. HD wallet derivation BIP32-style
+- [ ] 107. Mnemonic export endpoint
+- [ ] 108. Mnemonic import + recovery
+- [ ] 109. Watch-only address mode
+- [ ] 110. Multi-sig wallet primitive
+- [ ] 111. Wallet name aliases
+- [ ] 112. ENS-like /api/names/:name resolver
+- [ ] 113. Reverse name lookup
+- [ ] 114. Wallet activity feed (sends + receives + events)
+- [ ] 115. CSV export of wallet history
+- [ ] 116. /api/wallet/:addr/qr.png
+- [ ] 117. Wallet contact book
+- [ ] 118. Token balance aggregation across deployed tokens
+- [ ] 119. Approve / transferFrom flow for tokens
+- [ ] 120. Allowance lookup endpoint
+- [ ] 121. Token transfer history per-account
+- [ ] 122. Faucet rate-limit by IP not just address
+- [ ] 123. Faucet captcha hook
+- [ ] 124. Faucet drip dynamic amount
+- [ ] 125. Faucet pool refill schedule
+- [ ] 126. Wallet send batch
+- [ ] 127. Tx scheduling (broadcast at future height)
+- [ ] 128. Tx replacement UI flow (cancel-by-replace)
+- [ ] 129. Hardware-key signing protocol stub
+- [ ] 130. Session key delegation
+- [ ] 131. Account abstraction stub: paymaster
+- [ ] 132. Wallet-side mempool view
+- [ ] 133. Wallet recovery via social guardians
+- [ ] 134. Per-account gas budget cap
+- [ ] 135. Wallet password-encrypted export PBKDF2+AES
+- [ ] 136. Wallet import from JSON
+- [ ] 137. Address validity checker endpoint
+- [ ] 138. Vanity address generator script
+- [ ] 139. Bulk address generator for testing
+- [ ] 140. Wallet metrics endpoint
+
+## API & explorer
+
+- [ ] 141. /api/openapi.json generation
+- [ ] 142. Swagger UI at /docs
+- [ ] 143. /api/v1/* version prefix + deprecation headers
+- [ ] 144. Rate-limit headers
+- [ ] 145. CORS allowlist via env
+- [ ] 146. Request-ID middleware
+- [ ] 147. Structured access log NDJSON
+- [ ] 148. Slow-request log >1s
+- [ ] 149. /health/live + /health/ready + /health/deep
+- [ ] 150. /api/build (commit sha + build time)
+- [ ] 151. /api/flags feature-flag endpoint
+- [ ] 152. /api/metrics Prometheus text
+- [ ] 153. Block search by height range with filters
+- [ ] 154. Tx search by from/to/value range
+- [ ] 155. Top accounts by balance
+- [ ] 156. Top accounts by tx count
+- [ ] 157. Validator leaderboard
+- [ ] 158. /api/network/stats dashboard endpoint
+- [ ] 159. Block detail with full receipts inline
+- [ ] 160. Tx detail with decoded log events
+- [ ] 161. /api/contract/:addr/events feed
+- [ ] 162. Address tag system
+- [ ] 163. Tag suggestion endpoint
+- [ ] 164. Top gas spenders last 24h
+- [ ] 165. /api/reorg/:id detail page
+- [ ] 166. /api/mempool?limit=200 snapshot
+- [ ] 167. /api/mempool/:hash pending tx by hash
+- [ ] 168. Cancel pending tx endpoint
+- [ ] 169. Bulk tx submit endpoint
+- [ ] 170. Idempotent tx submit (dedup on hash)
+- [ ] 171. WebSocket equivalents of all SSE channels
+- [ ] 172. Socket.io rooms per address
+- [ ] 173. SSE event replay since cursor
+- [ ] 174. GraphQL gateway over REST
+- [ ] 175. tRPC endpoint mirror
+- [ ] 176. JSON-RPC eth_blockNumber + eth_getBalance
+- [ ] 177. JSON-RPC eth_call via VM
+- [ ] 178. JSON-RPC eth_sendRawTransaction
+- [ ] 179. JSON-RPC subscriptions
+- [ ] 180. Postman/Bruno collection generator
+
+## Agent worker
+
+- [ ] 181. Task priority queue (urgent / normal / chore)
+- [ ] 182. Task dependency graph
+- [ ] 183. Task estimated + actual effort tracking
+- [ ] 184. Task retry on transient failure
+- [ ] 185. Task timeout 30min
+- [ ] 186. Per-task token budget
+- [ ] 187. Cumulative daily token budget
+- [ ] 188. /api/agent/tokens/stream SSE
+- [ ] 189. Cost estimate per task
+- [ ] 190. Task rejection reason logging
+- [ ] 191. Skill registry persistence
+- [ ] 192. Skill versioning + hot-reload
+- [ ] 193. Per-skill rate limit
+- [ ] 194. /api/skills discovery
+- [ ] 195. Skill source viewer
+- [ ] 196. /api/agent/tools?since= log dump
+- [ ] 197. Verification: typecheck after every code edit
+- [ ] 198. Verification: tests on changed packages
+- [ ] 199. Verification: prettier
+- [ ] 200. Auto-rollback on verification failure
+- [ ] 201. PR-mode toggle
+- [ ] 202. PR template generator from task
+- [ ] 203. PR auto-link to task ID
+- [ ] 204. Squash-merge agent for stacked commits
+- [ ] 205. Branch-per-task workflow
+- [ ] 206. Auto-rebase on main before push
+- [ ] 207. Conflict-resolution prompt to LLM
+- [ ] 208. Commitlint enforcement
+- [ ] 209. Co-author tag on every agent commit
+- [ ] 210. Sign-off (DCO) tag
+- [ ] 211. Agent identity rotation per file area
+- [ ] 212. Per-area expertise routing
+- [ ] 213. Cross-task memory
+- [ ] 214. Per-task post-mortem 1-line
+- [ ] 215. Learning corpus index
+
+## Frontend / HUD
+
+- [ ] 216. Tx detail modal
+- [ ] 217. Block detail drawer
+- [ ] 218. Account detail panel
+- [ ] 219. Mempool live-tail panel
+- [ ] 220. Reorg history widget
+- [ ] 221. Validator board with rotating producer indicator
+- [ ] 222. Quorum-vote live ticker
+- [ ] 223. VM execution trace viewer
+- [ ] 224. Contract storage browser
+- [ ] 225. Event log viewer with topic filter
+- [ ] 226. Gas-price chart last 1000 blocks
+- [ ] 227. Block-time chart
+- [ ] 228. TPS sparkline in header
+- [ ] 229. Network peer map (graph view)
+- [ ] 230. Peer latency table
+- [ ] 231. Wallet panel: HD address tree
+- [ ] 232. Send-tx form with gas estimator
+- [ ] 233. Token balance grid
+- [ ] 234. Approve / transfer modal
+- [ ] 235. Faucet button + cooldown timer
+- [ ] 236. Address book panel
+- [ ] 237. Name registry browse
+- [ ] 238. Theme: high-contrast variant
+- [ ] 239. Theme: amber CRT variant
+- [ ] 240. Theme picker dropdown
+- [ ] 241. Compact mode
+- [ ] 242. Stage agent reasoning panel
+- [ ] 243. Per-task progress bar in HUD
+- [ ] 244. Cost ticker (today's spend)
+- [ ] 245. SSE reconnect with exponential backoff
+- [ ] 246. SSE channel selector
+- [ ] 247. Keyboard shortcuts overlay (?)
+- [ ] 248. Command palette cmd-k
+- [ ] 249. Block search bar
+- [ ] 250. Address search with autocomplete
+- [ ] 251. Tx hash paste auto-route
+- [ ] 252. URL deep-link state restore
+- [ ] 253. Shareable view URLs preserve filters
+- [ ] 254. Local hud preferences in localStorage
+- [ ] 255. Server-synced HUD prefs per API key
+- [ ] 256. Toast notifications for own-wallet activity
+- [ ] 257. Browser push notification opt-in
+- [ ] 258. Embed-mode iframe
+- [ ] 259. Mobile-responsive collapse
+- [ ] 260. PWA manifest + offline shell
+- [ ] 261. Service worker for static assets
+- [ ] 262. Reusable chart component
+- [ ] 263. A11y pass: aria-labels everywhere
+- [ ] 264. Keyboard-trap audit on modals
+- [ ] 265. Focus-visible styling pass
+
+## Docs & site
+
+- [ ] 266. Landing page tagline rewrite
+- [ ] 267. /docs/architecture rewrite
+- [ ] 268. /docs/consensus page
+- [ ] 269. /docs/vm spec page
+- [ ] 270. /docs/api reference
+- [ ] 271. /docs/sdk page
+- [ ] 272. SDK quickstart code samples (TS + Python)
+- [ ] 273. SDK npm package skeleton
+- [ ] 274. SDK chain client class
+- [ ] 275. SDK wallet helper
+- [ ] 276. SDK VM helper for op programs
+- [ ] 277. SDK signed-tx builder
+- [ ] 278. Python SDK skeleton
+- [ ] 279. Rust SDK skeleton
+- [ ] 280. CLI tool `hermes` npm bin
+- [ ] 281. CLI: hermes balance <addr>
+- [ ] 282. CLI: hermes send <to> <amount>
+- [ ] 283. CLI: hermes call <contract> <method>
+- [ ] 284. CLI: hermes deploy <program.json>
+- [ ] 285. CLI: hermes node start (local node)
+- [ ] 286. /examples/counter walkthrough
+- [ ] 287. /examples/erc20-like walkthrough
+- [ ] 288. /examples/multisig walkthrough
+- [ ] 289. /examples/oracle walkthrough
+- [ ] 290. Tutorial: build your first contract
+- [ ] 291. Tutorial: run your own validator
+- [ ] 292. Tutorial: query the chain
+- [ ] 293. Tutorial: submit a tx from a script
+- [ ] 294. Whitepaper draft v0.1
+- [ ] 295. Glossary page
+- [ ] 296. FAQ page
+- [ ] 297. Roadmap page
+- [ ] 298. Contributing guide
+- [ ] 299. Style guide for agent-authored code
+- [ ] 300. Code-of-conduct
+- [ ] 301. Threat model document
+- [ ] 302. Disclosure / security.txt
+- [ ] 303. Bug bounty page
+- [ ] 304. Status page stub
+- [ ] 305. Press kit (logos, screenshots)
+
+## Database & ops
+
+- [ ] 306. Migration: index transactions(block_height)
+- [ ] 307. Migration: index transactions(from_address, nonce)
+- [ ] 308. Migration: index accounts(balance DESC)
+- [ ] 309. Migration: index receipts(status)
+- [ ] 310. Migration: GIN index on receipts.logs_json
+- [ ] 311. Migration: validators.stake numeric column
+- [ ] 312. Migration: validator_slashes table
+- [ ] 313. Migration: contract_code table
+- [ ] 314. Migration: contract_storage table
+- [ ] 315. Migration: contract_metadata table
+- [ ] 316. Migration: state_snapshots table
+- [ ] 317. Migration: peers table mirror of peers.json
+- [ ] 318. Migration: rename chat_logs → agent_chat_logs
+- [ ] 319. DB connection-pool tuning + monitoring
+- [ ] 320. DB query-time histogram metric
+- [ ] 321. DB slow-query log
+- [ ] 322. Read-replica routing for heavy reads
+- [ ] 323. pg_dump backup script to S3
+- [ ] 324. Restore script + smoke test
+- [ ] 325. CLI: npm run migrate:down NNNN
+- [ ] 326. Migration dry-run mode
+- [ ] 327. Schema-diff against prod CLI
+- [ ] 328. Redis cache warmer at boot
+- [ ] 329. Redis key TTL audit
+- [ ] 330. Redis pub/sub channel for cross-replica events
+- [ ] 331. Two-replica web service: pin SSE to one
+- [ ] 332. Worker leader election
+- [ ] 333. Stuck-job recovery
+- [ ] 334. Dead-letter queue for failed agent tasks
+- [ ] 335. Job retry dashboard
+
+## Security
+
+- [ ] 336. CSRF protection on POST endpoints
+- [ ] 337. Helmet middleware (CSP, HSTS, frameguard)
+- [ ] 338. SQL-injection audit pass
+- [ ] 339. Input length caps on every endpoint
+- [ ] 340. JSON body size limit
+- [ ] 341. Per-endpoint rate limit overrides
+- [ ] 342. API-key scope chain:write vs chain:read
+- [ ] 343. API-key expiry default 90d
+- [ ] 344. API-key rotation endpoint
+- [ ] 345. API-key audit log
+- [ ] 346. Admin-token rotation flow
+- [ ] 347. Failed-auth lockout (5 in 1min → 15min)
+- [ ] 348. Suspicious-activity feed
+- [ ] 349. Tx replay protection: chainId
+- [ ] 350. Tx replay protection: per-key nonce window
+- [ ] 351. Wallet-export rate limit 1/min
+- [ ] 352. Mnemonic display obscured + reveal button
+- [ ] 353. Server log redaction (no keys/sigs/mnemonics)
+- [ ] 354. Secrets scan in CI (gitleaks)
+- [ ] 355. Dependency audit on PR (npm audit)
+- [ ] 356. CodeQL workflow on push
+- [ ] 357. Snyk integration
+- [ ] 358. CSP nonce per request
+- [ ] 359. Subresource integrity on CDN
+- [ ] 360. HTTPS-only redirect middleware
+- [ ] 361. SameSite=strict cookies
+- [ ] 362. Session fixation defense
+- [ ] 363. Password-strength meter
+- [ ] 364. Encryption at rest for stored mnemonics
+- [ ] 365. KMS integration stub
+- [ ] 366. Tor / VPN flag (informational)
+- [ ] 367. ip2geo on auth log
+- [ ] 368. Threat-feed integration
+- [ ] 369. Cert-pinning notes for mobile
+- [ ] 370. Disclosure response template
+
+## Testing
+
+- [ ] 371. Unit: ValidatorManager rotation
+- [ ] 372. Unit: ValidatorManager quorum thresholds
+- [ ] 373. Unit: Interpreter happy path
+- [ ] 374. Unit: Interpreter out-of-gas
+- [ ] 375. Unit: Interpreter REVERT
+- [ ] 376. Unit: GasMeter charging
+- [ ] 377. Unit: PeerRegistry stale eviction
+- [ ] 378. Unit: parseVmProgram edge cases
+- [ ] 379. Unit: TransactionPool nonce window
+- [ ] 380. Unit: TransactionPool replacement-by-fee
+- [ ] 381. Unit: StateManager.applyTransaction
+- [ ] 382. Unit: StateManager.revertBlock
+- [ ] 383. Unit: createReceipt + bloom
+- [ ] 384. Unit: Chain.handleReorg
+- [ ] 385. Unit: ForkManager fork-choice
+- [ ] 386. Unit: Block.isValid
+- [ ] 387. Unit: signature verify ed25519
+- [ ] 388. Unit: faucet cooldown
+- [ ] 389. Unit: api-key permission gating
+- [ ] 390. Unit: migration runner ordering
+- [ ] 391. Integration: boot + apply migration + insert + read
+- [ ] 392. Integration: produce 10 blocks, verify receipts persist
+- [ ] 393. Integration: reorg verify state matches canonical
+- [ ] 394. Integration: VM tx end-to-end via /api/transactions
+- [ ] 395. Integration: peer announce + list
+- [ ] 396. Integration: faucet → send → balance
+- [ ] 397. Integration: api-key creation gated
+- [ ] 398. Integration: SSE stream emits all event types
+- [ ] 399. Integration: socket.io rooms
+- [ ] 400. Load: 1000 tx/sec submission
+- [ ] 401. Load: 100 concurrent SSE clients
+- [ ] 402. Load: peer-mesh announce flood
+- [ ] 403. Fuzz: VM with random op sequences
+- [ ] 404. Fuzz: tx body fields
+- [ ] 405. Fuzz: API JSON inputs
+- [ ] 406. Property: state root invariance under reorder-then-reorg
+- [ ] 407. Property: gas accounting never exceeds limit
+- [ ] 408. Snapshot: API response shapes
+- [ ] 409. Snapshot: HUD components
+- [ ] 410. CI workflow runs all of the above on PR
+
+## DX & tooling
+
+- [ ] 411. ESLint config tightening
+- [ ] 412. Prettier config
+- [ ] 413. Husky pre-commit
+- [ ] 414. lint-staged setup
+- [ ] 415. Commitlint conventional-commits
+- [ ] 416. Renovate bot config
+- [ ] 417. Dependabot config
+- [ ] 418. tsconfig strict mode on
+- [ ] 419. tsconfig noUncheckedIndexedAccess
+- [ ] 420. Path aliases (@chain, @api)
+- [ ] 421. Build-time env validation (zod)
+- [ ] 422. dotenv example file refresh
+- [ ] 423. Docker Compose backend+postgres+redis
+- [ ] 424. Devcontainer config
+- [ ] 425. Makefile shortcuts
+- [ ] 426. justfile alternative
+- [ ] 427. nvmrc file
+- [ ] 428. Volta pin
+- [ ] 429. README badges
+- [ ] 430. Architecture Mermaid diagram
+- [ ] 431. Block production sequence diagram
+- [ ] 432. Reorg sequence diagram
+- [ ] 433. Agent task sequence diagram
+- [ ] 434. Logo refresh
+- [ ] 435. Favicon refresh
+- [ ] 436. og:image generator
+- [ ] 437. Sitemap.xml
+- [ ] 438. robots.txt
+- [ ] 439. Lighthouse score ≥ 90 on landing
+- [ ] 440. Bundle-size budget enforcement
+- [ ] 441. Tree-shake unused exports
+- [ ] 442. Dynamic imports for HUD heavy panels
+- [ ] 443. Frontend Sentry integration
+- [ ] 444. Backend Sentry integration
+- [ ] 445. Logflare / Axiom integration
+
+## Ecosystem stubs
+
+- [ ] 446. Block explorer minimal v2
+- [ ] 447. Validator dashboard standalone
+- [ ] 448. Chain stats embedded widget
+- [ ] 449. Telegram bot /balance + /tx
+- [ ] 450. Discord bot equivalent
+- [ ] 451. Slack notifier for own-wallet
+- [ ] 452. Email notifier (SES) for own-wallet
+- [ ] 453. Twilio SMS notifier
+- [ ] 454. /api/webhooks subscription
+- [ ] 455. Zapier connector spec
+- [ ] 456. n8n node
+- [ ] 457. Grafana dashboard JSON
+- [ ] 458. Datadog monitor JSON
+- [ ] 459. Prometheus alert rules
+- [ ] 460. PagerDuty service mapping notes
+- [ ] 461. Runbook: db unreachable
+- [ ] 462. Runbook: agent stuck
+- [ ] 463. Runbook: chain halted
+- [ ] 464. Runbook: peer mesh partitioned
+- [ ] 465. Runbook: out-of-disk
+- [ ] 466. Chaos test: kill worker mid-block
+- [ ] 467. Chaos test: drop db connection
+- [ ] 468. Chaos test: clock skew
+- [ ] 469. Disaster-recovery dry-run
+- [ ] 470. Multi-region deploy notes
+- [ ] 471. CDN caching headers tuning
+- [ ] 472. Static-asset versioning
+- [ ] 473. SDK npm publish workflow
+- [ ] 474. CLI npm publish workflow
+- [ ] 475. Brew tap formula
+
+## Final polish
+
+- [ ] 476. CHANGELOG file (auto from conventional commits)
+- [ ] 477. v0.3 release tag
+- [ ] 478. Release notes blog post
+- [ ] 479. Demo screencast
+- [ ] 480. Onboarding video
+- [ ] 481. Public roadmap board
+- [ ] 482. Issue templates (bug/feature/security)
+- [ ] 483. PR template
+- [ ] 484. Discussion categories on GitHub
+- [ ] 485. RSS feed for blog/changelog
+- [ ] 486. Newsletter signup endpoint
+- [ ] 487. Discord invite on landing
+- [ ] 488. Twitter card meta refresh
+- [ ] 489. Social proof: live commit counter
+- [ ] 490. Tagline rotation A/B test
