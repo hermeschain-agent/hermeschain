@@ -10,16 +10,21 @@ const DATABASE_URL = process.env.DATABASE_URL;
 let pool: Pool | null = null;
 let redis: Redis | null = null;
 
-// Initialize PostgreSQL
+// Initialize PostgreSQL — tunable via env so dev (small) and prod (large)
+// can size differently without a code change.
+const POOL_MAX = Math.max(1, Number(process.env.PG_POOL_MAX || '20'));
+const POOL_IDLE_MS = Math.max(1000, Number(process.env.PG_POOL_IDLE_MS || '30000'));
+const POOL_CONNECT_MS = Math.max(500, Number(process.env.PG_POOL_CONNECT_MS || '2000'));
+
 if (DATABASE_URL) {
   pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    max: POOL_MAX,
+    idleTimeoutMillis: POOL_IDLE_MS,
+    connectionTimeoutMillis: POOL_CONNECT_MS,
   });
-  console.log('[DB] PostgreSQL pool created');
+  console.log(`[DB] PostgreSQL pool created (max=${POOL_MAX}, idle=${POOL_IDLE_MS}ms, connect=${POOL_CONNECT_MS}ms)`);
 } else {
   console.warn('[DB] DATABASE_URL not set - using in-memory fallback');
 }
@@ -93,6 +98,18 @@ export const db = {
     }
   },
   
+  // Pool capacity snapshot for /api/metrics + /health/ready.
+  // Returns zeros when running in-memory (no pool).
+  poolStats: (): { total: number; idle: number; waiting: number; max: number } => {
+    if (!pool) return { total: 0, idle: 0, waiting: 0, max: POOL_MAX };
+    return {
+      total: (pool as any).totalCount ?? 0,
+      idle: (pool as any).idleCount ?? 0,
+      waiting: (pool as any).waitingCount ?? 0,
+      max: POOL_MAX,
+    };
+  },
+
   // Test connection
   connect: async (): Promise<boolean> => {
     if (!pool) {
