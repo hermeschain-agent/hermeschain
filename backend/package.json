@@ -10,7 +10,8 @@
     "test": "npm run build && node --test tests/*.test.js",
     "pace:push": "node scripts/paced-push.js",
     "migrate:down": "node scripts/migrate-down.js",
-    "migrate:status": "node scripts/migrate-status.js"
+    "migrate:status": "node scripts/migrate-status.js",
+    "audit:redis-ttl": "node scripts/audit-redis-ttl.js"
   },
   "keywords": [
     "blockchain",
