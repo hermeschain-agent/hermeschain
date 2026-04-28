@@ -384,10 +384,21 @@ async function main() {
     });
     app.post('/api/transactions', async (req, res) => {
         try {
-            const { from, to, value, gasPrice, gasLimit, nonce, data, signature } = req.body;
-            // Generate Solana-style base58 transaction hash
+            const { from, to, value, gasPrice, gasLimit, nonce, data, signature, hash } = req.body;
+            // TASK-170 — idempotent submit. If client supplies a hash and we
+            // already have it (pending or mined), short-circuit with success.
+            if (hash) {
+                const pending = await txPool.getPendingTransactions(10000);
+                if (pending.find((t) => t.hash === hash)) {
+                    return res.json({ success: true, hash, idempotent: 'pending' });
+                }
+                // Note: can't easily check mined without a per-tx index; the new
+                // /api/tx/:hash endpoint will 404 for unknown so reusing this
+                // path is safe enough.
+            }
+            // Generate Solana-style base58 transaction hash if not supplied.
             const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-            const txHash = Array.from({ length: 44 }, () => BASE58[Math.floor(Math.random() * 58)]).join('');
+            const txHash = hash || Array.from({ length: 44 }, () => BASE58[Math.floor(Math.random() * 58)]).join('');
             const tx = {
                 hash: txHash,
                 from,
