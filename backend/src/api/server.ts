@@ -113,6 +113,10 @@ async function main() {
   // Cap JSON body to 1MB (TASK-340) — DoS defense.
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' }));
 
+  // HTTPS-only redirect (TASK-360) — production only.
+  const { httpsRedirect } = await import('./middleware/httpsRedirect');
+  app.use(httpsRedirect);
+
   // Request observability middleware (TASK-146 + TASK-147 + TASK-148).
   // Order matters: requestId before accessLog so the log line has a value.
   const { requestId } = await import('./middleware/requestId');
