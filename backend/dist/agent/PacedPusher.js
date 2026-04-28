@@ -121,7 +121,10 @@ class PacedPusher {
     }
     tick() {
         try {
-            this.git(['fetch', this.remote, this.target, this.branch]);
+            // Force-fetch all branches via explicit refspec — Railway clones the
+            // worker container with --single-branch by default, so the source
+            // branch's remote-tracking ref doesn't exist until we explicitly fetch.
+            this.git(['fetch', this.remote, '+refs/heads/*:refs/remotes/' + this.remote + '/*']);
         }
         catch (err) {
             console.warn(`[PACER] fetch failed: ${err?.message || err}`);
