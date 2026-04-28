@@ -1418,6 +1418,43 @@ Live context:
     });
   });
   
+  // Mempool snapshot (TASK-166).
+  app.get('/api/mempool', async (req, res) => {
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 200)));
+    const txs = await txPool.getPendingTransactions(limit);
+    res.json({
+      pending: txs.length,
+      items: txs.map(tx => ({
+        ...tx,
+        value: tx.value.toString(),
+        gasPrice: tx.gasPrice.toString(),
+        gasLimit: tx.gasLimit.toString(),
+      })),
+    });
+  });
+
+  // Single pending tx by hash (TASK-167). 404 if mined or unknown.
+  app.get('/api/mempool/:hash', async (req, res) => {
+    const all = await txPool.getPendingTransactions(10_000);
+    const found = all.find(tx => tx.hash === req.params.hash);
+    if (!found) return res.status(404).json({ error: 'not in mempool' });
+    res.json({
+      ...found,
+      value: found.value.toString(),
+      gasPrice: found.gasPrice.toString(),
+      gasLimit: found.gasLimit.toString(),
+    });
+  });
+
+  // Next nonce hint (TASK-057). max(chain_nonce, max_pending_nonce) + 1.
+  app.get('/api/account/:addr/next-nonce', async (req, res) => {
+    const chainNonce = stateManager.getNonce(req.params.addr);
+    const pending = txPool.getPendingForAddress(req.params.addr);
+    const maxPending = pending.reduce((m, t) => Math.max(m, t.nonce), -1);
+    const next = Math.max(chainNonce, maxPending + 1);
+    res.json({ address: req.params.addr, nextNonce: next });
+  });
+
   // TPS over a configurable window (TASK-051). Default 60s. Powered by
   // chain.getRecentTps which already buckets recent block tx counts.
   app.get('/api/chain/tps', async (req, res) => {
