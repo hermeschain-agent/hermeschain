@@ -1,0 +1,10 @@
+[
+  {"op":"PUSH","args":[1]},
+  {"op":"PUSH","args":[2]},
+  {"op":"ADD"},
+  {"op":"PUSH","args":[3]},
+  {"op":"MUL"},
+  {"op":"PUSH","args":[100]},
+  {"op":"DIV"},
+  {"op":"STOP"}
+]
