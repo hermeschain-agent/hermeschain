@@ -62,6 +62,12 @@ export declare class Block {
         transactionsRoot: string;
         receiptsRoot: string;
     };
+    /**
+     * Reconstruct a Block from a toJSON() payload (TASK-001). Round-trip
+     * property: `Block.fromJSON(b.toJSON()).header.hash === b.header.hash`.
+     * Throws on missing fields or hash mismatch (tampered header).
+     */
+    static fromJSON(json: any): Block;
 }
 export { generateHash, generateRandomBase58, hexToBase58 };
 //# sourceMappingURL=Block.d.ts.map
