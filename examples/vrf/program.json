@@ -1,0 +1,8 @@
+[
+  {"op":"PUSH","args":["beacon"]},
+  {"op":"SLOAD"},
+  {"op":"PUSH","args":[100]},
+  {"op":"MOD"},
+  {"op":"LOG","args":{"topics":["Random"],"data":"derived"}},
+  {"op":"STOP"}
+]
