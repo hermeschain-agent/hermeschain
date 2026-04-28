@@ -96,8 +96,22 @@ async function main() {
   console.log(`   Circulating: ${stateManager.formatBalance(stateManager.getCirculatingSupply())}\n`);
 
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+  // CORS allowlist via env (TASK-145). Comma-separated origins; default open.
+  const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (corsOrigins.length > 0) {
+    app.use(cors({
+      origin: (origin, cb) => {
+        if (!origin || corsOrigins.includes(origin)) return cb(null, true);
+        cb(new Error(`origin ${origin} not allowed by CORS`));
+      },
+      credentials: true,
+    }));
+    console.log(`[CORS] allowlist active (${corsOrigins.length} origin(s))`);
+  } else {
+    app.use(cors());
+  }
+  // Cap JSON body to 1MB (TASK-340) — DoS defense.
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' }));
 
   // Request observability middleware (TASK-146 + TASK-147 + TASK-148).
   // Order matters: requestId before accessLog so the log line has a value.
