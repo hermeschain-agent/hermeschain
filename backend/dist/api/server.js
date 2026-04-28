@@ -170,6 +170,9 @@ async function main() {
     app.get('/health', (req, res) => {
         res.status(200).json({ status: 'ok' });
     });
+    // OpenAPI 3.1 spec at /api/openapi.json (TASK-141). Swagger UI hookup in TASK-142.
+    const { createOpenApiRouter } = await Promise.resolve().then(() => __importStar(require('./openapi')));
+    app.use('/api/openapi.json', createOpenApiRouter());
     // Newsletter signup (TASK-486).
     const { createNewsletterRouter } = await Promise.resolve().then(() => __importStar(require('./newsletter')));
     app.use('/api/newsletter', createNewsletterRouter());

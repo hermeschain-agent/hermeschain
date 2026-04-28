@@ -142,6 +142,10 @@ async function main() {
     res.status(200).json({ status: 'ok' });
   });
 
+  // OpenAPI 3.1 spec at /api/openapi.json (TASK-141). Swagger UI hookup in TASK-142.
+  const { createOpenApiRouter } = await import('./openapi');
+  app.use('/api/openapi.json', createOpenApiRouter());
+
   // Newsletter signup (TASK-486).
   const { createNewsletterRouter } = await import('./newsletter');
   app.use('/api/newsletter', createNewsletterRouter());
