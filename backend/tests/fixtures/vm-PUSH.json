@@ -1,0 +1,6 @@
+{
+  "label": "PUSH smoke test",
+  "ops": [{"op": "PUSH", "args": [1]}, {"op": "PUSH", "args": [2]}, {"op": "PUSH"}, {"op": "STOP"}],
+  "gasLimit": "10000",
+  "expected": {"status": "success"}
+}
