@@ -167,11 +167,13 @@ async function main() {
     app.get('/health', (req, res) => {
         res.status(200).json({ status: 'ok' });
     });
-    // Three-tier health checks (TASK-149) and build info (TASK-150).
+    // Three-tier health checks (TASK-149), build info (TASK-150), Prometheus metrics (TASK-152).
     const { createHealthRouter } = await Promise.resolve().then(() => __importStar(require('./health')));
     const { createBuildRouter } = await Promise.resolve().then(() => __importStar(require('./build-info')));
+    const { createMetricsRouter } = await Promise.resolve().then(() => __importStar(require('./metrics')));
     app.use('/health', createHealthRouter(chain));
     app.use('/api/build', createBuildRouter());
+    app.use('/api/metrics', createMetricsRouter(chain, txPool));
     // API status check (no key exposure)
     app.get('/api/config/status', (req, res) => {
         const role = process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web';
