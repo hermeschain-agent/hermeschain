@@ -1,0 +1,9 @@
+[
+  {"op":"PUSH","args":["paymaster_balance"]},
+  {"op":"SLOAD"},
+  {"op":"PUSH","args":[1000]},
+  {"op":"SUB"},
+  {"op":"SSTORE","args":["paymaster_balance","decremented"]},
+  {"op":"LOG","args":{"topics":["Sponsored"],"data":"gas-paid"}},
+  {"op":"STOP"}
+]
