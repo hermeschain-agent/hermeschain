@@ -1,0 +1,12 @@
+[package]
+name = "hermeschain"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rust SDK for Hermeschain"
+repository = "https://github.com/hermeschain-agent/hermeschain"
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
