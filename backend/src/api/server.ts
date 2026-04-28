@@ -934,9 +934,13 @@ Live context:
     await syncSharedReadState();
     const state = agentWorker.getState();
     const sharedRuntime = agentRuntimeStore.getLatestSnapshot();
-    const observedRuntime =
-      agentConfig.role === 'web' && sharedRuntime
+    const sharedWorkerRuntime =
+      agentConfig.role === 'web' && sharedRuntime?.role === 'worker'
         ? sharedRuntime
+        : null;
+    const observedRuntime =
+      sharedWorkerRuntime
+        ? sharedWorkerRuntime
         : {
             role: agentConfig.role,
             mode: state.mode,
@@ -973,7 +977,9 @@ Live context:
               agentConfig.role === 'worker' ? new Date().toISOString() : null,
           };
     const workerHeartbeatAt =
-      observedRuntime.workerHeartbeatAt || observedRuntime.updatedAt || null;
+      observedRuntime.role === 'worker'
+        ? observedRuntime.workerHeartbeatAt || observedRuntime.updatedAt || null
+        : null;
     const workerActive = workerHeartbeatAt
       ? Date.now() - new Date(workerHeartbeatAt as string | number | Date).getTime() < 90_000
       : false;
@@ -985,7 +991,7 @@ Live context:
       role: agentConfig.role,
       serviceRole: agentConfig.role,
       observedWorkerRole: observedRuntime.role,
-      statusSource: agentConfig.role === 'web' && sharedRuntime ? 'shared' : 'local',
+      statusSource: sharedWorkerRuntime ? 'shared' : 'local',
       mode: observedRuntime.mode,
       streamMode: observedRuntime.mode,
       isWorking: observedRuntime.isWorking,
@@ -1039,6 +1045,149 @@ Live context:
       tokenSpend: tokenBudget.snapshot(),
     };
   };
+
+  const WORKER_INTERNAL_URL =
+    process.env.WORKER_INTERNAL_URL ||
+    'https://hermeschain-worker-production.up.railway.app';
+
+  const mergeWorkerStatusIntoPayload = (localPayload: any, workerData: any) => ({
+    ...localPayload,
+    mode: workerData.agentMode || localPayload.mode,
+    streamMode: workerData.agentMode || localPayload.streamMode,
+    runStatus: workerData.runStatus || localPayload.runStatus,
+    verificationStatus:
+      workerData.verificationStatus || localPayload.verificationStatus,
+    isWorking: workerData.isWorking ?? localPayload.isWorking,
+    currentTask: workerData.currentTask || localPayload.currentTask,
+    lastFailure: workerData.lastFailure || localPayload.lastFailure,
+    blockedReason: workerData.blockedReason || localPayload.blockedReason,
+    recentTasks: (workerData.recentSuccessful || []).slice(0, 5).map(
+      (run: any) => ({
+        title: run.title,
+        agent: run.agent || 'HERMES',
+        completedAt: run.completedAt,
+      })
+    ),
+    recentRuns: workerData.recentRuns || [],
+    completedTaskCount: (workerData.recentSuccessful || []).length,
+    agentEnabled: true,
+    capabilities: workerData.capabilities || localPayload.capabilities,
+    blockHeight: workerData.blockHeight ?? localPayload.blockHeight,
+    workerActive: true,
+  });
+
+  const buildLiveAgentStatusPayload = async (options?: { logProxyErrors?: boolean }) => {
+    const localPayload = await buildAgentStatusPayload();
+    if (process.env.AGENT_ROLE === 'worker') {
+      return localPayload;
+    }
+
+    const shouldProxyWorkerStatus =
+      localPayload.statusSource !== 'shared' ||
+      !localPayload.workerActive ||
+      localPayload.mode === 'disabled';
+
+    if (!shouldProxyWorkerStatus) {
+      return localPayload;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const upstream = await fetch(`${WORKER_INTERNAL_URL}/status`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!upstream.ok) {
+        return localPayload;
+      }
+
+      const workerData = await upstream.json();
+      return mergeWorkerStatusIntoPayload(localPayload, workerData);
+    } catch (error: any) {
+      if (options?.logProxyErrors) {
+        console.error('[PROXY] worker /status fetch failed:', error?.message || error);
+      }
+      return localPayload;
+    }
+  };
+
+  interface AgentLogCursor {
+    id: string;
+    timestamp: Date;
+  }
+
+  const getAgentLogCursor = (row: { id: string; timestamp: string | Date }) => ({
+    id: row.id,
+    timestamp: new Date(row.timestamp),
+  });
+
+  const compareAgentLogCursor = (a: AgentLogCursor, b: AgentLogCursor) => {
+    const delta = a.timestamp.getTime() - b.timestamp.getTime();
+    if (delta !== 0) return delta;
+    return a.id.localeCompare(b.id);
+  };
+
+  const fetchRecentAgentStreamRows = async (limit: number = 30) => {
+    const result = await db.query(
+      `
+      SELECT id, timestamp, type, content, metadata
+      FROM agent_logs
+      WHERE type IN (
+        'task_start',
+        'analysis_start',
+        'tool_use',
+        'tool_result',
+        'verification_start',
+        'verification_result',
+        'task_complete',
+        'task_blocked',
+        'git_commit',
+        'error',
+        'output'
+      )
+      ORDER BY timestamp DESC, id DESC
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    return (result.rows || []).reverse();
+  };
+
+  const fetchAgentStreamRowsAfter = async (
+    cursor: AgentLogCursor,
+    limit: number = 50
+  ) => {
+    const result = await db.query(
+      `
+      SELECT id, timestamp, type, content, metadata
+      FROM agent_logs
+      WHERE (
+        type IN (
+          'task_start',
+          'analysis_start',
+          'tool_use',
+          'tool_result',
+          'verification_start',
+          'verification_result',
+          'task_complete',
+          'task_blocked',
+          'git_commit',
+          'error',
+          'output'
+        )
+      )
+        AND (timestamp > $1 OR (timestamp = $1 AND id > $2))
+      ORDER BY timestamp ASC, id ASC
+      LIMIT $3
+      `,
+      [cursor.timestamp, cursor.id, limit]
+    );
+
+    return result.rows || [];
+  };
   
   // SSE endpoint for live agent work streaming
   app.get('/api/agent/stream', (req, res) => {
@@ -1062,13 +1211,42 @@ Live context:
     agentViewerCount++;
     console.log(`[AGENT] New viewer connected (total: ${agentViewerCount})`);
     
-    void buildAgentStatusPayload().then((payload) => {
-      res.write(`data: ${JSON.stringify({
-        type: 'init',
-        data: payload,
-        timestamp: Date.now()
-      })}\n\n`);
-    }).catch(() => {
+    const streamStartedAt = new Date();
+    let lastSharedLogCursor: AgentLogCursor = {
+      id: '',
+      timestamp: streamStartedAt,
+    };
+
+    void buildLiveAgentStatusPayload()
+      .then(async (payload) => {
+        res.write(`data: ${JSON.stringify({
+          type: 'init',
+          data: payload,
+          timestamp: Date.now()
+        })}\n\n`);
+
+        try {
+          const recentRows = await fetchRecentAgentStreamRows(30);
+          if (recentRows.length > 0) {
+            lastSharedLogCursor = getAgentLogCursor(recentRows[recentRows.length - 1]);
+          }
+
+          for (const row of recentRows) {
+            res.write(
+              `data: ${JSON.stringify({
+                type: 'text',
+                data: formatLogStreamText(row),
+                viewerCount: agentViewerCount,
+                timestamp: Date.now(),
+              })}\n\n`
+            );
+          }
+        } catch {
+          // Shared history is best-effort. The live stream should still
+          // connect even if historical hydration is unavailable.
+        }
+      })
+      .catch(() => {
       res.write(`data: ${JSON.stringify({
         type: 'init',
         data: {
@@ -1088,10 +1266,8 @@ Live context:
     };
     
     agentEvents.on('chunk', onChunk);
-    let lastLogSeenAt = new Date(Date.now() - 60 * 1000);
-
     const statusPulse = setInterval(() => {
-      void buildAgentStatusPayload()
+      void buildLiveAgentStatusPayload()
         .then((payload) => {
           res.write(`data: ${JSON.stringify({
             type: 'status',
@@ -1109,19 +1285,13 @@ Live context:
       if (agentConfig.role !== 'web') return;
 
       try {
-        const result = await db.query(
-          `
-          SELECT id, timestamp, type, content, metadata
-          FROM agent_logs
-          WHERE timestamp > $1
-          ORDER BY timestamp ASC
-          LIMIT 50
-          `,
-          [lastLogSeenAt]
-        );
+        const rows = await fetchAgentStreamRowsAfter(lastSharedLogCursor, 50);
 
-        for (const row of result.rows || []) {
-          lastLogSeenAt = new Date(row.timestamp);
+        for (const row of rows) {
+          const nextCursor = getAgentLogCursor(row);
+          if (compareAgentLogCursor(nextCursor, lastSharedLogCursor) > 0) {
+            lastSharedLogCursor = nextCursor;
+          }
           res.write(
             `data: ${JSON.stringify({
               type: 'text',
@@ -1163,56 +1333,8 @@ Live context:
   // Worker is reachable over Railway's private network at the internal domain.
   // Prefer explicit WORKER_INTERNAL_URL; fall back to the public Railway
   // domain since private-network DNS+port assumptions aren't guaranteed.
-  const WORKER_INTERNAL_URL =
-    process.env.WORKER_INTERNAL_URL ||
-    'https://hermeschain-worker-production.up.railway.app';
-
   app.get('/api/agent/status', async (req, res) => {
-    if (process.env.AGENT_ROLE !== 'worker') {
-      try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 4000);
-        const upstream = await fetch(`${WORKER_INTERNAL_URL}/status`, {
-          signal: controller.signal,
-        });
-        clearTimeout(t);
-        if (upstream.ok) {
-          const workerData: any = await upstream.json();
-          // Merge worker runtime state into the web's own payload shape so
-          // frontend components keep working without changes.
-          const localPayload = await buildAgentStatusPayload();
-          res.json({
-            ...localPayload,
-            mode: workerData.agentMode || localPayload.mode,
-            streamMode: workerData.agentMode || localPayload.streamMode,
-            runStatus: workerData.runStatus || localPayload.runStatus,
-            verificationStatus:
-              workerData.verificationStatus || localPayload.verificationStatus,
-            isWorking: workerData.isWorking ?? localPayload.isWorking,
-            currentTask: workerData.currentTask || localPayload.currentTask,
-            lastFailure: workerData.lastFailure || localPayload.lastFailure,
-            blockedReason:
-              workerData.blockedReason || localPayload.blockedReason,
-            recentTasks: (workerData.recentSuccessful || []).slice(0, 5).map(
-              (r: any) => ({
-                title: r.title,
-                agent: r.agent || 'HERMES',
-                completedAt: r.completedAt,
-              })
-            ),
-            recentRuns: workerData.recentRuns || [],
-            completedTaskCount: (workerData.recentSuccessful || []).length,
-            agentEnabled: true,
-            capabilities: workerData.capabilities || localPayload.capabilities,
-            blockHeight: workerData.blockHeight ?? localPayload.blockHeight,
-          });
-          return;
-        }
-      } catch (e: any) {
-        console.error('[PROXY] worker /status fetch failed:', e?.message || e);
-      }
-    }
-    res.json(await buildAgentStatusPayload());
+    res.json(await buildLiveAgentStatusPayload({ logProxyErrors: true }));
   });
 
   // Get persisted task runs (plus legacy completed-task alias)
@@ -1430,6 +1552,42 @@ Live context:
     });
   });
   
+  // Address validity checker (TASK-137). Returns parseable + reason.
+  app.get('/api/wallet/validate/:input', (req, res) => {
+    const input = req.params.input;
+    if (typeof input !== 'string' || input.length === 0) {
+      return res.json({ valid: false, reason: 'empty' });
+    }
+    if (input.length < 32 || input.length > 64) {
+      return res.json({ valid: false, reason: 'wrong-length' });
+    }
+    if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(input)) {
+      return res.json({ valid: false, reason: 'bad-base58' });
+    }
+    res.json({ valid: true });
+  });
+
+  // Block search by height range (TASK-153).
+  app.get('/api/blocks/search', async (req, res) => {
+    const from = Math.max(0, Number(req.query.from ?? 0));
+    const to = Math.min(from + 1000, Number(req.query.to ?? from + 100));
+    const producer = typeof req.query.producer === 'string' ? req.query.producer : null;
+    const items: any[] = [];
+    for (let h = from; h <= to; h++) {
+      const block = chain.getBlockByHeight(h);
+      if (!block) continue;
+      if (producer && block.header.producer !== producer) continue;
+      items.push({
+        height: block.header.height,
+        hash: block.header.hash,
+        producer: block.header.producer,
+        timestamp: block.header.timestamp,
+        transactionCount: block.transactions.length,
+      });
+    }
+    res.json({ items, count: items.length, from, to });
+  });
+
   // Mempool snapshot (TASK-166).
   app.get('/api/mempool', async (req, res) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 200)));
