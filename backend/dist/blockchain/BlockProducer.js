@@ -10,7 +10,23 @@ const Interpreter_1 = require("../vm/Interpreter");
 // Block limits
 const MAX_BLOCK_GAS = 30000000n;
 const MAX_TRANSACTIONS_PER_BLOCK = 500;
-const BLOCK_REWARD = 10n * 10n ** 18n; // 10 OPEN per block
+// Per-validator block reward (TASK-039) — env-tunable so testnet/mainnet
+// can differ without a code change. Default: 10 OPEN.
+const BLOCK_REWARD = (() => {
+    const raw = process.env.HERMES_BLOCK_REWARD_WEI;
+    if (!raw)
+        return 10n * 10n ** 18n;
+    try {
+        const parsed = BigInt(raw);
+        if (parsed < 0n)
+            throw new Error('negative reward');
+        return parsed;
+    }
+    catch (err) {
+        console.warn(`[PRODUCER] HERMES_BLOCK_REWARD_WEI invalid (${raw}): ${err?.message || err} — using default 10 OPEN`);
+        return 10n * 10n ** 18n;
+    }
+})();
 class BlockProducer {
     constructor(chain, txPool, validatorManager, eventBus) {
         this.isProducing = false;
@@ -57,17 +73,29 @@ class BlockProducer {
             console.log(`[PRODUCER] Difficulty: ${difficulty}`);
             // Get pending transactions with limits
             const pendingTxs = await this.txPool.getPendingTransactions(MAX_TRANSACTIONS_PER_BLOCK);
-            // Apply transactions to state with gas limit enforcement
+            // Apply transactions to state with gas + size limit enforcement
             const validTxs = [];
             const receipts = [];
             let totalGasUsed = 0n;
             let cumulativeGas = 0n;
+            let serializedBytes = 0;
+            const MAX_BLOCK_BYTES = 1048576; // TASK-022 — 1MB serialized cap
             for (const tx of pendingTxs) {
                 // Check block gas limit
                 if (totalGasUsed + tx.gasLimit > MAX_BLOCK_GAS) {
                     console.log(`[PRODUCER] Block gas limit reached, stopping tx inclusion`);
                     break;
                 }
+                // Check block size limit (TASK-022)
+                const txBytes = Buffer.byteLength(JSON.stringify({
+                    ...tx, value: tx.value.toString(), gasPrice: tx.gasPrice.toString(),
+                    gasLimit: tx.gasLimit.toString(),
+                }), 'utf8');
+                if (serializedBytes + txBytes > MAX_BLOCK_BYTES) {
+                    console.log(`[PRODUCER] Block size cap reached at ${serializedBytes} bytes`);
+                    break;
+                }
+                serializedBytes += txBytes;
                 // Verify signature before applying
                 if (!(0, Crypto_1.verifyTransactionSignature)(tx)) {
                     console.log(`[PRODUCER] Invalid signature for tx ${tx.hash.substring(0, 12)}...`);

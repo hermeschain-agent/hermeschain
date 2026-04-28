@@ -40,21 +40,28 @@ exports.chainState = exports.cache = exports.db = void 0;
 const pg_1 = require("pg");
 const ioredis_1 = __importDefault(require("ioredis"));
 const dotenv = __importStar(require("dotenv"));
+const queryMetrics_1 = require("./queryMetrics");
 dotenv.config();
+// Slow-query threshold (TASK-321). Queries above this log a [PG SLOW] warning.
+const PG_SLOW_QUERY_MS = Math.max(1, Number(process.env.PG_SLOW_QUERY_MS || '1000'));
 // PostgreSQL connection - uses Railway's DATABASE_URL
 const DATABASE_URL = process.env.DATABASE_URL;
 let pool = null;
 let redis = null;
-// Initialize PostgreSQL
+// Initialize PostgreSQL — tunable via env so dev (small) and prod (large)
+// can size differently without a code change.
+const POOL_MAX = Math.max(1, Number(process.env.PG_POOL_MAX || '20'));
+const POOL_IDLE_MS = Math.max(1000, Number(process.env.PG_POOL_IDLE_MS || '30000'));
+const POOL_CONNECT_MS = Math.max(500, Number(process.env.PG_POOL_CONNECT_MS || '2000'));
 if (DATABASE_URL) {
     pool = new pg_1.Pool({
         connectionString: DATABASE_URL,
         ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
+        max: POOL_MAX,
+        idleTimeoutMillis: POOL_IDLE_MS,
+        connectionTimeoutMillis: POOL_CONNECT_MS,
     });
-    console.log('[DB] PostgreSQL pool created');
+    console.log(`[DB] PostgreSQL pool created (max=${POOL_MAX}, idle=${POOL_IDLE_MS}ms, connect=${POOL_CONNECT_MS}ms)`);
 }
 else {
     console.warn('[DB] DATABASE_URL not set - using in-memory fallback');
@@ -95,14 +102,21 @@ exports.db = {
             console.log('Using in-memory storage (no DATABASE_URL)');
             return;
         }
+        const startedAt = Date.now();
         try {
             // Split by semicolon and execute each statement
             const statements = sql.split(';').filter(s => s.trim().length > 0);
             for (const statement of statements) {
                 await pool.query(statement);
             }
+            const duration = Date.now() - startedAt;
+            (0, queryMetrics_1.recordQuery)(duration);
+            if (duration > PG_SLOW_QUERY_MS) {
+                console.warn(`[PG SLOW] exec ${duration}ms (${sql.length} chars, ${sql.split(';').length} stmts)`);
+            }
         }
         catch (error) {
+            (0, queryMetrics_1.recordQueryError)();
             console.error('Database exec error:', error);
             throw error;
         }
@@ -113,14 +127,35 @@ exports.db = {
             // Fallback to memory
             return { rows: [], rowCount: 0 };
         }
+        const startedAt = Date.now();
         try {
             const result = await pool.query(text, params);
+            const duration = Date.now() - startedAt;
+            (0, queryMetrics_1.recordQuery)(duration);
+            if (duration > PG_SLOW_QUERY_MS) {
+                // Truncate SQL to 200 chars; never log param VALUES (PII), only count.
+                const sqlPreview = text.length > 200 ? text.slice(0, 200) + '…' : text;
+                console.warn(`[PG SLOW] query ${duration}ms params=${params.length} sql=${JSON.stringify(sqlPreview)}`);
+            }
             return { rows: result.rows, rowCount: result.rowCount || 0 };
         }
         catch (error) {
+            (0, queryMetrics_1.recordQueryError)();
             console.error('Database query error:', error);
             throw error;
         }
+    },
+    // Pool capacity snapshot for /api/metrics + /health/ready.
+    // Returns zeros when running in-memory (no pool).
+    poolStats: () => {
+        if (!pool)
+            return { total: 0, idle: 0, waiting: 0, max: POOL_MAX };
+        return {
+            total: pool.totalCount ?? 0,
+            idle: pool.idleCount ?? 0,
+            waiting: pool.waitingCount ?? 0,
+            max: POOL_MAX,
+        };
     },
     // Test connection
     connect: async () => {

@@ -7,6 +7,15 @@ export declare const GAS_COSTS: {
     readonly POP: 2n;
     readonly ADD: 3n;
     readonly SUB: 3n;
+    readonly MUL: 5n;
+    readonly DIV: 5n;
+    readonly MOD: 5n;
+    readonly EQ: 3n;
+    readonly LT: 3n;
+    readonly GT: 3n;
+    readonly AND: 3n;
+    readonly OR: 3n;
+    readonly NOT: 3n;
     readonly SSTORE: 20000n;
     readonly STOP: 0n;
     readonly REVERT: 0n;
