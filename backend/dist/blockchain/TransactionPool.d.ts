@@ -5,6 +5,7 @@ export interface ValidationResult {
 }
 export declare class TransactionPool {
     private pendingTransactions;
+    private addedAtMs;
     private knownHashes;
     private syncPendingTransactionsFromDb;
     initialize(): Promise<void>;
@@ -34,6 +35,7 @@ export declare class TransactionPool {
     private calculateTxHash;
     getPendingCount(): number;
     getPendingForAddress(address: string): Transaction[];
-    clearExpired(maxAge?: number): number;
+    clearExpired(maxAgeMs?: number): number;
+    startExpirationLoop(intervalMs?: number, maxAgeMs?: number): NodeJS.Timeout;
 }
 //# sourceMappingURL=TransactionPool.d.ts.map

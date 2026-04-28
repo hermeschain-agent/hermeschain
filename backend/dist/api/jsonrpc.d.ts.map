@@ -1,0 +1,1 @@
+{"version":3,"file":"jsonrpc.d.ts","sourceRoot":"","sources":["../../src/api/jsonrpc.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,MAAM,EAAE,MAAM,SAAS,CAAC;AACjC,OAAO,KAAK,EAAE,KAAK,EAAE,MAAM,qBAAqB,CAAC;AAGjD;;;;;;;;;;;;GAYG;AACH,wBAAgB,mBAAmB,CAAC,KAAK,EAAE,KAAK,GAAG,MAAM,CAuCxD"}
