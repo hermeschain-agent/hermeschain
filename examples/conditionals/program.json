@@ -1,0 +1,10 @@
+[
+  {"op":"PUSH","args":[5]},
+  {"op":"PUSH","args":[10]},
+  {"op":"LT"},
+  {"op":"LOG","args":{"topics":["Condition"],"data":"5<10 → 1 (true)"}},
+  {"op":"PUSH","args":[1]},
+  {"op":"EQ"},
+  {"op":"LOG","args":{"topics":["Branch"],"data":"would-take-true-branch"}},
+  {"op":"STOP"}
+]
