@@ -1,0 +1,6 @@
+{
+  "label": "out-of-gas at PUSH",
+  "ops": [{"op":"PUSH","args":[1]}, {"op":"PUSH","args":[2]}, {"op":"ADD"}],
+  "gasLimit": "2",
+  "expected": {"status": "revert", "errorContains": "out-of-gas"}
+}
