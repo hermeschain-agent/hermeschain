@@ -99,6 +99,13 @@ async function main() {
   app.use(cors());
   app.use(express.json());
 
+  // Request observability middleware (TASK-146 + TASK-147 + TASK-148).
+  // Order matters: requestId before accessLog so the log line has a value.
+  const { requestId } = await import('./middleware/requestId');
+  const { accessLog } = await import('./middleware/accessLog');
+  app.use(requestId);
+  if (process.env.ACCESS_LOG_ENABLED !== 'false') app.use(accessLog);
+
   const syncSharedReadState = async () => {
     if (process.env.AGENT_ROLE === 'worker') return;
     await chain.refreshFromDb();
@@ -747,6 +754,19 @@ Live context:
   await skillManager.initialize();
   await agentTaskStore.initialize();
   await agentRuntimeStore.initialize();
+
+  const { githubUpdates } = await import('../agent/GitHubUpdates');
+  await githubUpdates.initialize(agentConfig.repoRoot);
+  const shouldRunGitHubSync =
+    agentConfig.role === 'worker' || !process.env.WORKER_INTERNAL_URL;
+  if (shouldRunGitHubSync) {
+    githubUpdates.startBackgroundSync();
+  }
+  const { githubUpdatesRouter } = await import('./githubUpdates');
+  app.use('/api/github/updates', githubUpdatesRouter);
+  console.log(
+    `[GITHUB] Updates center ready (${shouldRunGitHubSync ? 'active sync' : 'cache reader'})`
+  );
 
   if (agentConfig.role === 'worker') {
     await startNetworkHeartbeat();
@@ -1700,6 +1720,7 @@ Live context:
     blockProducer.stop();
     agentWorker.stop();
     stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
     process.exitCode = 1;
     setTimeout(() => process.exit(1), 0);
   });
@@ -1722,6 +1743,7 @@ Live context:
     blockProducer.stop();
     agentWorker.stop();
     stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
     db.end();
     process.exit(0);
   });
