@@ -209,6 +209,11 @@ async function main() {
     res.end();
   });
 
+  // Ethereum JSON-RPC compat (TASK-176). Minimum viable set so MetaMask
+  // and eth-tools can connect for read-only ops.
+  const { createJsonRpcRouter } = await import('./jsonrpc');
+  app.use('/rpc', createJsonRpcRouter(chain));
+
   // OpenAPI 3.1 spec at /api/openapi.json (TASK-141). Swagger UI hookup in TASK-142.
   const { createOpenApiRouter } = await import('./openapi');
   app.use('/api/openapi.json', createOpenApiRouter());
