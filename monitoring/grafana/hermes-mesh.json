@@ -1,0 +1,10 @@
+{
+  "title": "Hermeschain Network Mesh",
+  "uid": "hermes-mesh",
+  "schemaVersion": 38,
+  "panels": [
+    {"id":1,"type":"stat","title":"Active peers","targets":[{"expr":"hermes_peers_active"}]},
+    {"id":2,"type":"timeseries","title":"Peer chain height (last seen)","targets":[{"expr":"hermes_peers_chain_height"}]},
+    {"id":3,"type":"timeseries","title":"Mesh block-received rate","targets":[{"expr":"rate(hermes_mesh_block_received_total[5m])"}]}
+  ]
+}
