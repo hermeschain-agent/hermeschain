@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createMeshRouter = createMeshRouter;
 const express_1 = require("express");
+const Block_1 = require("../blockchain/Block");
 const PeerRegistry_1 = require("./PeerRegistry");
 const EventBus_1 = require("../events/EventBus");
 /**
@@ -49,25 +50,45 @@ function createMeshRouter(chain) {
             timestamp: head?.header.timestamp || 0,
         });
     });
-    router.post('/block', (req, res) => {
-        // Gossip acceptance is conservative: we log the claim + emit an event
-        // so monitors can see the incoming block, but we don't apply it to our
-        // chain until the full gossip deserializer + verification pipeline is
-        // wired (it needs Block.fromJSON, which doesn't exist yet).
-        const body = req.body || {};
-        const height = Number(body?.header?.height ?? body?.height ?? -1);
-        const hash = String(body?.header?.hash ?? body?.hash ?? '');
-        const producer = String(body?.header?.producer ?? body?.producer ?? '');
-        if (height < 0 || !hash) {
-            return res.status(400).json({ accepted: false, reason: 'missing height or hash' });
+    router.post('/block', async (req, res) => {
+        // Real gossip acceptance (TASK-002): deserialize via Block.fromJSON,
+        // then run through chain.addBlock which routes forks via ForkManager.
+        let block;
+        try {
+            block = Block_1.Block.fromJSON(req.body);
         }
-        EventBus_1.eventBus.emit('mesh_block_received', { height, hash, producer });
-        const head = chain.getLatestBlock();
-        res.json({
-            accepted: false,
-            reason: 'gossip-apply pending Block.fromJSON deserializer',
-            head: { height: chain.getChainLength(), hash: head?.header.hash || '' },
+        catch (err) {
+            return res.status(400).json({
+                accepted: false,
+                reason: `fromJSON failed: ${err?.message || err}`,
+            });
+        }
+        EventBus_1.eventBus.emit('mesh_block_received', {
+            height: block.header.height,
+            hash: block.header.hash,
+            producer: block.header.producer,
         });
+        try {
+            const added = await chain.addBlock(block);
+            const head = chain.getLatestBlock();
+            if (added) {
+                return res.json({
+                    accepted: true,
+                    head: { height: chain.getChainLength(), hash: head?.header.hash || '' },
+                });
+            }
+            return res.status(409).json({
+                accepted: false,
+                reason: 'addBlock rejected (parent unknown, finality violation, or invalid)',
+                head: { height: chain.getChainLength(), hash: head?.header.hash || '' },
+            });
+        }
+        catch (err) {
+            return res.status(409).json({
+                accepted: false,
+                reason: err?.message || 'addBlock threw',
+            });
+        }
     });
     return router;
 }
