@@ -129,6 +129,13 @@ async function main() {
     const app = (0, express_1.default)();
     app.use((0, cors_1.default)());
     app.use(express_1.default.json());
+    // Request observability middleware (TASK-146 + TASK-147 + TASK-148).
+    // Order matters: requestId before accessLog so the log line has a value.
+    const { requestId } = await Promise.resolve().then(() => __importStar(require('./middleware/requestId')));
+    const { accessLog } = await Promise.resolve().then(() => __importStar(require('./middleware/accessLog')));
+    app.use(requestId);
+    if (process.env.ACCESS_LOG_ENABLED !== 'false')
+        app.use(accessLog);
     const syncSharedReadState = async () => {
         if (process.env.AGENT_ROLE === 'worker')
             return;
@@ -682,6 +689,15 @@ Live context:
     await skillManager.initialize();
     await agentTaskStore.initialize();
     await agentRuntimeStore.initialize();
+    const { githubUpdates } = await Promise.resolve().then(() => __importStar(require('../agent/GitHubUpdates')));
+    await githubUpdates.initialize(agentConfig.repoRoot);
+    const shouldRunGitHubSync = agentConfig.role === 'worker' || !process.env.WORKER_INTERNAL_URL;
+    if (shouldRunGitHubSync) {
+        githubUpdates.startBackgroundSync();
+    }
+    const { githubUpdatesRouter } = await Promise.resolve().then(() => __importStar(require('./githubUpdates')));
+    app.use('/api/github/updates', githubUpdatesRouter);
+    console.log(`[GITHUB] Updates center ready (${shouldRunGitHubSync ? 'active sync' : 'cache reader'})`);
     if (agentConfig.role === 'worker') {
         await startNetworkHeartbeat();
     }
@@ -1515,6 +1531,7 @@ Live context:
         blockProducer.stop();
         agentWorker.stop();
         stopNetworkHeartbeat();
+        githubUpdates.stopBackgroundSync();
         process.exitCode = 1;
         setTimeout(() => process.exit(1), 0);
     });
@@ -1529,6 +1546,7 @@ Live context:
         blockProducer.stop();
         agentWorker.stop();
         stopNetworkHeartbeat();
+        githubUpdates.stopBackgroundSync();
         db_1.db.end();
         process.exit(0);
     });
