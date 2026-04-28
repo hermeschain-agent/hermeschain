@@ -1,0 +1,6 @@
+{
+  "label": "0b1100 AND 0b1010 = 0b1000",
+  "ops": [{"op":"PUSH","args":[12]},{"op":"PUSH","args":[10]},{"op":"AND"},{"op":"STOP"}],
+  "gasLimit": "100",
+  "expected": {"status": "success"}
+}
