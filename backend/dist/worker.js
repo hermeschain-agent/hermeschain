@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -12,6 +45,7 @@ const EventBus_1 = require("./events/EventBus");
 const StateManager_1 = require("./blockchain/StateManager");
 const db_1 = require("./database/db");
 const schema_1 = require("./database/schema");
+const migrations_1 = require("./database/migrations");
 const agent_1 = require("./agent");
 const logs_1 = require("./api/logs");
 const network_1 = require("./api/network");
@@ -28,6 +62,7 @@ async function main() {
     const connected = await db_1.db.connect();
     if (connected) {
         await db_1.db.exec(schema_1.createTables);
+        await (0, migrations_1.applyPendingMigrations)();
         console.log('[WORKER] Database ready');
     }
     const eventBus = EventBus_1.EventBus.getInstance();
@@ -48,6 +83,8 @@ async function main() {
     await agent_1.skillManager.initialize();
     await agent_1.agentTaskStore.initialize();
     await agent_1.agentRuntimeStore.initialize();
+    await agent_1.githubUpdates.initialize(agentConfig.repoRoot);
+    agent_1.githubUpdates.startBackgroundSync();
     let currentTaskId;
     let currentTaskTitle;
     agent_1.agentEvents.on('chunk', (chunk) => {
@@ -106,6 +143,11 @@ async function main() {
             console.error('[WORKER] Agent worker failed to start:', error);
         });
     }
+    // Paced commit pusher — drains tier-3-backlog → main at controlled cadence.
+    // No-ops unless PACED_PUSH_ENABLED=true and GITHUB_TOKEN set.
+    const { PacedPusher } = await Promise.resolve().then(() => __importStar(require('./agent/PacedPusher')));
+    const pacer = new PacedPusher(agentConfig.repoRoot || process.cwd());
+    pacer.start();
     blockProducer.start();
     const port = Number(process.env.PORT || 4000);
     const server = http_1.default.createServer((req, res) => {
@@ -156,6 +198,7 @@ async function main() {
         blockProducer.stop();
         agent_1.agentWorker.stop();
         (0, network_1.stopNetworkHeartbeat)();
+        agent_1.githubUpdates.stopBackgroundSync();
         process.exitCode = 1;
         setTimeout(() => process.exit(1), 0);
     });
@@ -168,6 +211,7 @@ async function main() {
         blockProducer.stop();
         agent_1.agentWorker.stop();
         (0, network_1.stopNetworkHeartbeat)();
+        agent_1.githubUpdates.stopBackgroundSync();
         await db_1.db.end();
         process.exit(0);
     };
