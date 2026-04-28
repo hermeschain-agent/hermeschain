@@ -33,6 +33,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.loadMigrationsFromDir = loadMigrationsFromDir;
+exports.getMigrationsDir = getMigrationsDir;
 exports.applyPendingMigrations = applyPendingMigrations;
 exports.migrationStatus = migrationStatus;
 const fs = __importStar(require("fs"));
@@ -60,6 +62,14 @@ const db_1 = require("./db");
  */
 const HERMES_MIGRATION_LOCK_ID = 0x4845524d; // 'HERM' hex-ish
 /** Load every .sql file from `dir` sorted lexicographically. */
+// Exposed so the migrate:down CLI (TASK-325) and dry-run mode (TASK-326)
+// can reuse the same loader the boot path uses.
+function loadMigrationsFromDir(dir) {
+    return loadMigrationsFrom(dir);
+}
+function getMigrationsDir() {
+    return resolveMigrationsDir();
+}
 function loadMigrationsFrom(dir) {
     let entries = [];
     try {
@@ -126,7 +136,7 @@ function resolveMigrationsDir() {
     const srcCandidate = path.join(__dirname, '..', '..', 'src', 'database', 'migrations');
     return srcCandidate;
 }
-async function applyPendingMigrations() {
+async function applyPendingMigrations(opts = {}) {
     await ensureMigrationsTable();
     const gotLock = await acquireLock();
     try {
@@ -137,6 +147,11 @@ async function applyPendingMigrations() {
             if (applied.has(migration.name))
                 continue;
             const startedAt = Date.now();
+            if (opts.dryRun) {
+                console.log(`[DRY-RUN] ${migration.name}\n${migration.up}\n---`);
+                results.push({ name: migration.name, success: true, durationMs: 0 });
+                continue;
+            }
             try {
                 await db_1.db.exec(migration.up);
                 await db_1.db.query(`INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`, [migration.name]);

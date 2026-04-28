@@ -1,0 +1,69 @@
+groups:
+  - name: hermeschain.chain
+    interval: 30s
+    rules:
+      - alert: ChainStalled
+        expr: rate(hermes_chain_height[5m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: hermes-chain
+        annotations:
+          summary: "Hermeschain not producing blocks"
+          runbook: "https://github.com/hermeschain-agent/hermeschain/blob/main/runbooks/chain-halted.md"
+
+      - alert: HighReorgRate
+        expr: rate(hermes_chain_reorgs_total[10m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: hermes-chain
+        annotations:
+          summary: "More than 1 reorg/min sustained"
+
+  - name: hermeschain.db
+    interval: 30s
+    rules:
+      - alert: PgPoolExhausted
+        expr: (hermes_pg_pool_total >= hermes_pg_pool_max) and (hermes_pg_pool_idle == 0)
+        for: 2m
+        labels:
+          severity: critical
+          service: hermes-db
+        annotations:
+          summary: "PG connection pool fully utilized"
+          runbook: "https://github.com/hermeschain-agent/hermeschain/blob/main/runbooks/db-down.md"
+
+      - alert: SlowQueries
+        expr: rate(hermes_pg_query_duration_ms_bucket{le="1000"}[5m]) / rate(hermes_pg_query_count[5m]) < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          service: hermes-db
+        annotations:
+          summary: "More than 5% of PG queries over 1s"
+
+  - name: hermeschain.mesh
+    interval: 60s
+    rules:
+      - alert: MeshDegraded
+        expr: hermes_peers_active < 2
+        for: 5m
+        labels:
+          severity: warning
+          service: hermes-mesh
+        annotations:
+          summary: "Fewer than 2 active mesh peers"
+          runbook: "https://github.com/hermeschain-agent/hermeschain/blob/main/runbooks/peer-partition.md"
+
+  - name: hermeschain.mempool
+    interval: 30s
+    rules:
+      - alert: MempoolBacklog
+        expr: hermes_mempool_size > 8000
+        for: 10m
+        labels:
+          severity: warning
+          service: hermes-chain
+        annotations:
+          summary: "Mempool >80% of cap (10k)"
