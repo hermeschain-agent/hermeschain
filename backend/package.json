@@ -16,7 +16,8 @@
     "restore": "node scripts/restore-db.js",
     "schema:diff": "node scripts/schema-diff.js",
     "vanity": "node scripts/vanity-address.js",
-    "bulk-keys": "node scripts/bulk-keys.js"
+    "bulk-keys": "node scripts/bulk-keys.js",
+    "rss": "node scripts/generate-rss.js"
   },
   "keywords": [
     "blockchain",
