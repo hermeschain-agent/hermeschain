@@ -1,0 +1,10 @@
+{
+  "vmEnabled": true,
+  "beaconRandomness": false,
+  "stakeWeightedQuorum": false,
+  "logSubscriptions": true,
+  "meshGossipApply": true,
+  "burnFeeSplit": false,
+  "shapshotFastSync": false,
+  "agentSocialFeed": true
+}
