@@ -142,6 +142,10 @@ async function main() {
     res.status(200).json({ status: 'ok' });
   });
 
+  // Newsletter signup (TASK-486).
+  const { createNewsletterRouter } = await import('./newsletter');
+  app.use('/api/newsletter', createNewsletterRouter());
+
   // Three-tier health checks (TASK-149), build info (TASK-150), Prometheus metrics (TASK-152).
   const { createHealthRouter } = await import('./health');
   const { createBuildRouter } = await import('./build-info');
