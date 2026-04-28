@@ -1,0 +1,27 @@
+name: npm audit
+
+on:
+  pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        path: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: npm audit
+        run: |
+          cd ${{ matrix.path }}
+          npm audit --audit-level=high

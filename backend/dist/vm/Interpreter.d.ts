@@ -25,6 +25,24 @@ export type VmOp = {
 } | {
     op: 'SUB';
 } | {
+    op: 'MUL';
+} | {
+    op: 'DIV';
+} | {
+    op: 'MOD';
+} | {
+    op: 'EQ';
+} | {
+    op: 'LT';
+} | {
+    op: 'GT';
+} | {
+    op: 'AND';
+} | {
+    op: 'OR';
+} | {
+    op: 'NOT';
+} | {
     op: 'SSTORE';
     args: [string, string];
 } | {
