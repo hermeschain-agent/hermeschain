@@ -14,7 +14,9 @@
     "audit:redis-ttl": "node scripts/audit-redis-ttl.js",
     "backup": "node scripts/backup-db.js",
     "restore": "node scripts/restore-db.js",
-    "schema:diff": "node scripts/schema-diff.js"
+    "schema:diff": "node scripts/schema-diff.js",
+    "vanity": "node scripts/vanity-address.js",
+    "bulk-keys": "node scripts/bulk-keys.js"
   },
   "keywords": [
     "blockchain",
