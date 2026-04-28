@@ -1,0 +1,6 @@
+{
+  "label": "explicit REVERT with reason",
+  "ops": [{"op":"PUSH","args":[1]}, {"op":"REVERT","args":["caller-provided reason"]}],
+  "gasLimit": "100",
+  "expected": {"status": "revert", "errorContains": "caller-provided reason"}
+}
