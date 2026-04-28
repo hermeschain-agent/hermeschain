@@ -1,0 +1,9 @@
+[
+  {"op":"PUSH","args":["vault_total"]},
+  {"op":"SLOAD"},
+  {"op":"PUSH","args":[5000]},
+  {"op":"ADD"},
+  {"op":"SSTORE","args":["vault_total","new"]},
+  {"op":"LOG","args":{"topics":["Deposit"],"data":"5000"}},
+  {"op":"STOP"}
+]
