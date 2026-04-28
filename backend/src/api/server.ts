@@ -988,6 +988,16 @@ Live context:
   
   // SSE endpoint for live agent work streaming
   app.get('/api/agent/stream', (req, res) => {
+    // SSE replica pinning (TASK-331). With multiple web replicas behind a
+    // load balancer, we don't get sticky sessions for free; instead, only
+    // the replica with SSE_REPLICA=true serves the stream. Others 503 with
+    // X-SSE-Failover so clients can retry against a different host.
+    if (process.env.SSE_REPLICA === 'false' ||
+        (process.env.SSE_REPLICA === undefined && process.env.SSE_REPLICA_STRICT === 'true')) {
+      res.setHeader('X-SSE-Failover', 'true');
+      res.status(503).json({ error: 'sse-replica-not-here' });
+      return;
+    }
     // Set up SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
