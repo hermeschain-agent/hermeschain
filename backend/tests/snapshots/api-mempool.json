@@ -1,0 +1,5 @@
+{
+  "endpoint": "GET /api/mempool",
+  "expectedShape": ["pending", "items"],
+  "itemShape": ["hash", "from", "to", "value", "gasPrice", "gasLimit", "nonce", "data", "signature"]
+}
