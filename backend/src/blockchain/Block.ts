@@ -150,23 +150,29 @@ export class Block {
     return generateRandomBase58(44);
   }
 
-  public isValid(previousBlock?: Block): boolean {
+  public isValid(previousBlock?: Block, now: number = Date.now()): boolean {
     if (this.header.hash !== this.calculateHash()) {
       return false;
     }
-    
+
     if (previousBlock && this.header.parentHash !== previousBlock.header.hash) {
       return false;
     }
-    
+
     if (previousBlock && this.header.height !== previousBlock.header.height + 1) {
       return false;
     }
-    
-    if (previousBlock && this.header.timestamp <= previousBlock.header.timestamp) {
+
+    // TASK-015: reject blocks more than 30s in the future (clock-skew defense).
+    if (this.header.timestamp > now + 30_000) {
       return false;
     }
-    
+
+    // TASK-016: enforce a 2s minimum delta vs parent (no sub-second blocks).
+    if (previousBlock && this.header.timestamp - previousBlock.header.timestamp < 2000) {
+      return false;
+    }
+
     return true;
   }
 

@@ -36,7 +36,7 @@ export declare class Block {
     private calculateStateRoot;
     setStateRoot(stateRoot: string): void;
     private calculateReceiptsRoot;
-    isValid(previousBlock?: Block): boolean;
+    isValid(previousBlock?: Block, now?: number): boolean;
     toJSON(): {
         gasUsed: string;
         gasLimit: string;
