@@ -1,0 +1,5 @@
+{
+  "endpoint": "GET /api/validators",
+  "expectedShape": "array",
+  "itemShape": ["address", "name", "symbol", "model", "provider", "role", "personality", "philosophy"]
+}
