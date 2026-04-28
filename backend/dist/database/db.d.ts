@@ -4,6 +4,12 @@ export declare const db: {
         rows: any[];
         rowCount?: number;
     }>;
+    poolStats: () => {
+        total: number;
+        idle: number;
+        waiting: number;
+        max: number;
+    };
     connect: () => Promise<boolean>;
     end: () => Promise<void>;
 };

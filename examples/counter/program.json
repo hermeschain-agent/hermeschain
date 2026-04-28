@@ -1,0 +1,7 @@
+[
+  { "op": "PUSH", "args": [1] },
+  { "op": "PUSH", "args": [1] },
+  { "op": "ADD" },
+  { "op": "LOG", "args": { "topics": ["increment"], "data": "counter incremented" } },
+  { "op": "STOP" }
+]
