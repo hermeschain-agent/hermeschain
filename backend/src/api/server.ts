@@ -1949,10 +1949,19 @@ Live context:
       console.error('Error listing frontend files:', e);
     }
     
-    // Serve static files first (images, CSS, JS, etc.)
+    // Serve versioned static assets aggressively, but keep the HTML shell
+    // fresh so browsers pick up new bundles after deploys.
     app.use(express.static(frontendPath, {
       maxAge: '1y',
-      etag: true
+      etag: true,
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (path.extname(filePath).toLowerCase() === '.html') {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+          return;
+        }
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      },
     }));
 
     // Catch-all handler: send back React's index.html file for client-side routing
@@ -1970,6 +1979,7 @@ Live context:
         return res.status(404).send('Static file not found');
       }
       
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
       res.sendFile(indexPath, (err) => {
         if (err) {
           console.error('Error serving index.html:', err);
@@ -2032,6 +2042,12 @@ Live context:
     console.log(`[SERVER] Running on http://localhost:${PORT}\n`);
     if (agentConfig.role === 'worker') {
       blockProducer.start();
+      // Paced commit pusher — drains tier-3-backlog → main.
+      // No-ops without PACED_PUSH_ENABLED=true and GITHUB_TOKEN.
+      void import('../agent/PacedPusher').then(({ PacedPusher }) => {
+        const pacer = new PacedPusher(agentConfig.repoRoot || process.cwd());
+        pacer.start();
+      }).catch((err) => console.warn('[PACER] failed to load:', err?.message || err));
     }
   });
 
