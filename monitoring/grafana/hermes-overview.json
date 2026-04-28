@@ -1,0 +1,56 @@
+{
+  "title": "Hermeschain Overview",
+  "uid": "hermes-overview",
+  "schemaVersion": 38,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Chain height",
+      "targets": [{ "expr": "hermes_chain_height", "refId": "A" }],
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Mempool",
+      "targets": [{ "expr": "hermes_mempool_size", "refId": "A" }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": 0 }, { "color": "yellow", "value": 5000 }, { "color": "red", "value": 8000 }] } } },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Active peers",
+      "targets": [{ "expr": "hermes_peers_active", "refId": "A" }],
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Block production rate (per minute)",
+      "targets": [{ "expr": "rate(hermes_chain_height[1m]) * 60", "refId": "A" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "PG pool utilization",
+      "targets": [
+        { "expr": "hermes_pg_pool_total", "refId": "A", "legendFormat": "total" },
+        { "expr": "hermes_pg_pool_idle", "refId": "B", "legendFormat": "idle" },
+        { "expr": "hermes_pg_pool_waiting", "refId": "C", "legendFormat": "waiting" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 }
+    },
+    {
+      "id": 6,
+      "type": "heatmap",
+      "title": "PG query latency",
+      "targets": [{ "expr": "hermes_pg_query_duration_ms_bucket", "refId": "A", "format": "heatmap" }],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 }
+    }
+  ]
+}
