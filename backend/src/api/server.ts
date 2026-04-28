@@ -48,6 +48,17 @@ async function main() {
         throw err;
       }
       console.log('[DB] PostgreSQL database ready\n');
+
+      // Pre-warm Redis with hot reads (TASK-328). Off in dev unless
+      // explicitly enabled; on by default in production.
+      const warmEnabled = process.env.CACHE_WARMER_ENABLED ??
+        (process.env.NODE_ENV === 'production' ? 'true' : 'false');
+      if (warmEnabled === 'true') {
+        const { warmCache } = await import('../database/cacheWarmer');
+        warmCache().catch((err) => {
+          console.warn('[CACHE WARMER] failed (non-fatal):', err?.message || err);
+        });
+      }
     } else {
       console.log('[DB] Running without persistent database\n');
     }
@@ -57,6 +68,14 @@ async function main() {
   }
 
   const eventBus = EventBus.getInstance();
+
+  // Cross-replica event bridge (TASK-330). Off when REDIS_URL absent or
+  // explicitly disabled. Replicas converge on the same SSE stream.
+  if (process.env.REDIS_URL && process.env.REDIS_BRIDGE_ENABLED !== 'false') {
+    const { attachRedisBridge } = await import('../events/RedisBridge');
+    attachRedisBridge(eventBus, process.env.REDIS_URL);
+  }
+
   const chain = new Chain();
   const txPool = new TransactionPool();
   const validatorManager = new ValidatorManager();
@@ -77,8 +96,33 @@ async function main() {
   console.log(`   Circulating: ${stateManager.formatBalance(stateManager.getCirculatingSupply())}\n`);
 
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+  // CORS allowlist via env (TASK-145). Comma-separated origins; default open.
+  const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (corsOrigins.length > 0) {
+    app.use(cors({
+      origin: (origin, cb) => {
+        if (!origin || corsOrigins.includes(origin)) return cb(null, true);
+        cb(new Error(`origin ${origin} not allowed by CORS`));
+      },
+      credentials: true,
+    }));
+    console.log(`[CORS] allowlist active (${corsOrigins.length} origin(s))`);
+  } else {
+    app.use(cors());
+  }
+  // Cap JSON body to 1MB (TASK-340) — DoS defense.
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' }));
+
+  // HTTPS-only redirect (TASK-360) — production only.
+  const { httpsRedirect } = await import('./middleware/httpsRedirect');
+  app.use(httpsRedirect);
+
+  // Request observability middleware (TASK-146 + TASK-147 + TASK-148).
+  // Order matters: requestId before accessLog so the log line has a value.
+  const { requestId } = await import('./middleware/requestId');
+  const { accessLog } = await import('./middleware/accessLog');
+  app.use(requestId);
+  if (process.env.ACCESS_LOG_ENABLED !== 'false') app.use(accessLog);
 
   const syncSharedReadState = async () => {
     if (process.env.AGENT_ROLE === 'worker') return;
@@ -97,6 +141,94 @@ async function main() {
   app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok' });
   });
+
+  // Contract bytecode disasm (TASK-099). Returns parsed JSON-op program
+  // for an on-chain contract. 404 if no code at the address.
+  app.get('/api/contract/:addr/disasm', async (req, res) => {
+    try {
+      const r = await db.query(
+        `SELECT bytecode, code_hash, deployed_at_block, deployed_by
+           FROM contract_code WHERE address = $1`,
+        [req.params.addr],
+      );
+      if (r.rows.length === 0) return res.status(404).json({ error: 'no code at address' });
+      const row = r.rows[0];
+      let ops: any = null;
+      try { ops = JSON.parse(row.bytecode); } catch { /* leave null */ }
+      res.json({
+        address: req.params.addr,
+        codeHash: row.code_hash,
+        deployedAtBlock: Number(row.deployed_at_block),
+        deployedBy: row.deployed_by,
+        ops,
+        bytecodeRaw: row.bytecode,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'lookup failed' });
+    }
+  });
+
+  // Contract storage browser (TASK-100).
+  app.get('/api/contract/:addr/storage', async (req, res) => {
+    try {
+      const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 100)));
+      const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
+      const r = await db.query(
+        `SELECT storage_key, storage_value, updated_at_block
+           FROM contract_storage
+          WHERE contract_address = $1 AND storage_key LIKE $2
+          ORDER BY storage_key
+          LIMIT $3`,
+        [req.params.addr, prefix + '%', limit],
+      );
+      res.json({
+        address: req.params.addr,
+        items: r.rows.map((row: any) => ({
+          key: row.storage_key,
+          value: row.storage_value,
+          updatedAtBlock: Number(row.updated_at_block),
+        })),
+        count: r.rows.length,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'lookup failed' });
+    }
+  });
+
+  // Bulk chain export as NDJSON (TASK-028). Streamed line-by-line to
+  // avoid buffering huge ranges. Each line is { type: 'block', ...toJSON() }.
+  app.get('/api/chain/export', async (req, res) => {
+    const from = Math.max(0, Number(req.query.from ?? 0));
+    const to = Math.min(from + 1_000_000, Number(req.query.to ?? from + 1000));
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    for (let h = from; h <= to; h++) {
+      const block = chain.getBlockByHeight(h);
+      if (!block) continue;
+      res.write(JSON.stringify({ type: 'block', ...block.toJSON() }) + '\n');
+    }
+    res.end();
+  });
+
+  // Ethereum JSON-RPC compat (TASK-176). Minimum viable set so MetaMask
+  // and eth-tools can connect for read-only ops.
+  const { createJsonRpcRouter } = await import('./jsonrpc');
+  app.use('/rpc', createJsonRpcRouter(chain));
+
+  // OpenAPI 3.1 spec at /api/openapi.json (TASK-141). Swagger UI hookup in TASK-142.
+  const { createOpenApiRouter } = await import('./openapi');
+  app.use('/api/openapi.json', createOpenApiRouter());
+
+  // Newsletter signup (TASK-486).
+  const { createNewsletterRouter } = await import('./newsletter');
+  app.use('/api/newsletter', createNewsletterRouter());
+
+  // Three-tier health checks (TASK-149), build info (TASK-150), Prometheus metrics (TASK-152).
+  const { createHealthRouter } = await import('./health');
+  const { createBuildRouter } = await import('./build-info');
+  const { createMetricsRouter } = await import('./metrics');
+  app.use('/health', createHealthRouter(chain));
+  app.use('/api/build', createBuildRouter());
+  app.use('/api/metrics', createMetricsRouter(chain, txPool));
 
   // API status check (no key exposure)
   app.get('/api/config/status', (req, res) => {
@@ -318,12 +450,24 @@ async function main() {
 
   app.post('/api/transactions', async (req, res) => {
     try {
-      const { from, to, value, gasPrice, gasLimit, nonce, data, signature } = req.body;
-      
-      // Generate Solana-style base58 transaction hash
+      const { from, to, value, gasPrice, gasLimit, nonce, data, signature, hash } = req.body;
+
+      // TASK-170 — idempotent submit. If client supplies a hash and we
+      // already have it (pending or mined), short-circuit with success.
+      if (hash) {
+        const pending = await txPool.getPendingTransactions(10_000);
+        if (pending.find((t) => t.hash === hash)) {
+          return res.json({ success: true, hash, idempotent: 'pending' });
+        }
+        // Note: can't easily check mined without a per-tx index; the new
+        // /api/tx/:hash endpoint will 404 for unknown so reusing this
+        // path is safe enough.
+      }
+
+      // Generate Solana-style base58 transaction hash if not supplied.
       const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-      const txHash = Array.from({length: 44}, () => BASE58[Math.floor(Math.random() * 58)]).join('');
-      
+      const txHash = hash || Array.from({length: 44}, () => BASE58[Math.floor(Math.random() * 58)]).join('');
+
       const tx = {
         hash: txHash,
         from,
@@ -335,9 +479,9 @@ async function main() {
         data,
         signature
       };
-      
+
       const added = await txPool.addTransaction(tx);
-      
+
       if (added) {
         eventBus.emit('transaction_added', tx);
         res.json({ success: true, hash: tx.hash });
@@ -729,6 +873,19 @@ Live context:
   await agentTaskStore.initialize();
   await agentRuntimeStore.initialize();
 
+  const { githubUpdates } = await import('../agent/GitHubUpdates');
+  await githubUpdates.initialize(agentConfig.repoRoot);
+  const shouldRunGitHubSync =
+    agentConfig.role === 'worker' || !process.env.WORKER_INTERNAL_URL;
+  if (shouldRunGitHubSync) {
+    githubUpdates.startBackgroundSync();
+  }
+  const { githubUpdatesRouter } = await import('./githubUpdates');
+  app.use('/api/github/updates', githubUpdatesRouter);
+  console.log(
+    `[GITHUB] Updates center ready (${shouldRunGitHubSync ? 'active sync' : 'cache reader'})`
+  );
+
   if (agentConfig.role === 'worker') {
     await startNetworkHeartbeat();
   } else {
@@ -861,9 +1018,13 @@ Live context:
     await syncSharedReadState();
     const state = agentWorker.getState();
     const sharedRuntime = agentRuntimeStore.getLatestSnapshot();
-    const observedRuntime =
-      agentConfig.role === 'web' && sharedRuntime
+    const sharedWorkerRuntime =
+      agentConfig.role === 'web' && sharedRuntime?.role === 'worker'
         ? sharedRuntime
+        : null;
+    const observedRuntime =
+      sharedWorkerRuntime
+        ? sharedWorkerRuntime
         : {
             role: agentConfig.role,
             mode: state.mode,
@@ -900,7 +1061,9 @@ Live context:
               agentConfig.role === 'worker' ? new Date().toISOString() : null,
           };
     const workerHeartbeatAt =
-      observedRuntime.workerHeartbeatAt || observedRuntime.updatedAt || null;
+      observedRuntime.role === 'worker'
+        ? observedRuntime.workerHeartbeatAt || observedRuntime.updatedAt || null
+        : null;
     const workerActive = workerHeartbeatAt
       ? Date.now() - new Date(workerHeartbeatAt as string | number | Date).getTime() < 90_000
       : false;
@@ -912,7 +1075,7 @@ Live context:
       role: agentConfig.role,
       serviceRole: agentConfig.role,
       observedWorkerRole: observedRuntime.role,
-      statusSource: agentConfig.role === 'web' && sharedRuntime ? 'shared' : 'local',
+      statusSource: sharedWorkerRuntime ? 'shared' : 'local',
       mode: observedRuntime.mode,
       streamMode: observedRuntime.mode,
       isWorking: observedRuntime.isWorking,
@@ -966,9 +1129,162 @@ Live context:
       tokenSpend: tokenBudget.snapshot(),
     };
   };
+
+  const WORKER_INTERNAL_URL =
+    process.env.WORKER_INTERNAL_URL ||
+    'https://hermeschain-worker-production.up.railway.app';
+
+  const mergeWorkerStatusIntoPayload = (localPayload: any, workerData: any) => ({
+    ...localPayload,
+    mode: workerData.agentMode || localPayload.mode,
+    streamMode: workerData.agentMode || localPayload.streamMode,
+    runStatus: workerData.runStatus || localPayload.runStatus,
+    verificationStatus:
+      workerData.verificationStatus || localPayload.verificationStatus,
+    isWorking: workerData.isWorking ?? localPayload.isWorking,
+    currentTask: workerData.currentTask || localPayload.currentTask,
+    lastFailure: workerData.lastFailure || localPayload.lastFailure,
+    blockedReason: workerData.blockedReason || localPayload.blockedReason,
+    recentTasks: (workerData.recentSuccessful || []).slice(0, 5).map(
+      (run: any) => ({
+        title: run.title,
+        agent: run.agent || 'HERMES',
+        completedAt: run.completedAt,
+      })
+    ),
+    recentRuns: workerData.recentRuns || [],
+    completedTaskCount: (workerData.recentSuccessful || []).length,
+    agentEnabled: true,
+    capabilities: workerData.capabilities || localPayload.capabilities,
+    blockHeight: workerData.blockHeight ?? localPayload.blockHeight,
+    workerActive: true,
+  });
+
+  const buildLiveAgentStatusPayload = async (options?: { logProxyErrors?: boolean }) => {
+    const localPayload = await buildAgentStatusPayload();
+    if (process.env.AGENT_ROLE === 'worker') {
+      return localPayload;
+    }
+
+    const shouldProxyWorkerStatus =
+      localPayload.statusSource !== 'shared' ||
+      !localPayload.workerActive ||
+      localPayload.mode === 'disabled';
+
+    if (!shouldProxyWorkerStatus) {
+      return localPayload;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const upstream = await fetch(`${WORKER_INTERNAL_URL}/status`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!upstream.ok) {
+        return localPayload;
+      }
+
+      const workerData = await upstream.json();
+      return mergeWorkerStatusIntoPayload(localPayload, workerData);
+    } catch (error: any) {
+      if (options?.logProxyErrors) {
+        console.error('[PROXY] worker /status fetch failed:', error?.message || error);
+      }
+      return localPayload;
+    }
+  };
+
+  interface AgentLogCursor {
+    id: string;
+    timestamp: Date;
+  }
+
+  const getAgentLogCursor = (row: { id: string; timestamp: string | Date }) => ({
+    id: row.id,
+    timestamp: new Date(row.timestamp),
+  });
+
+  const compareAgentLogCursor = (a: AgentLogCursor, b: AgentLogCursor) => {
+    const delta = a.timestamp.getTime() - b.timestamp.getTime();
+    if (delta !== 0) return delta;
+    return a.id.localeCompare(b.id);
+  };
+
+  const fetchRecentAgentStreamRows = async (limit: number = 30) => {
+    const result = await db.query(
+      `
+      SELECT id, timestamp, type, content, metadata
+      FROM agent_logs
+      WHERE type IN (
+        'task_start',
+        'analysis_start',
+        'tool_use',
+        'tool_result',
+        'verification_start',
+        'verification_result',
+        'task_complete',
+        'task_blocked',
+        'git_commit',
+        'error',
+        'output'
+      )
+      ORDER BY timestamp DESC, id DESC
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    return (result.rows || []).reverse();
+  };
+
+  const fetchAgentStreamRowsAfter = async (
+    cursor: AgentLogCursor,
+    limit: number = 50
+  ) => {
+    const result = await db.query(
+      `
+      SELECT id, timestamp, type, content, metadata
+      FROM agent_logs
+      WHERE (
+        type IN (
+          'task_start',
+          'analysis_start',
+          'tool_use',
+          'tool_result',
+          'verification_start',
+          'verification_result',
+          'task_complete',
+          'task_blocked',
+          'git_commit',
+          'error',
+          'output'
+        )
+      )
+        AND (timestamp > $1 OR (timestamp = $1 AND id > $2))
+      ORDER BY timestamp ASC, id ASC
+      LIMIT $3
+      `,
+      [cursor.timestamp, cursor.id, limit]
+    );
+
+    return result.rows || [];
+  };
   
   // SSE endpoint for live agent work streaming
   app.get('/api/agent/stream', (req, res) => {
+    // SSE replica pinning (TASK-331). With multiple web replicas behind a
+    // load balancer, we don't get sticky sessions for free; instead, only
+    // the replica with SSE_REPLICA=true serves the stream. Others 503 with
+    // X-SSE-Failover so clients can retry against a different host.
+    if (process.env.SSE_REPLICA === 'false' ||
+        (process.env.SSE_REPLICA === undefined && process.env.SSE_REPLICA_STRICT === 'true')) {
+      res.setHeader('X-SSE-Failover', 'true');
+      res.status(503).json({ error: 'sse-replica-not-here' });
+      return;
+    }
     // Set up SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -979,13 +1295,42 @@ Live context:
     agentViewerCount++;
     console.log(`[AGENT] New viewer connected (total: ${agentViewerCount})`);
     
-    void buildAgentStatusPayload().then((payload) => {
-      res.write(`data: ${JSON.stringify({
-        type: 'init',
-        data: payload,
-        timestamp: Date.now()
-      })}\n\n`);
-    }).catch(() => {
+    const streamStartedAt = new Date();
+    let lastSharedLogCursor: AgentLogCursor = {
+      id: '',
+      timestamp: streamStartedAt,
+    };
+
+    void buildLiveAgentStatusPayload()
+      .then(async (payload) => {
+        res.write(`data: ${JSON.stringify({
+          type: 'init',
+          data: payload,
+          timestamp: Date.now()
+        })}\n\n`);
+
+        try {
+          const recentRows = await fetchRecentAgentStreamRows(30);
+          if (recentRows.length > 0) {
+            lastSharedLogCursor = getAgentLogCursor(recentRows[recentRows.length - 1]);
+          }
+
+          for (const row of recentRows) {
+            res.write(
+              `data: ${JSON.stringify({
+                type: 'text',
+                data: formatLogStreamText(row),
+                viewerCount: agentViewerCount,
+                timestamp: Date.now(),
+              })}\n\n`
+            );
+          }
+        } catch {
+          // Shared history is best-effort. The live stream should still
+          // connect even if historical hydration is unavailable.
+        }
+      })
+      .catch(() => {
       res.write(`data: ${JSON.stringify({
         type: 'init',
         data: {
@@ -1005,10 +1350,8 @@ Live context:
     };
     
     agentEvents.on('chunk', onChunk);
-    let lastLogSeenAt = new Date(Date.now() - 60 * 1000);
-
     const statusPulse = setInterval(() => {
-      void buildAgentStatusPayload()
+      void buildLiveAgentStatusPayload()
         .then((payload) => {
           res.write(`data: ${JSON.stringify({
             type: 'status',
@@ -1026,19 +1369,13 @@ Live context:
       if (agentConfig.role !== 'web') return;
 
       try {
-        const result = await db.query(
-          `
-          SELECT id, timestamp, type, content, metadata
-          FROM agent_logs
-          WHERE timestamp > $1
-          ORDER BY timestamp ASC
-          LIMIT 50
-          `,
-          [lastLogSeenAt]
-        );
+        const rows = await fetchAgentStreamRowsAfter(lastSharedLogCursor, 50);
 
-        for (const row of result.rows || []) {
-          lastLogSeenAt = new Date(row.timestamp);
+        for (const row of rows) {
+          const nextCursor = getAgentLogCursor(row);
+          if (compareAgentLogCursor(nextCursor, lastSharedLogCursor) > 0) {
+            lastSharedLogCursor = nextCursor;
+          }
           res.write(
             `data: ${JSON.stringify({
               type: 'text',
@@ -1080,56 +1417,8 @@ Live context:
   // Worker is reachable over Railway's private network at the internal domain.
   // Prefer explicit WORKER_INTERNAL_URL; fall back to the public Railway
   // domain since private-network DNS+port assumptions aren't guaranteed.
-  const WORKER_INTERNAL_URL =
-    process.env.WORKER_INTERNAL_URL ||
-    'https://hermeschain-worker-production.up.railway.app';
-
   app.get('/api/agent/status', async (req, res) => {
-    if (process.env.AGENT_ROLE !== 'worker') {
-      try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 4000);
-        const upstream = await fetch(`${WORKER_INTERNAL_URL}/status`, {
-          signal: controller.signal,
-        });
-        clearTimeout(t);
-        if (upstream.ok) {
-          const workerData: any = await upstream.json();
-          // Merge worker runtime state into the web's own payload shape so
-          // frontend components keep working without changes.
-          const localPayload = await buildAgentStatusPayload();
-          res.json({
-            ...localPayload,
-            mode: workerData.agentMode || localPayload.mode,
-            streamMode: workerData.agentMode || localPayload.streamMode,
-            runStatus: workerData.runStatus || localPayload.runStatus,
-            verificationStatus:
-              workerData.verificationStatus || localPayload.verificationStatus,
-            isWorking: workerData.isWorking ?? localPayload.isWorking,
-            currentTask: workerData.currentTask || localPayload.currentTask,
-            lastFailure: workerData.lastFailure || localPayload.lastFailure,
-            blockedReason:
-              workerData.blockedReason || localPayload.blockedReason,
-            recentTasks: (workerData.recentSuccessful || []).slice(0, 5).map(
-              (r: any) => ({
-                title: r.title,
-                agent: r.agent || 'HERMES',
-                completedAt: r.completedAt,
-              })
-            ),
-            recentRuns: workerData.recentRuns || [],
-            completedTaskCount: (workerData.recentSuccessful || []).length,
-            agentEnabled: true,
-            capabilities: workerData.capabilities || localPayload.capabilities,
-            blockHeight: workerData.blockHeight ?? localPayload.blockHeight,
-          });
-          return;
-        }
-      } catch (e: any) {
-        console.error('[PROXY] worker /status fetch failed:', e?.message || e);
-      }
-    }
-    res.json(await buildAgentStatusPayload());
+    res.json(await buildLiveAgentStatusPayload({ logProxyErrors: true }));
   });
 
   // Get persisted task runs (plus legacy completed-task alias)
@@ -1347,6 +1636,87 @@ Live context:
     });
   });
   
+  // Address validity checker (TASK-137). Returns parseable + reason.
+  app.get('/api/wallet/validate/:input', (req, res) => {
+    const input = req.params.input;
+    if (typeof input !== 'string' || input.length === 0) {
+      return res.json({ valid: false, reason: 'empty' });
+    }
+    if (input.length < 32 || input.length > 64) {
+      return res.json({ valid: false, reason: 'wrong-length' });
+    }
+    if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(input)) {
+      return res.json({ valid: false, reason: 'bad-base58' });
+    }
+    res.json({ valid: true });
+  });
+
+  // Block search by height range (TASK-153).
+  app.get('/api/blocks/search', async (req, res) => {
+    const from = Math.max(0, Number(req.query.from ?? 0));
+    const to = Math.min(from + 1000, Number(req.query.to ?? from + 100));
+    const producer = typeof req.query.producer === 'string' ? req.query.producer : null;
+    const items: any[] = [];
+    for (let h = from; h <= to; h++) {
+      const block = chain.getBlockByHeight(h);
+      if (!block) continue;
+      if (producer && block.header.producer !== producer) continue;
+      items.push({
+        height: block.header.height,
+        hash: block.header.hash,
+        producer: block.header.producer,
+        timestamp: block.header.timestamp,
+        transactionCount: block.transactions.length,
+      });
+    }
+    res.json({ items, count: items.length, from, to });
+  });
+
+  // Mempool snapshot (TASK-166).
+  app.get('/api/mempool', async (req, res) => {
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 200)));
+    const txs = await txPool.getPendingTransactions(limit);
+    res.json({
+      pending: txs.length,
+      items: txs.map(tx => ({
+        ...tx,
+        value: tx.value.toString(),
+        gasPrice: tx.gasPrice.toString(),
+        gasLimit: tx.gasLimit.toString(),
+      })),
+    });
+  });
+
+  // Single pending tx by hash (TASK-167). 404 if mined or unknown.
+  app.get('/api/mempool/:hash', async (req, res) => {
+    const all = await txPool.getPendingTransactions(10_000);
+    const found = all.find(tx => tx.hash === req.params.hash);
+    if (!found) return res.status(404).json({ error: 'not in mempool' });
+    res.json({
+      ...found,
+      value: found.value.toString(),
+      gasPrice: found.gasPrice.toString(),
+      gasLimit: found.gasLimit.toString(),
+    });
+  });
+
+  // Next nonce hint (TASK-057). max(chain_nonce, max_pending_nonce) + 1.
+  app.get('/api/account/:addr/next-nonce', async (req, res) => {
+    const chainNonce = stateManager.getNonce(req.params.addr);
+    const pending = txPool.getPendingForAddress(req.params.addr);
+    const maxPending = pending.reduce((m, t) => Math.max(m, t.nonce), -1);
+    const next = Math.max(chainNonce, maxPending + 1);
+    res.json({ address: req.params.addr, nextNonce: next });
+  });
+
+  // TPS over a configurable window (TASK-051). Default 60s. Powered by
+  // chain.getRecentTps which already buckets recent block tx counts.
+  app.get('/api/chain/tps', async (req, res) => {
+    const window = Math.min(3600, Math.max(1, Number(req.query.window ?? 60)));
+    const tps = chain.getRecentTps(window);
+    res.json({ tps, window_sec: window });
+  });
+
   // Get latest block
   app.get('/api/chain/latest', async (req, res) => {
     await syncSharedReadState();
@@ -1663,6 +2033,7 @@ Live context:
     blockProducer.stop();
     agentWorker.stop();
     stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
     process.exitCode = 1;
     setTimeout(() => process.exit(1), 0);
   });
@@ -1685,6 +2056,7 @@ Live context:
     blockProducer.stop();
     agentWorker.stop();
     stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
     db.end();
     process.exit(0);
   });

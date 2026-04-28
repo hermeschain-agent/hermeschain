@@ -105,7 +105,7 @@ class Block {
     calculateReceiptsRoot() {
         return generateRandomBase58(44);
     }
-    isValid(previousBlock) {
+    isValid(previousBlock, now = Date.now()) {
         if (this.header.hash !== this.calculateHash()) {
             return false;
         }
@@ -115,7 +115,12 @@ class Block {
         if (previousBlock && this.header.height !== previousBlock.header.height + 1) {
             return false;
         }
-        if (previousBlock && this.header.timestamp <= previousBlock.header.timestamp) {
+        // TASK-015: reject blocks more than 30s in the future (clock-skew defense).
+        if (this.header.timestamp > now + 30000) {
+            return false;
+        }
+        // TASK-016: enforce a 2s minimum delta vs parent (no sub-second blocks).
+        if (previousBlock && this.header.timestamp - previousBlock.header.timestamp < 2000) {
             return false;
         }
         return true;
@@ -132,6 +137,49 @@ class Block {
                 gasLimit: tx.gasLimit.toString()
             }))
         };
+    }
+    /**
+     * Reconstruct a Block from a toJSON() payload (TASK-001). Round-trip
+     * property: `Block.fromJSON(b.toJSON()).header.hash === b.header.hash`.
+     * Throws on missing fields or hash mismatch (tampered header).
+     */
+    static fromJSON(json) {
+        const required = [
+            'height', 'hash', 'parentHash', 'producer', 'timestamp', 'nonce',
+            'difficulty', 'gasUsed', 'gasLimit', 'stateRoot', 'transactionsRoot',
+            'receiptsRoot', 'transactions',
+        ];
+        for (const field of required) {
+            if (!(field in json)) {
+                throw new Error(`fromJSON: missing field '${field}'`);
+            }
+        }
+        const txs = json.transactions.map((t) => ({
+            hash: String(t.hash),
+            from: String(t.from),
+            to: String(t.to),
+            value: BigInt(t.value ?? '0'),
+            gasPrice: BigInt(t.gasPrice ?? '0'),
+            gasLimit: BigInt(t.gasLimit ?? '0'),
+            nonce: Number(t.nonce ?? 0),
+            data: t.data,
+            signature: String(t.signature ?? ''),
+        }));
+        const block = new Block(Number(json.height), String(json.parentHash), String(json.producer), txs, Number(json.difficulty ?? 1));
+        // Override constructor-derived header fields with the deserialized truth.
+        block.header.timestamp = Number(json.timestamp);
+        block.header.nonce = Number(json.nonce ?? 0);
+        block.header.gasUsed = BigInt(json.gasUsed);
+        block.header.gasLimit = BigInt(json.gasLimit);
+        block.header.stateRoot = String(json.stateRoot);
+        block.header.transactionsRoot = String(json.transactionsRoot);
+        block.header.receiptsRoot = String(json.receiptsRoot);
+        // Recompute hash from the now-canonical fields and assert.
+        block.header.hash = block.calculateHash();
+        if (block.header.hash !== String(json.hash)) {
+            throw new Error(`fromJSON: hash mismatch — header field tampered (got ${block.header.hash}, expected ${json.hash})`);
+        }
+        return block;
     }
 }
 exports.Block = Block;

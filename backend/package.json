@@ -7,7 +7,17 @@
     "dev": "ts-node-dev --respawn --transpile-only src/api/server.ts",
     "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/database/migrations','dist/database/migrations',{recursive:true})\"",
     "start": "node dist/api/server.js",
-    "test": "npm run build && node --test tests/*.test.js"
+    "test": "npm run build && node --test tests/*.test.js",
+    "pace:push": "node scripts/paced-push.js",
+    "migrate:down": "node scripts/migrate-down.js",
+    "migrate:status": "node scripts/migrate-status.js",
+    "audit:redis-ttl": "node scripts/audit-redis-ttl.js",
+    "backup": "node scripts/backup-db.js",
+    "restore": "node scripts/restore-db.js",
+    "schema:diff": "node scripts/schema-diff.js",
+    "vanity": "node scripts/vanity-address.js",
+    "bulk-keys": "node scripts/bulk-keys.js",
+    "rss": "node scripts/generate-rss.js"
   },
   "keywords": [
     "blockchain",

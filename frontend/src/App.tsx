@@ -1729,7 +1729,7 @@ export default function App() {
           </div>
 
           <a
-            href="https://github.com/hermeschain-dev/hermeschain"
+            href="https://github.com/hermeschain-agent/hermeschain"
             target="_blank"
             rel="noopener noreferrer"
             className="btn-icon"
