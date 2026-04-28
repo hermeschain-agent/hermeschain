@@ -1,0 +1,11 @@
+{
+  "title": "Hermeschain Agent",
+  "uid": "hermes-agent",
+  "schemaVersion": 38,
+  "panels": [
+    {"id":1,"type":"stat","title":"Tasks completed today","targets":[{"expr":"increase(hermes_agent_tasks_completed_total[1d])"}]},
+    {"id":2,"type":"stat","title":"Tokens burned today","targets":[{"expr":"increase(hermes_agent_tokens_used_total[1d])"}]},
+    {"id":3,"type":"timeseries","title":"Cost per hour","targets":[{"expr":"rate(hermes_agent_cost_usd_total[1h]) * 3600"}]},
+    {"id":4,"type":"table","title":"DLQ recent","targets":[{"expr":"hermes_dlq_count"}]}
+  ]
+}
