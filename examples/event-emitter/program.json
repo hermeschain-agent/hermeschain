@@ -1,0 +1,6 @@
+[
+  {"op":"LOG","args":{"topics":["A"],"data":"first"}},
+  {"op":"LOG","args":{"topics":["B"],"data":"second"}},
+  {"op":"LOG","args":{"topics":["C"],"data":"third"}},
+  {"op":"STOP"}
+]
