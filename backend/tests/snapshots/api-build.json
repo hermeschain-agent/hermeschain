@@ -1,0 +1,4 @@
+{
+  "endpoint": "GET /api/build",
+  "expectedShape": ["commit", "buildTime", "version"]
+}
