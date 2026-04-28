@@ -7,6 +7,7 @@ import { EventBus } from './events/EventBus';
 import { stateManager } from './blockchain/StateManager';
 import { db } from './database/db';
 import { createTables } from './database/schema';
+import { applyPendingMigrations } from './database/migrations';
 import {
   configureAgentSubsystems,
   createAgentConfig,
@@ -15,6 +16,7 @@ import {
   agentTaskStore,
   skillManager,
   agentWorker,
+  githubUpdates,
 } from './agent';
 import {
   initializeLogsTable,
@@ -42,6 +44,7 @@ async function main() {
   const connected = await db.connect();
   if (connected) {
     await db.exec(createTables);
+    await applyPendingMigrations();
     console.log('[WORKER] Database ready');
   }
 
@@ -66,6 +69,8 @@ async function main() {
   await skillManager.initialize();
   await agentTaskStore.initialize();
   await agentRuntimeStore.initialize();
+  await githubUpdates.initialize(agentConfig.repoRoot);
+  githubUpdates.startBackgroundSync();
 
   let currentTaskId: string | undefined;
   let currentTaskTitle: string | undefined;
@@ -188,6 +193,12 @@ async function main() {
     });
   }
 
+  // Paced commit pusher — drains tier-3-backlog → main at controlled cadence.
+  // No-ops unless PACED_PUSH_ENABLED=true and GITHUB_TOKEN set.
+  const { PacedPusher } = await import('./agent/PacedPusher');
+  const pacer = new PacedPusher(agentConfig.repoRoot || process.cwd());
+  pacer.start();
+
   blockProducer.start();
 
   const port = Number(process.env.PORT || 4000);
@@ -243,6 +254,7 @@ async function main() {
     blockProducer.stop();
     agentWorker.stop();
     stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
     process.exitCode = 1;
     setTimeout(() => process.exit(1), 0);
   });
@@ -257,6 +269,7 @@ async function main() {
     blockProducer.stop();
     agentWorker.stop();
     stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
     await db.end();
     process.exit(0);
   };
