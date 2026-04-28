@@ -138,6 +138,12 @@ async function main() {
     res.status(200).json({ status: 'ok' });
   });
 
+  // Three-tier health checks (TASK-149) and build info (TASK-150).
+  const { createHealthRouter } = await import('./health');
+  const { createBuildRouter } = await import('./build-info');
+  app.use('/health', createHealthRouter(chain));
+  app.use('/api/build', createBuildRouter());
+
   // API status check (no key exposure)
   app.get('/api/config/status', (req, res) => {
     const role = process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web';

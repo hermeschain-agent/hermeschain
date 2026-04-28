@@ -167,6 +167,11 @@ async function main() {
     app.get('/health', (req, res) => {
         res.status(200).json({ status: 'ok' });
     });
+    // Three-tier health checks (TASK-149) and build info (TASK-150).
+    const { createHealthRouter } = await Promise.resolve().then(() => __importStar(require('./health')));
+    const { createBuildRouter } = await Promise.resolve().then(() => __importStar(require('./build-info')));
+    app.use('/health', createHealthRouter(chain));
+    app.use('/api/build', createBuildRouter());
     // API status check (no key exposure)
     app.get('/api/config/status', (req, res) => {
         const role = process.env.AGENT_ROLE === 'worker' ? 'worker' : 'web';
