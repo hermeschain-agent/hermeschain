@@ -41,6 +41,42 @@ function createMeshRouter(chain) {
             peers: PeerRegistry_1.peerRegistry.listPeers(),
         });
     });
+    // Header-only range fetch (TASK-003) — peers measuring honest-majority
+    // or chain tip don't need full transaction payloads.
+    router.get('/headers', (req, res) => {
+        const from = Math.max(0, Number(req.query.from ?? 0));
+        const to = Math.max(from, Number(req.query.to ?? from));
+        if (to - from > 1000) {
+            return res.status(400).json({ error: 'range exceeds 1000' });
+        }
+        const headers = [];
+        for (let h = from; h <= to; h++) {
+            const block = chain.getBlockByHeight(h);
+            if (!block)
+                continue;
+            headers.push({
+                ...block.header,
+                gasUsed: block.header.gasUsed.toString(),
+                gasLimit: block.header.gasLimit.toString(),
+            });
+        }
+        res.json({ headers });
+    });
+    // Bulk block fetch (TASK-004) — full Block.toJSON for sync.
+    router.get('/blocks', (req, res) => {
+        const from = Math.max(0, Number(req.query.from ?? 0));
+        const to = Math.max(from, Number(req.query.to ?? from));
+        if (to - from > 100) {
+            return res.status(400).json({ error: 'range exceeds 100' });
+        }
+        const blocks = [];
+        for (let h = from; h <= to; h++) {
+            const block = chain.getBlockByHeight(h);
+            if (block)
+                blocks.push(block.toJSON());
+        }
+        res.json({ blocks });
+    });
     router.get('/head', (_req, res) => {
         const head = chain.getLatestBlock();
         res.json({
