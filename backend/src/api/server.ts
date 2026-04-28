@@ -142,6 +142,59 @@ async function main() {
     res.status(200).json({ status: 'ok' });
   });
 
+  // Contract bytecode disasm (TASK-099). Returns parsed JSON-op program
+  // for an on-chain contract. 404 if no code at the address.
+  app.get('/api/contract/:addr/disasm', async (req, res) => {
+    try {
+      const r = await db.query(
+        `SELECT bytecode, code_hash, deployed_at_block, deployed_by
+           FROM contract_code WHERE address = $1`,
+        [req.params.addr],
+      );
+      if (r.rows.length === 0) return res.status(404).json({ error: 'no code at address' });
+      const row = r.rows[0];
+      let ops: any = null;
+      try { ops = JSON.parse(row.bytecode); } catch { /* leave null */ }
+      res.json({
+        address: req.params.addr,
+        codeHash: row.code_hash,
+        deployedAtBlock: Number(row.deployed_at_block),
+        deployedBy: row.deployed_by,
+        ops,
+        bytecodeRaw: row.bytecode,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'lookup failed' });
+    }
+  });
+
+  // Contract storage browser (TASK-100).
+  app.get('/api/contract/:addr/storage', async (req, res) => {
+    try {
+      const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 100)));
+      const prefix = typeof req.query.prefix === 'string' ? req.query.prefix : '';
+      const r = await db.query(
+        `SELECT storage_key, storage_value, updated_at_block
+           FROM contract_storage
+          WHERE contract_address = $1 AND storage_key LIKE $2
+          ORDER BY storage_key
+          LIMIT $3`,
+        [req.params.addr, prefix + '%', limit],
+      );
+      res.json({
+        address: req.params.addr,
+        items: r.rows.map((row: any) => ({
+          key: row.storage_key,
+          value: row.storage_value,
+          updatedAtBlock: Number(row.updated_at_block),
+        })),
+        count: r.rows.length,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'lookup failed' });
+    }
+  });
+
   // Bulk chain export as NDJSON (TASK-028). Streamed line-by-line to
   // avoid buffering huge ranges. Each line is { type: 'block', ...toJSON() }.
   app.get('/api/chain/export', async (req, res) => {
