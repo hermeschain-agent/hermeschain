@@ -5,7 +5,7 @@ import * as path from 'path';
 
 /**
  * PacedPusher — runs inside the Railway worker process. Every PUSH_INTERVAL_MS
- * (default 24min = 60/day), fetches origin and advances refs/heads/main by
+ * (default and minimum 15min = 96/day), fetches origin and advances refs/heads/main by
  * one commit drawn from origin/PUSH_BRANCH (default tier-3-backlog).
  *
  * Disabled by default. Activate by setting:
@@ -17,11 +17,12 @@ import * as path from 'path';
  *   PUSH_TARGET=main
  *   PUSH_REMOTE=origin
  *   PUSH_BATCH=1
- *   PUSH_INTERVAL_MS=1440000   (24 minutes)
+ *   PUSH_INTERVAL_MS=900000    (15 minutes; lower values are ignored)
  *   POINTER_FILE=data/push_pointer.txt
  */
 
 export class PacedPusher {
+  private static readonly MIN_INTERVAL_MS = 15 * 60_000;
   private interval: NodeJS.Timeout | null = null;
   private repoRoot: string;
   private pointerFile: string;
@@ -42,7 +43,12 @@ export class PacedPusher {
     this.target = process.env.PUSH_TARGET || 'main';
     this.remote = process.env.PUSH_REMOTE || 'origin';
     this.batch = Math.max(1, Number(process.env.PUSH_BATCH || '1'));
-    this.intervalMs = Math.max(60_000, Number(process.env.PUSH_INTERVAL_MS || '1440000'));
+    const requestedIntervalMs = Number(
+      process.env.PUSH_INTERVAL_MS || PacedPusher.MIN_INTERVAL_MS,
+    );
+    this.intervalMs = Number.isFinite(requestedIntervalMs)
+      ? Math.max(PacedPusher.MIN_INTERVAL_MS, requestedIntervalMs)
+      : PacedPusher.MIN_INTERVAL_MS;
   }
 
   private resolvePacerRepoRoot(repoRoot: string): string {
@@ -72,6 +78,10 @@ export class PacedPusher {
       console.log('[PACER] disabled (set PACED_PUSH_ENABLED=true to activate)');
       return;
     }
+    if (process.env.AGENT_ROLE !== 'worker') {
+      console.log(`[PACER] disabled (role=${process.env.AGENT_ROLE || 'unset'}; worker only)`);
+      return;
+    }
     if (!process.env.GITHUB_TOKEN) {
       console.log('[PACER] disabled (no GITHUB_TOKEN)');
       return;
@@ -81,8 +91,7 @@ export class PacedPusher {
       `${this.batch} commit(s)/fire from ${this.branch} → ${this.target}`,
     );
     console.log(`[PACER] repo root: ${this.repoRoot}`);
-    // Fire once shortly after boot, then on the interval.
-    setTimeout(() => this.tick(), 30_000);
+    console.log(`[PACER] first tick scheduled in ${Math.round(this.intervalMs / 60000)} min`);
     this.interval = setInterval(() => this.tick(), this.intervalMs);
   }
 
@@ -259,6 +268,41 @@ export class PacedPusher {
     return output.split('\n').includes(subject);
   }
 
+  private latestAgentCommitAgeMs(): number | null {
+    try {
+      const timestamp = this.git([
+        'log',
+        '-1',
+        '--author=^hermes agent$',
+        '--pretty=%ct',
+        `${this.remote}/${this.target}`,
+      ]);
+      const seconds = Number(timestamp);
+      if (!Number.isFinite(seconds) || seconds <= 0) {
+        return null;
+      }
+      return Date.now() - seconds * 1000;
+    } catch {
+      return null;
+    }
+  }
+
+  private shouldThrottlePublish(): boolean {
+    const ageMs = this.latestAgentCommitAgeMs();
+    if (ageMs === null || ageMs >= this.intervalMs) {
+      return false;
+    }
+
+    const remainingMs = this.intervalMs - ageMs;
+    const ageMinutes = Math.max(0, Math.floor(ageMs / 60_000));
+    const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+    console.log(
+      `[PACER] throttled — last hermes agent commit ${ageMinutes} min ago; ` +
+      `next publish allowed in ${remainingMinutes} min`,
+    );
+    return true;
+  }
+
   private publishSanitizedCommit(sha: string, subject: string): string | null {
     const originalMessage = this.git(['log', '-1', '--pretty=%B', sha]);
     const message = this.sanitizeCommitMessage(originalMessage, subject);
@@ -360,6 +404,10 @@ export class PacedPusher {
       if (!this.cloneFresh('fetch failure') || !this.fetchRefs()) {
         return;
       }
+    }
+
+    if (this.shouldThrottlePublish()) {
+      return;
     }
 
     const queue = this.listForwardCommits();
