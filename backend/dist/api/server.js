@@ -170,6 +170,9 @@ async function main() {
     app.get('/health', (req, res) => {
         res.status(200).json({ status: 'ok' });
     });
+    // Newsletter signup (TASK-486).
+    const { createNewsletterRouter } = await Promise.resolve().then(() => __importStar(require('./newsletter')));
+    app.use('/api/newsletter', createNewsletterRouter());
     // Three-tier health checks (TASK-149), build info (TASK-150), Prometheus metrics (TASK-152).
     const { createHealthRouter } = await Promise.resolve().then(() => __importStar(require('./health')));
     const { createBuildRouter } = await Promise.resolve().then(() => __importStar(require('./build-info')));
