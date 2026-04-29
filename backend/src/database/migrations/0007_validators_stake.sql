@@ -1,6 +1,0 @@
--- up:
-ALTER TABLE validators
-  ADD COLUMN IF NOT EXISTS stake NUMERIC NOT NULL DEFAULT 1;
-
--- down:
-ALTER TABLE validators DROP COLUMN IF EXISTS stake;
