@@ -1246,6 +1246,13 @@ Live context:
             avgBlockTime: stats.avgBlockTime
         });
     });
+    // TPS over a configurable window (TASK-051). Default 60s. Powered by
+    // chain.getRecentTps which already buckets recent block tx counts.
+    app.get('/api/chain/tps', async (req, res) => {
+        const window = Math.min(3600, Math.max(1, Number(req.query.window ?? 60)));
+        const tps = chain.getRecentTps(window);
+        res.json({ tps, window_sec: window });
+    });
     // Get latest block
     app.get('/api/chain/latest', async (req, res) => {
         await syncSharedReadState();
