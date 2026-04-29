@@ -12,6 +12,8 @@ const MIN_GAS_PRICE = 1n; // Minimum gas price (lamports)
 class TransactionPool {
     constructor() {
         this.pendingTransactions = new Map();
+        // Per-tx admit timestamp for TTL eviction (TASK-021).
+        this.addedAtMs = new Map();
         this.knownHashes = new Set(); // Replay protection
     }
     async syncPendingTransactionsFromDb() {
@@ -33,6 +35,7 @@ class TransactionPool {
                     signature: row.signature,
                 };
                 this.pendingTransactions.set(tx.hash, tx);
+                this.addedAtMs.set(tx.hash, Date.now());
                 this.knownHashes.add(tx.hash);
             }
         }
@@ -65,6 +68,7 @@ class TransactionPool {
             return validation;
         }
         this.pendingTransactions.set(tx.hash, tx);
+        this.addedAtMs.set(tx.hash, Date.now());
         this.knownHashes.add(tx.hash);
         try {
             await db_1.db.query(`
@@ -102,6 +106,7 @@ class TransactionPool {
     async removeTransactions(hashes) {
         for (const hash of hashes) {
             this.pendingTransactions.delete(hash);
+            this.addedAtMs.delete(hash);
         }
         if (hashes.length > 0) {
             try {
@@ -134,6 +139,7 @@ class TransactionPool {
             const validation = await this.validateTransaction(tx);
             if (!validation.valid) {
                 this.pendingTransactions.delete(hash);
+                this.addedAtMs.delete(hash);
                 this.knownHashes.delete(hash);
                 dropped.push({ hash, reason: validation.error || 'invalid' });
             }
@@ -241,11 +247,26 @@ class TransactionPool {
         return Array.from(this.pendingTransactions.values())
             .filter(tx => tx.from === address || tx.to === address);
     }
-    // Clear expired transactions (optional TTL)
-    clearExpired(maxAge = 3600000) {
-        // This would require storing timestamp with each tx
-        // For now, just return 0
-        return 0;
+    // Clear expired transactions (TASK-021). Default TTL 1h.
+    clearExpired(maxAgeMs = 3600000) {
+        const cutoff = Date.now() - maxAgeMs;
+        let removed = 0;
+        for (const [hash, addedAt] of this.addedAtMs.entries()) {
+            if (addedAt < cutoff) {
+                this.pendingTransactions.delete(hash);
+                this.addedAtMs.delete(hash);
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            console.log(`[POOL] cleared ${removed} expired tx(s) older than ${maxAgeMs}ms`);
+        }
+        return removed;
+    }
+    // Start a periodic eviction loop (TASK-021). Returns the interval handle
+    // so callers can stop it on shutdown.
+    startExpirationLoop(intervalMs = 60000, maxAgeMs = 3600000) {
+        return setInterval(() => this.clearExpired(maxAgeMs), intervalMs);
     }
 }
 exports.TransactionPool = TransactionPool;
