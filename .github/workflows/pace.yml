@@ -1,0 +1,44 @@
+name: Paced commit pusher
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pace:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pace-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - run: |
+          git config user.name "hermes agent"
+          git config user.email "hermeschain-agent@users.noreply.github.com"
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          git fetch origin main tier-3-backlog
+          MAIN_MSGS=$(git log -1000 --pretty=%s origin/main | sort -u)
+          NEXT=""
+          for sha in $(git rev-list --reverse origin/main..origin/tier-3-backlog); do
+            SUBJ=$(git log -1 --pretty=%s "$sha")
+            if echo "$MAIN_MSGS" | grep -qxF -- "$SUBJ"; then continue; fi
+            NEXT=$sha
+            break
+          done
+          if [ -z "$NEXT" ]; then echo "[PACE] queue drained"; exit 0; fi
+          git checkout main
+          git cherry-pick --strategy=recursive --strategy-option=theirs "$NEXT" || (git checkout --theirs . ; git add -A ; git -c core.editor=true cherry-pick --continue)
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%S +0000")
+          GIT_COMMITTER_DATE="$NOW" git commit --amend --no-edit --date="$NOW"
+          git push origin main
+          echo "[PACE] pushed $(git rev-parse HEAD | cut -c1-8) ($(git log -1 --pretty=%s))"
