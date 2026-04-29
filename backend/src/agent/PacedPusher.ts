@@ -33,9 +33,9 @@ export class PacedPusher {
   private lastRepairAt = 0;
 
   constructor(repoRoot: string) {
-    this.repoRoot = repoRoot;
+    this.repoRoot = this.resolvePacerRepoRoot(repoRoot);
     this.pointerFile = path.resolve(
-      repoRoot,
+      this.repoRoot,
       process.env.POINTER_FILE || 'data/push_pointer.txt',
     );
     this.branch = process.env.PUSH_BRANCH || 'tier-3-backlog';
@@ -43,6 +43,27 @@ export class PacedPusher {
     this.remote = process.env.PUSH_REMOTE || 'origin';
     this.batch = Math.max(1, Number(process.env.PUSH_BATCH || '1'));
     this.intervalMs = Math.max(60_000, Number(process.env.PUSH_INTERVAL_MS || '1440000'));
+  }
+
+  private resolvePacerRepoRoot(repoRoot: string): string {
+    const configuredRoot = process.env.AGENT_REPO_ROOT
+      ? path.resolve(process.env.AGENT_REPO_ROOT)
+      : null;
+    if (configuredRoot) {
+      return configuredRoot;
+    }
+
+    const candidate = path.resolve(repoRoot);
+    const canSelfClone =
+      process.env.PACED_PUSH_ENABLED === 'true' &&
+      Boolean(process.env.GITHUB_TOKEN || process.env.GH_TOKEN) &&
+      Boolean(process.env.GITHUB_REPO);
+
+    if (canSelfClone && !fs.existsSync(path.join(candidate, '.git'))) {
+      return path.join(os.tmpdir(), 'hermeschain-pacer-worktree');
+    }
+
+    return candidate;
   }
 
   start(): void {
