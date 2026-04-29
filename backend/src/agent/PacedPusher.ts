@@ -1,6 +1,5 @@
-import { execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 
 /**
@@ -70,13 +69,12 @@ export class PacedPusher {
     }
   }
 
-  private git(args: string[], env?: NodeJS.ProcessEnv): string {
+  private git(args: string[]): string {
     try {
-      return execFileSync('git', args, {
+      return execSync(['git', ...args].join(' '), {
         cwd: this.repoRoot,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: env ? { ...process.env, ...env } : process.env,
       }).trim();
     } catch (err: any) {
       // Surface stderr so the push failure reason is visible in logs.
@@ -87,85 +85,6 @@ export class PacedPusher {
         `${err?.message || 'git failed'}${combined ? ' — ' + combined : ''}`,
       );
       throw wrapped;
-    }
-  }
-
-  private sanitizeCommitMessage(message: string, fallbackSubject: string): string {
-    const stripped = message
-      .replace(/\r\n/g, '\n')
-      .split('\n')
-      .filter((line) => {
-        const normalized = line.toLowerCase();
-        if (!normalized.startsWith('co-authored-by:')) {
-          return true;
-        }
-        return !(normalized.includes('claude') || normalized.includes('anthropic'));
-      })
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    return stripped || fallbackSubject;
-  }
-
-  private gitDate(): string {
-    const now = new Date();
-    const pad = (value: number) => String(value).padStart(2, '0');
-    return (
-      `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}` +
-      `T${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}:${pad(now.getUTCSeconds())} +0000`
-    );
-  }
-
-  private hasPublishedSubject(subject: string): boolean {
-    const output = this.git(['log', '-1000', '--pretty=%s', this.target]);
-    return output.split('\n').includes(subject);
-  }
-
-  private publishSanitizedCommit(sha: string, subject: string): string | null {
-    const originalMessage = this.git(['log', '-1', '--pretty=%B', sha]);
-    const message = this.sanitizeCommitMessage(originalMessage, subject);
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-pacer-'));
-    const messageFile = path.join(tmpDir, 'COMMIT_EDITMSG');
-    fs.writeFileSync(messageFile, `${message}\n`, 'utf8');
-
-    const now = this.gitDate();
-    const commitEnv = {
-      GIT_AUTHOR_NAME: 'hermes agent',
-      GIT_AUTHOR_EMAIL: 'hermeschain-agent@users.noreply.github.com',
-      GIT_AUTHOR_DATE: now,
-      GIT_COMMITTER_NAME: 'hermes agent',
-      GIT_COMMITTER_EMAIL: 'hermeschain-agent@users.noreply.github.com',
-      GIT_COMMITTER_DATE: now,
-    };
-
-    try {
-      try {
-        this.git(['cherry-pick', '--no-commit', '--strategy=recursive', '--strategy-option=theirs', sha], commitEnv);
-      } catch (err: any) {
-        console.warn(`[PACER] cherry-pick conflicted on ${sha.slice(0, 8)} — taking queued changes`);
-        this.git(['checkout', '--theirs', '.']);
-        this.git(['add', '-A']);
-      }
-
-      if (!this.git(['status', '--porcelain'])) {
-        console.log(`[PACER] skipped ${sha.slice(0, 8)} ${subject} (already applied)`);
-        return null;
-      }
-
-      this.git(['commit', '-F', messageFile], commitEnv);
-      const publishedSha = this.git(['rev-parse', 'HEAD']);
-      this.git(['push', this.remote, `HEAD:refs/heads/${this.target}`]);
-      return publishedSha;
-    } catch (err) {
-      try {
-        this.git(['cherry-pick', '--abort']);
-      } catch {
-        // No cherry-pick in progress or abort failed; surface the original error.
-      }
-      throw err;
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }
 
@@ -217,29 +136,13 @@ export class PacedPusher {
     }
     console.log(`[PACER] ${queue.length} commit(s) ahead; pushing up to ${this.batch}`);
 
-    try {
-      this.git(['checkout', '-B', this.target, `${this.remote}/${this.target}`]);
-    } catch (err: any) {
-      console.error(`[PACER] checkout of ${this.target} failed: ${err?.message || err}`);
-      return;
-    }
-
     let pushed = 0;
     for (let i = 0; i < this.batch && i < queue.length; i++) {
       const sha = queue[i];
       try {
         const subject = this.git(['log', '-1', '--pretty=%s', sha]);
-        if (this.hasPublishedSubject(subject)) {
-          console.log(`[PACER] skipped ${sha.slice(0, 8)} ${subject} (message already on main)`);
-          continue;
-        }
-
-        const publishedSha = this.publishSanitizedCommit(sha, subject);
-        if (!publishedSha) {
-          continue;
-        }
-
-        console.log(`[PACER] pushed ${publishedSha.slice(0, 8)} ${subject}`);
+        this.git(['push', this.remote, `${sha}:refs/heads/${this.target}`]);
+        console.log(`[PACER] pushed ${sha.slice(0, 8)} ${subject}`);
         pushed++;
       } catch (err: any) {
         console.error(`[PACER] push of ${sha} failed: ${err?.message || err}`);
