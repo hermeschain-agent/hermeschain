@@ -3,6 +3,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+const PUBLISH_GIT_USER_NAME =
+  process.env.PUBLISH_GIT_USER_NAME ||
+  process.env.GIT_USER_NAME ||
+  'Hermes Maintainer';
+const PUBLISH_GIT_USER_EMAIL =
+  process.env.PUBLISH_GIT_USER_EMAIL ||
+  process.env.GIT_USER_EMAIL ||
+  'hermeschain-agent@users.noreply.github.com';
+
 /**
  * PacedPusher — runs inside the Railway worker process. Every PUSH_INTERVAL_MS
  * (default and minimum 15min = 96/day), fetches origin and advances refs/heads/main by
@@ -165,8 +174,8 @@ export class PacedPusher {
   }
 
   private configureRepository(): void {
-    this.git(['config', 'user.name', 'hermes agent']);
-    this.git(['config', 'user.email', 'hermeschain-agent@users.noreply.github.com']);
+    this.git(['config', 'user.name', PUBLISH_GIT_USER_NAME]);
+    this.git(['config', 'user.email', PUBLISH_GIT_USER_EMAIL]);
 
     const remoteUrl = this.githubRemoteUrl();
     if (!remoteUrl) {
@@ -268,12 +277,11 @@ export class PacedPusher {
     return output.split('\n').includes(subject);
   }
 
-  private latestAgentCommitAgeMs(): number | null {
+  private latestTargetCommitAgeMs(): number | null {
     try {
       const timestamp = this.git([
         'log',
         '-1',
-        '--author=^hermes agent$',
         '--pretty=%ct',
         `${this.remote}/${this.target}`,
       ]);
@@ -288,7 +296,7 @@ export class PacedPusher {
   }
 
   private shouldThrottlePublish(): boolean {
-    const ageMs = this.latestAgentCommitAgeMs();
+    const ageMs = this.latestTargetCommitAgeMs();
     if (ageMs === null || ageMs >= this.intervalMs) {
       return false;
     }
@@ -297,7 +305,7 @@ export class PacedPusher {
     const ageMinutes = Math.max(0, Math.floor(ageMs / 60_000));
     const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
     console.log(
-      `[PACER] throttled — last hermes agent commit ${ageMinutes} min ago; ` +
+      `[PACER] throttled — last ${this.target} commit ${ageMinutes} min ago; ` +
       `next publish allowed in ${remainingMinutes} min`,
     );
     return true;
@@ -312,11 +320,11 @@ export class PacedPusher {
 
     const now = this.gitDate();
     const commitEnv = {
-      GIT_AUTHOR_NAME: 'hermes agent',
-      GIT_AUTHOR_EMAIL: 'hermeschain-agent@users.noreply.github.com',
+      GIT_AUTHOR_NAME: PUBLISH_GIT_USER_NAME,
+      GIT_AUTHOR_EMAIL: PUBLISH_GIT_USER_EMAIL,
       GIT_AUTHOR_DATE: now,
-      GIT_COMMITTER_NAME: 'hermes agent',
-      GIT_COMMITTER_EMAIL: 'hermeschain-agent@users.noreply.github.com',
+      GIT_COMMITTER_NAME: PUBLISH_GIT_USER_NAME,
+      GIT_COMMITTER_EMAIL: PUBLISH_GIT_USER_EMAIL,
       GIT_COMMITTER_DATE: now,
     };
 
