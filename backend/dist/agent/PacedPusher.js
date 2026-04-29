@@ -89,21 +89,10 @@ class PacedPusher {
         }
     }
     git(args) {
-        try {
-            return (0, child_process_1.execSync)(['git', ...args].join(' '), {
-                cwd: this.repoRoot,
-                encoding: 'utf8',
-                stdio: ['ignore', 'pipe', 'pipe'],
-            }).trim();
-        }
-        catch (err) {
-            // Surface stderr so the push failure reason is visible in logs.
-            const stderr = err?.stderr?.toString?.() || '';
-            const stdout = err?.stdout?.toString?.() || '';
-            const combined = [stderr, stdout].filter(Boolean).join(' ').trim();
-            const wrapped = new Error(`${err?.message || 'git failed'}${combined ? ' — ' + combined : ''}`);
-            throw wrapped;
-        }
+        return (0, child_process_1.execSync)(['git', ...args].join(' '), {
+            cwd: this.repoRoot,
+            encoding: 'utf8',
+        }).trim();
     }
     listForwardCommits() {
         const ref = `${this.remote}/${this.target}..${this.remote}/${this.branch}`;
@@ -132,16 +121,7 @@ class PacedPusher {
     }
     tick() {
         try {
-            // Unshallow first — GitIntegration clones with --depth 50, so the
-            // intermediate commits we want to push aren't in the local object
-            // store yet. --unshallow is a no-op once the repo is already deep.
-            try {
-                this.git(['fetch', '--unshallow', this.remote]);
-            }
-            catch { /* already unshallow, ignore */ }
-            // Force-fetch all branches via explicit refspec — single-branch
-            // clones don't have origin/<other> tracking refs by default.
-            this.git(['fetch', this.remote, '+refs/heads/*:refs/remotes/' + this.remote + '/*']);
+            this.git(['fetch', this.remote, this.target, this.branch]);
         }
         catch (err) {
             console.warn(`[PACER] fetch failed: ${err?.message || err}`);
