@@ -170,6 +170,20 @@ async function main() {
     app.get('/health', (req, res) => {
         res.status(200).json({ status: 'ok' });
     });
+    // Bulk chain export as NDJSON (TASK-028). Streamed line-by-line to
+    // avoid buffering huge ranges. Each line is { type: 'block', ...toJSON() }.
+    app.get('/api/chain/export', async (req, res) => {
+        const from = Math.max(0, Number(req.query.from ?? 0));
+        const to = Math.min(from + 1000000, Number(req.query.to ?? from + 1000));
+        res.setHeader('Content-Type', 'application/x-ndjson');
+        for (let h = from; h <= to; h++) {
+            const block = chain.getBlockByHeight(h);
+            if (!block)
+                continue;
+            res.write(JSON.stringify({ type: 'block', ...block.toJSON() }) + '\n');
+        }
+        res.end();
+    });
     // OpenAPI 3.1 spec at /api/openapi.json (TASK-141). Swagger UI hookup in TASK-142.
     const { createOpenApiRouter } = await Promise.resolve().then(() => __importStar(require('./openapi')));
     app.use('/api/openapi.json', createOpenApiRouter());
