@@ -83,7 +83,7 @@ async function main() {
     await agent_1.skillManager.initialize();
     await agent_1.agentTaskStore.initialize();
     await agent_1.agentRuntimeStore.initialize();
-    await agent_1.githubUpdates.initialize(agentConfig.repoRoot);
+    await agent_1.githubUpdates.initialize(agentConfig.repoRoot || process.cwd());
     agent_1.githubUpdates.startBackgroundSync();
     let currentTaskId;
     let currentTaskTitle;

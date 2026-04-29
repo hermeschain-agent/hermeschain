@@ -1,0 +1,1 @@
+{"version":3,"file":"GitHubUpdates.d.ts","sourceRoot":"","sources":["../../src/agent/GitHubUpdates.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAEH,cAAM,aAAa;IACX,UAAU,CAAC,SAAS,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;IAGlD,mBAAmB,IAAI,IAAI;IAC3B,kBAAkB,IAAI,IAAI;IACpB,gBAAgB,CAAC,MAAM,SAAK,GAAG,OAAO,CAAC,GAAG,EAAE,CAAC;CACpD;AAED,eAAO,MAAM,aAAa,eAAsB,CAAC"}

@@ -874,7 +874,7 @@ Live context:
   await agentRuntimeStore.initialize();
 
   const { githubUpdates } = await import('../agent/GitHubUpdates');
-  await githubUpdates.initialize(agentConfig.repoRoot);
+  await githubUpdates.initialize(agentConfig.repoRoot || process.cwd());
   const shouldRunGitHubSync =
     agentConfig.role === 'worker' || !process.env.WORKER_INTERNAL_URL;
   if (shouldRunGitHubSync) {

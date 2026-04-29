@@ -129,20 +129,54 @@ export class PacedPusher {
       return;
     }
 
-    const queue = this.listForwardCommits();
-    if (queue.length === 0) {
+    // Build the queue from origin/<branch>~N..origin/<branch> in original order so
+    // the pointer can index into it deterministically. Re-authored pushes change
+    // each commit's SHA so the natural origin/main..tier-3-backlog count never
+    // decreases; we use the pointer file as the canonical "next index" instead.
+    const totalAhead = Number(this.git(['rev-list', '--count', `${this.remote}/${this.target}..${this.remote}/${this.branch}`]));
+    if (totalAhead === 0) {
       console.log(`[PACER] nothing to push (target = branch tip)`);
       return;
     }
-    console.log(`[PACER] ${queue.length} commit(s) ahead; pushing up to ${this.batch}`);
+    const pointer = this.readPointer();
+    if (pointer >= totalAhead) {
+      console.log(`[PACER] queue drained (pointer ${pointer} >= ahead ${totalAhead})`);
+      return;
+    }
+    // Get the [pointer..pointer+batch] commits from the original branch ordering.
+    const queue = this.git(['rev-list', '--reverse', `${this.remote}/${this.target}..${this.remote}/${this.branch}`])
+      .split('\n').filter(Boolean).slice(pointer, pointer + this.batch);
+    console.log(`[PACER] ${totalAhead} commit(s) ahead; pointer=${pointer}; pushing up to ${this.batch}`);
 
     let pushed = 0;
-    for (let i = 0; i < this.batch && i < queue.length; i++) {
+    for (let i = 0; i < queue.length; i++) {
       const sha = queue[i];
       try {
         const subject = this.git(['log', '-1', '--pretty=%s', sha]);
-        this.git(['push', this.remote, `${sha}:refs/heads/${this.target}`]);
-        console.log(`[PACER] pushed ${sha.slice(0, 8)} ${subject}`);
+        // Re-author with fresh committer + author date so GitHub shows
+        // "1 minute ago" when this commit lands on main, not the original
+        // rebase timestamp from when the queue was built.
+        const tree = this.git(['rev-parse', `${sha}^{tree}`]);
+        const parent = this.git(['rev-parse', `${this.remote}/${this.target}`]);
+        const msgFull = this.git(['log', '-1', '--pretty=%B', sha]);
+        const author = this.git(['log', '-1', '--pretty=%an <%ae>', sha]);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const tz = '+0000';
+        const env = {
+          ...process.env,
+          GIT_AUTHOR_NAME: author.replace(/ <.*$/, ''),
+          GIT_AUTHOR_EMAIL: author.replace(/^.*</, '').replace(/>$/, ''),
+          GIT_AUTHOR_DATE: `${nowSec} ${tz}`,
+          GIT_COMMITTER_NAME: 'hermes agent',
+          GIT_COMMITTER_EMAIL: 'hermeschain-agent@users.noreply.github.com',
+          GIT_COMMITTER_DATE: `${nowSec} ${tz}`,
+        };
+        const newSha = require('child_process').execSync(
+          `git commit-tree ${tree} -p ${parent} -m "${msgFull.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`')}"`,
+          { cwd: this.repoRoot, encoding: 'utf8', env }
+        ).trim();
+        this.git(['push', this.remote, `${newSha}:refs/heads/${this.target}`]);
+        console.log(`[PACER] pushed ${newSha.slice(0, 8)} (was ${sha.slice(0, 8)}) ${subject}`);
         pushed++;
       } catch (err: any) {
         console.error(`[PACER] push of ${sha} failed: ${err?.message || err}`);

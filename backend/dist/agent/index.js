@@ -1,10 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TokenBudget = exports.tokenBudget = exports.skillManager = exports.BROWSER_TOOLS = exports.browserAutomation = exports.ciMonitor = exports.taskSources = exports.gitIntegration = exports.AGENT_TOOLS = exports.agentExecutor = exports.agentGoals = exports.chainObserver = exports.agentMemory = exports.agentRuntimeStore = exports.agentTaskStore = exports.resolveRepoRoot = exports.createAgentConfig = exports.TaskGenerator = exports.agentEvents = exports.agentWorker = void 0;
+exports.TokenBudget = exports.tokenBudget = exports.skillManager = exports.BROWSER_TOOLS = exports.browserAutomation = exports.ciMonitor = exports.taskSources = exports.gitIntegration = exports.AGENT_TOOLS = exports.agentExecutor = exports.agentGoals = exports.chainObserver = exports.agentMemory = exports.agentRuntimeStore = exports.agentTaskStore = exports.resolveRepoRoot = exports.createAgentConfig = exports.TaskGenerator = exports.githubUpdates = exports.agentEvents = exports.agentWorker = void 0;
 exports.configureAgentSubsystems = configureAgentSubsystems;
 var AgentWorker_1 = require("./AgentWorker");
 Object.defineProperty(exports, "agentWorker", { enumerable: true, get: function () { return AgentWorker_1.agentWorker; } });
 Object.defineProperty(exports, "agentEvents", { enumerable: true, get: function () { return AgentWorker_1.agentEvents; } });
+var GitHubUpdates_1 = require("./GitHubUpdates");
+Object.defineProperty(exports, "githubUpdates", { enumerable: true, get: function () { return GitHubUpdates_1.githubUpdates; } });
 var TaskGenerator_1 = require("./TaskGenerator");
 Object.defineProperty(exports, "TaskGenerator", { enumerable: true, get: function () { return TaskGenerator_1.TaskGenerator; } });
 var config_1 = require("./config");
