@@ -40,7 +40,10 @@ exports.chainState = exports.cache = exports.db = void 0;
 const pg_1 = require("pg");
 const ioredis_1 = __importDefault(require("ioredis"));
 const dotenv = __importStar(require("dotenv"));
+const queryMetrics_1 = require("./queryMetrics");
 dotenv.config();
+// Slow-query threshold (TASK-321). Queries above this log a [PG SLOW] warning.
+const PG_SLOW_QUERY_MS = Math.max(1, Number(process.env.PG_SLOW_QUERY_MS || '1000'));
 // PostgreSQL connection - uses Railway's DATABASE_URL
 const DATABASE_URL = process.env.DATABASE_URL;
 let pool = null;
@@ -99,14 +102,21 @@ exports.db = {
             console.log('Using in-memory storage (no DATABASE_URL)');
             return;
         }
+        const startedAt = Date.now();
         try {
             // Split by semicolon and execute each statement
             const statements = sql.split(';').filter(s => s.trim().length > 0);
             for (const statement of statements) {
                 await pool.query(statement);
             }
+            const duration = Date.now() - startedAt;
+            (0, queryMetrics_1.recordQuery)(duration);
+            if (duration > PG_SLOW_QUERY_MS) {
+                console.warn(`[PG SLOW] exec ${duration}ms (${sql.length} chars, ${sql.split(';').length} stmts)`);
+            }
         }
         catch (error) {
+            (0, queryMetrics_1.recordQueryError)();
             console.error('Database exec error:', error);
             throw error;
         }
@@ -117,11 +127,20 @@ exports.db = {
             // Fallback to memory
             return { rows: [], rowCount: 0 };
         }
+        const startedAt = Date.now();
         try {
             const result = await pool.query(text, params);
+            const duration = Date.now() - startedAt;
+            (0, queryMetrics_1.recordQuery)(duration);
+            if (duration > PG_SLOW_QUERY_MS) {
+                // Truncate SQL to 200 chars; never log param VALUES (PII), only count.
+                const sqlPreview = text.length > 200 ? text.slice(0, 200) + '…' : text;
+                console.warn(`[PG SLOW] query ${duration}ms params=${params.length} sql=${JSON.stringify(sqlPreview)}`);
+            }
             return { rows: result.rows, rowCount: result.rowCount || 0 };
         }
         catch (error) {
+            (0, queryMetrics_1.recordQueryError)();
             console.error('Database query error:', error);
             throw error;
         }
