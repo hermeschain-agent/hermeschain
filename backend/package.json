@@ -8,7 +8,9 @@
     "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/database/migrations','dist/database/migrations',{recursive:true})\"",
     "start": "node dist/api/server.js",
     "test": "npm run build && node --test tests/*.test.js",
-    "pace:push": "node scripts/paced-push.js"
+    "pace:push": "node scripts/paced-push.js",
+    "migrate:down": "node scripts/migrate-down.js",
+    "migrate:status": "node scripts/migrate-status.js"
   },
   "keywords": [
     "blockchain",
