@@ -183,6 +183,62 @@ export class Block {
       }))
     };
   }
+
+  /**
+   * Reconstruct a Block from a toJSON() payload (TASK-001). Round-trip
+   * property: `Block.fromJSON(b.toJSON()).header.hash === b.header.hash`.
+   * Throws on missing fields or hash mismatch (tampered header).
+   */
+  public static fromJSON(json: any): Block {
+    const required = [
+      'height', 'hash', 'parentHash', 'producer', 'timestamp', 'nonce',
+      'difficulty', 'gasUsed', 'gasLimit', 'stateRoot', 'transactionsRoot',
+      'receiptsRoot', 'transactions',
+    ];
+    for (const field of required) {
+      if (!(field in json)) {
+        throw new Error(`fromJSON: missing field '${field}'`);
+      }
+    }
+
+    const txs: Transaction[] = (json.transactions as any[]).map((t) => ({
+      hash: String(t.hash),
+      from: String(t.from),
+      to: String(t.to),
+      value: BigInt(t.value ?? '0'),
+      gasPrice: BigInt(t.gasPrice ?? '0'),
+      gasLimit: BigInt(t.gasLimit ?? '0'),
+      nonce: Number(t.nonce ?? 0),
+      data: t.data,
+      signature: String(t.signature ?? ''),
+    }));
+
+    const block = new Block(
+      Number(json.height),
+      String(json.parentHash),
+      String(json.producer),
+      txs,
+      Number(json.difficulty ?? 1),
+    );
+
+    // Override constructor-derived header fields with the deserialized truth.
+    block.header.timestamp = Number(json.timestamp);
+    block.header.nonce = Number(json.nonce ?? 0);
+    block.header.gasUsed = BigInt(json.gasUsed);
+    block.header.gasLimit = BigInt(json.gasLimit);
+    block.header.stateRoot = String(json.stateRoot);
+    block.header.transactionsRoot = String(json.transactionsRoot);
+    block.header.receiptsRoot = String(json.receiptsRoot);
+    // Recompute hash from the now-canonical fields and assert.
+    block.header.hash = (block as any).calculateHash();
+
+    if (block.header.hash !== String(json.hash)) {
+      throw new Error(
+        `fromJSON: hash mismatch — header field tampered (got ${block.header.hash}, expected ${json.hash})`,
+      );
+    }
+    return block;
+  }
 }
 
 // Export helper functions
