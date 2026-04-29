@@ -30,6 +30,7 @@ export class PacedPusher {
   private remote: string;
   private batch: number;
   private intervalMs: number;
+  private lastRepairAt = 0;
 
   constructor(repoRoot: string) {
     this.repoRoot = repoRoot;
@@ -58,6 +59,7 @@ export class PacedPusher {
       `[PACER] active — every ${Math.round(this.intervalMs / 60000)} min, ` +
       `${this.batch} commit(s)/fire from ${this.branch} → ${this.target}`,
     );
+    console.log(`[PACER] repo root: ${this.repoRoot}`);
     // Fire once shortly after boot, then on the interval.
     setTimeout(() => this.tick(), 30_000);
     this.interval = setInterval(() => this.tick(), this.intervalMs);
@@ -83,10 +85,124 @@ export class PacedPusher {
       const stderr = err?.stderr?.toString?.() || '';
       const stdout = err?.stdout?.toString?.() || '';
       const combined = [stderr, stdout].filter(Boolean).join(' ').trim();
+      const sanitized = this.sanitizeSecret(combined);
       const wrapped = new Error(
-        `${err?.message || 'git failed'}${combined ? ' — ' + combined : ''}`,
+        `${err?.message || 'git failed'}${sanitized ? ' — ' + sanitized : ''}`,
       );
       throw wrapped;
+    }
+  }
+
+  private sanitizeSecret(value: string): string {
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    return token ? value.split(token).join('[redacted]') : value;
+  }
+
+  private githubRemoteUrl(): string | null {
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const repo = process.env.GITHUB_REPO;
+    if (!token || !repo) {
+      return null;
+    }
+    return `https://x-access-token:${token}@github.com/${repo}.git`;
+  }
+
+  private canRecreateRepoRoot(): boolean {
+    const configuredRoot = process.env.AGENT_REPO_ROOT
+      ? path.resolve(process.env.AGENT_REPO_ROOT)
+      : null;
+    const normalizedRoot = path.resolve(this.repoRoot);
+    return (
+      normalizedRoot.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
+      (configuredRoot !== null && normalizedRoot === configuredRoot)
+    );
+  }
+
+  private isGitWorktree(): boolean {
+    if (!fs.existsSync(this.repoRoot)) {
+      return false;
+    }
+    try {
+      const output = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
+        cwd: this.repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      return output === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  private configureRepository(): void {
+    this.git(['config', 'user.name', 'hermes agent']);
+    this.git(['config', 'user.email', 'hermeschain-agent@users.noreply.github.com']);
+
+    const remoteUrl = this.githubRemoteUrl();
+    if (!remoteUrl) {
+      return;
+    }
+
+    try {
+      this.git(['remote', 'set-url', this.remote, remoteUrl]);
+    } catch {
+      this.git(['remote', 'add', this.remote, remoteUrl]);
+    }
+  }
+
+  private cloneFresh(reason: string): boolean {
+    const remoteUrl = this.githubRemoteUrl();
+    const repo = process.env.GITHUB_REPO;
+
+    if (!remoteUrl || !repo) {
+      console.warn('[PACER] cannot repair repo: missing GITHUB_TOKEN/GITHUB_REPO');
+      return false;
+    }
+
+    if (!this.canRecreateRepoRoot()) {
+      console.warn(`[PACER] cannot repair repo at non-temp path: ${this.repoRoot}`);
+      return false;
+    }
+
+    const now = Date.now();
+    if (now - this.lastRepairAt < 60_000) {
+      console.warn('[PACER] repo repair suppressed to avoid a clone loop');
+      return false;
+    }
+    this.lastRepairAt = now;
+
+    try {
+      console.warn(`[PACER] repairing repo after ${reason}; recloning ${repo}`);
+      fs.rmSync(this.repoRoot, { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(this.repoRoot), { recursive: true });
+      execFileSync('git', ['clone', '--depth', '50', remoteUrl, this.repoRoot], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      this.configureRepository();
+      return true;
+    } catch (err: any) {
+      const stderr = err?.stderr?.toString?.() || '';
+      const stdout = err?.stdout?.toString?.() || '';
+      const combined = this.sanitizeSecret([stderr, stdout].filter(Boolean).join(' ').trim());
+      console.warn(
+        `[PACER] repo repair failed: ${err?.message || err}${combined ? ' — ' + combined : ''}`,
+      );
+      return false;
+    }
+  }
+
+  private ensureRepository(): boolean {
+    if (!this.isGitWorktree()) {
+      return this.cloneFresh('missing or invalid git worktree');
+    }
+
+    try {
+      this.configureRepository();
+      return true;
+    } catch (err: any) {
+      console.warn(`[PACER] repo config failed: ${err?.message || err}`);
+      return this.cloneFresh('repo config failure');
     }
   }
 
@@ -195,19 +311,34 @@ export class PacedPusher {
     fs.writeFileSync(this.pointerFile, `${n}\n`);
   }
 
-  private tick(): void {
+  private fetchRefs(): boolean {
     try {
       // Unshallow first — GitIntegration clones with --depth 50, so the
       // intermediate commits we want to push aren't in the local object
       // store yet. --unshallow is a no-op once the repo is already deep.
-      try { this.git(['fetch', '--unshallow', this.remote]); }
-      catch { /* already unshallow, ignore */ }
+      if (fs.existsSync(path.join(this.repoRoot, '.git', 'shallow'))) {
+        try { this.git(['fetch', '--unshallow', this.remote]); }
+        catch { /* already unshallow or unsupported by the remote, ignore */ }
+      }
       // Force-fetch all branches via explicit refspec — single-branch
       // clones don't have origin/<other> tracking refs by default.
-      this.git(['fetch', this.remote, '+refs/heads/*:refs/remotes/' + this.remote + '/*']);
+      this.git(['fetch', '--prune', this.remote, '+refs/heads/*:refs/remotes/' + this.remote + '/*']);
+      return true;
     } catch (err: any) {
       console.warn(`[PACER] fetch failed: ${err?.message || err}`);
+      return false;
+    }
+  }
+
+  private tick(): void {
+    if (!this.ensureRepository()) {
       return;
+    }
+
+    if (!this.fetchRefs()) {
+      if (!this.cloneFresh('fetch failure') || !this.fetchRefs()) {
+        return;
+      }
     }
 
     const queue = this.listForwardCommits();
