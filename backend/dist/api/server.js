@@ -127,8 +127,24 @@ async function main() {
     console.log(`   Total Supply: ${StateManager_1.stateManager.formatBalance(StateManager_1.stateManager.getTotalSupply())}`);
     console.log(`   Circulating: ${StateManager_1.stateManager.formatBalance(StateManager_1.stateManager.getCirculatingSupply())}\n`);
     const app = (0, express_1.default)();
-    app.use((0, cors_1.default)());
-    app.use(express_1.default.json());
+    // CORS allowlist via env (TASK-145). Comma-separated origins; default open.
+    const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (corsOrigins.length > 0) {
+        app.use((0, cors_1.default)({
+            origin: (origin, cb) => {
+                if (!origin || corsOrigins.includes(origin))
+                    return cb(null, true);
+                cb(new Error(`origin ${origin} not allowed by CORS`));
+            },
+            credentials: true,
+        }));
+        console.log(`[CORS] allowlist active (${corsOrigins.length} origin(s))`);
+    }
+    else {
+        app.use((0, cors_1.default)());
+    }
+    // Cap JSON body to 1MB (TASK-340) — DoS defense.
+    app.use(express_1.default.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' }));
     // Request observability middleware (TASK-146 + TASK-147 + TASK-148).
     // Order matters: requestId before accessLog so the log line has a value.
     const { requestId } = await Promise.resolve().then(() => __importStar(require('./middleware/requestId')));
