@@ -433,17 +433,25 @@ export class PacedPusher {
     }
 
     let pushed = 0;
-    for (let i = 0; i < this.batch && i < queue.length; i++) {
-      const sha = queue[i];
+    let skippedPublished = 0;
+    let skippedApplied = 0;
+    let failed = false;
+
+    for (const sha of queue) {
+      if (pushed >= this.batch) {
+        break;
+      }
+
       try {
         const subject = this.git(['log', '-1', '--pretty=%s', sha]);
         if (this.hasPublishedSubject(subject)) {
-          console.log(`[PACER] skipped ${sha.slice(0, 8)} ${subject} (message already on main)`);
+          skippedPublished++;
           continue;
         }
 
         const publishedSha = this.publishSanitizedCommit(sha, subject);
         if (!publishedSha) {
+          skippedApplied++;
           continue;
         }
 
@@ -451,8 +459,24 @@ export class PacedPusher {
         pushed++;
       } catch (err: any) {
         console.error(`[PACER] push of ${sha} failed: ${err?.message || err}`);
+        failed = true;
         break;
       }
+    }
+
+    if (skippedPublished > 0 || skippedApplied > 0) {
+      const parts: string[] = [];
+      if (skippedPublished > 0) {
+        parts.push(`${skippedPublished} already on ${this.target}`);
+      }
+      if (skippedApplied > 0) {
+        parts.push(`${skippedApplied} already applied`);
+      }
+      console.log(`[PACER] skipped ${parts.join(', ')} while scanning queue`);
+    }
+
+    if (!failed && pushed === 0) {
+      console.log('[PACER] no unpublished queue commits found this tick');
     }
 
     if (pushed > 0) {
