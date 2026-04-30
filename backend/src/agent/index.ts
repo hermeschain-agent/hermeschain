@@ -16,7 +16,6 @@ export { ciMonitor } from './CIMonitor';
 export { browserAutomation, BROWSER_TOOLS } from './BrowserAutomation';
 export { skillManager } from './SkillManager';
 export { tokenBudget, TokenBudget } from './TokenBudget';
-export { githubUpdates } from './GitHubUpdates';
 export type { TokenBudgetSnapshot } from './TokenBudget';
 
 import type { AgentConfig } from './config';

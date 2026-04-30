@@ -33,16 +33,6 @@ function isRepoRoot(candidate: string): boolean {
 }
 
 export function resolveRepoRoot(startDir: string = process.cwd()): string | null {
-  const configuredRoot = process.env.AGENT_REPO_ROOT
-    ? path.resolve(process.env.AGENT_REPO_ROOT)
-    : null;
-  if (
-    configuredRoot &&
-    (fs.existsSync(path.join(configuredRoot, '.git')) || isRepoRoot(configuredRoot))
-  ) {
-    return configuredRoot;
-  }
-
   let current = path.resolve(startDir);
 
   while (true) {

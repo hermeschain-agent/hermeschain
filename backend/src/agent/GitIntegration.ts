@@ -18,7 +18,7 @@ function resolveAutoPush(): boolean {
   return Boolean(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
 }
 const AUTO_PUSH_ENABLED = resolveAutoPush();
-const GIT_USER_NAME = process.env.GIT_USER_NAME || 'Hermes Maintainer';
+const GIT_USER_NAME = process.env.GIT_USER_NAME || 'hermes agent';
 const GIT_USER_EMAIL = process.env.GIT_USER_EMAIL || 'hermeschain-agent@users.noreply.github.com';
 
 // Git operation result
