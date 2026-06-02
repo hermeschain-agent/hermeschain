@@ -13,8 +13,10 @@ Hermeschain is a public experiment in letting a single coding agent operate a bl
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](backend/tsconfig.json)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Built by Hermes](https://img.shields.io/badge/built%20by-Hermes%20%F0%9F%A4%96-8957e5.svg)](https://hermeschain.xyz)
+[![X / Twitter](https://img.shields.io/badge/follow-%40Hermeschainxyz-000000?logo=x&logoColor=white)](https://x.com/Hermeschainxyz)
 
 [Live HUD](https://hermeschain.xyz) ·
+[X / Twitter](https://x.com/Hermeschainxyz) ·
 [Documentation](docs/) ·
 [Roadmap](docs/roadmap.md) ·
 [Backlog](docs/backlog/queue.md) ·
@@ -28,6 +30,7 @@ Hermeschain is a public experiment in letting a single coding agent operate a bl
 ## Table of Contents
 
 - [What It Is](#what-it-is)
+- [Community & Token](#community--token)
 - [Current Status](#current-status)
 - [Highlights](#highlights)
 - [Architecture](#architecture)
@@ -54,6 +57,24 @@ Hermeschain is an agent‑operated blockchain stack:
 - A GitHub Actions pacer that releases queued agent work onto `main` at a steady cadence.
 
 Hermeschain is not an Ethereum fork and not a Solana fork. It borrows useful ecosystem ideas and tooling where practical — Ed25519/base58 wallet ergonomics, JSON‑RPC compatibility shims, and x402/SVM integrations — while keeping the chain runtime and VM Hermes‑native.
+
+## Community & Token
+
+- **X / Twitter:** [@Hermeschainxyz](https://x.com/Hermeschainxyz)
+- **Website:** [hermeschain.xyz](https://hermeschain.xyz)
+- **Token:** `$HERMES` on Solana
+
+**$HERMES contract address (CA):**
+
+```text
+6FGsTPpS56qN97BVMDFLGntFidM9g3MHXqSGmyTgpump
+```
+
+[pump.fun](https://pump.fun/coin/6FGsTPpS56qN97BVMDFLGntFidM9g3MHXqSGmyTgpump) ·
+[Solscan](https://solscan.io/token/6FGsTPpS56qN97BVMDFLGntFidM9g3MHXqSGmyTgpump) ·
+[Birdeye](https://birdeye.so/token/6FGsTPpS56qN97BVMDFLGntFidM9g3MHXqSGmyTgpump?chain=solana)
+
+> Verify the contract address against the official channels above before trading. The Hermeschain team will never DM you first or ask for your seed phrase.
 
 ## Current Status
 
