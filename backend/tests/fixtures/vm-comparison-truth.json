@@ -1,0 +1,6 @@
+{
+  "label": "5 == 5 → 1",
+  "ops": [{"op":"PUSH","args":[5]},{"op":"PUSH","args":[5]},{"op":"EQ"},{"op":"STOP"}],
+  "gasLimit": "100",
+  "expected": {"status": "success"}
+}

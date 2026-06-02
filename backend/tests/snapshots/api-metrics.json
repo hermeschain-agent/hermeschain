@@ -1,0 +1,5 @@
+{
+  "endpoint": "GET /api/metrics",
+  "contentType": "text/plain",
+  "expectedTokens": ["hermes_chain_height", "hermes_mempool_size", "hermes_pg_pool_total", "hermes_pg_query_duration_ms_bucket", "hermes_peers_active"]
+}

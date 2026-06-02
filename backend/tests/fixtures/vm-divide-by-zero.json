@@ -1,0 +1,6 @@
+{
+  "label": "DIV by zero reverts",
+  "ops": [{"op":"PUSH","args":[10]}, {"op":"PUSH","args":[0]}, {"op":"DIV"}, {"op":"STOP"}],
+  "gasLimit": "100",
+  "expected": {"status": "revert", "errorContains": "division by zero"}
+}

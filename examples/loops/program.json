@@ -1,0 +1,9 @@
+[
+  {"op":"PUSH","args":[0]},
+  {"op":"PUSH","args":[10]},
+  {"op":"LOG","args":{"topics":["LoopStart"],"data":"counter init"}},
+  {"op":"PUSH","args":[1]},
+  {"op":"ADD"},
+  {"op":"LOG","args":{"topics":["LoopBody"],"data":"iter"}},
+  {"op":"STOP"}
+]

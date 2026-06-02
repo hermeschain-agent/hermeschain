@@ -1,0 +1,10 @@
+{
+  "title": "Hermeschain Validators",
+  "uid": "hermes-validators",
+  "schemaVersion": 38,
+  "panels": [
+    {"id":1,"type":"stat","title":"Active validators","targets":[{"expr":"hermes_validators_active"}]},
+    {"id":2,"type":"timeseries","title":"Quorum threshold","targets":[{"expr":"hermes_quorum_threshold"}]},
+    {"id":3,"type":"table","title":"Per-validator block production","targets":[{"expr":"hermes_validator_blocks_produced"}]}
+  ]
+}

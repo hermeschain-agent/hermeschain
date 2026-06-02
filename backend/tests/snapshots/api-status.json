@@ -1,0 +1,4 @@
+{
+  "endpoint": "GET /api/status",
+  "expectedShape": ["status", "chainLength", "pendingTransactions", "validators", "genesisTime", "chainAgeMs", "totalTransactions", "uptime", "redisConnected", "stateRoot", "totalSupply", "circulatingSupply"]
+}

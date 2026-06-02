@@ -1,0 +1,6 @@
+{
+  "label": "LOG appears in receipt",
+  "ops": [{"op":"PUSH","args":[1]}, {"op":"LOG","args":{"topics":["TestTopic"],"data":"hello"}}, {"op":"STOP"}],
+  "gasLimit": "10000",
+  "expected": {"status": "success", "logCount": 1}
+}

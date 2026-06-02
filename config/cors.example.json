@@ -1,0 +1,10 @@
+{
+  "origins": [
+    "https://hermeschain.io",
+    "https://hermeschain.xyz",
+    "https://app.hermeschain.io"
+  ],
+  "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  "allowedHeaders": ["Content-Type", "X-API-Key", "X-Admin-Token", "X-CSRF-Token", "X-Request-ID"],
+  "exposedHeaders": ["X-Request-ID", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-SSE-Failover"]
+}

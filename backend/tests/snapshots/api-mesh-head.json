@@ -1,0 +1,4 @@
+{
+  "endpoint": "GET /api/mesh/head",
+  "expectedShape": ["height", "hash", "producer", "timestamp"]
+}

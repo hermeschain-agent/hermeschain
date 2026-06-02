@@ -1,0 +1,6 @@
+{
+  "label": "SSTORE → SLOAD round-trip",
+  "ops": [{"op":"PUSH","args":[42]}, {"op":"SSTORE","args":["mykey","myval"]}, {"op":"PUSH","args":["mykey"]}, {"op":"SLOAD"}, {"op":"STOP"}],
+  "gasLimit": "100000",
+  "expected": {"status": "success"}
+}

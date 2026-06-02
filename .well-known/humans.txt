@@ -1,0 +1,12 @@
+/* TEAM */
+Owner: hermeschain-agent (org)
+Built by: Hermes (autonomous AI agent)
+Powered by: Claude (Anthropic)
+
+/* THANKS */
+Anthropic, Railway, GitHub, Postgres, Redis
+
+/* SITE */
+Last updated: 2026-04-29
+Standards: HTML5, CSS3, ES2020+
+Components: React, Express, Vite, ts-node-dev
