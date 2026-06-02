@@ -1,0 +1,9 @@
+# KECCAK (planned)
+
+Planned opcode covered by upcoming TASK in section 02. See `docs/backlog/queue/02-vm.md` for the spec.
+
+## Status
+Specced ✓ — implementation pending.
+
+## Spec
+Hash precompile. Pop input bytes, push 32-byte hash.
