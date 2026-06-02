@@ -1,0 +1,7 @@
+[
+  {"op":"PUSH","args":["price_feed"]},
+  {"op":"PUSH","args":[42000]},
+  {"op":"SSTORE","args":["price","42000"]},
+  {"op":"LOG","args":{"topics":["PriceUpdate"],"data":"42000"}},
+  {"op":"STOP"}
+]

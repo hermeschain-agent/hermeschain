@@ -1,0 +1,9 @@
+[
+  {"op":"PUSH","args":["proposal_count"]},
+  {"op":"SLOAD"},
+  {"op":"PUSH","args":[1]},
+  {"op":"ADD"},
+  {"op":"SSTORE","args":["proposal_count","incremented"]},
+  {"op":"LOG","args":{"topics":["Proposed"],"data":"new-proposal"}},
+  {"op":"STOP"}
+]

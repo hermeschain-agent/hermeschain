@@ -1,0 +1,8 @@
+[
+  {"op":"PUSH","args":["guardians"]},
+  {"op":"SLOAD"},
+  {"op":"PUSH","args":[3]},
+  {"op":"GT"},
+  {"op":"LOG","args":{"topics":["RecoveryEligibility"],"data":"checked"}},
+  {"op":"STOP"}
+]
