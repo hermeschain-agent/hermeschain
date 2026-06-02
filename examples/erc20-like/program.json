@@ -1,0 +1,9 @@
+[
+  {"op":"PUSH","args":["transfer"]},
+  {"op":"SLOAD"},
+  {"op":"PUSH","args":[100]},
+  {"op":"SUB"},
+  {"op":"SSTORE","args":["balance","new"]},
+  {"op":"LOG","args":{"topics":["Transfer"],"data":"transfer-100"}},
+  {"op":"STOP"}
+]
