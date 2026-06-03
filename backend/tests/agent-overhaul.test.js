@@ -59,6 +59,15 @@ test.before(async () => {
   try {
     await db.connect();
     await db.exec(createTables);
+    // account_state + state_changes are created by StateManager at runtime, NOT
+    // by createTables/migrations. Create them up front so a migration that
+    // indexes them (0046_state_changes_partial_idx) doesn't fail on a fresh DB
+    // and halt the sequential runner before the tables the tests need
+    // (agent_publish_cursor in 0051, agent_token_budget_state in 0052).
+    await db.exec(
+      "CREATE TABLE IF NOT EXISTS account_state (address VARCHAR(64) PRIMARY KEY, balance VARCHAR(78) NOT NULL DEFAULT '0', nonce INTEGER NOT NULL DEFAULT 0, code_hash VARCHAR(64), storage_root VARCHAR(64), updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);" +
+        'CREATE TABLE IF NOT EXISTS state_changes (id SERIAL PRIMARY KEY, address VARCHAR(64) NOT NULL, previous_balance VARCHAR(78) NOT NULL, new_balance VARCHAR(78) NOT NULL, previous_nonce INTEGER NOT NULL, new_nonce INTEGER NOT NULL, block_height INTEGER NOT NULL, tx_hash VARCHAR(64), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);',
+    );
     await applyPendingMigrations();
   } catch {
     /* no DB available, or already migrated */
