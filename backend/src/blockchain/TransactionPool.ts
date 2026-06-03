@@ -118,6 +118,24 @@ export class TransactionPool {
     return sorted;
   }
 
+  /**
+   * Mark a single tx confirmed immediately, the moment the producer applies it
+   * into a block. Kept separate from removeTransactions so confirmation does
+   * NOT depend on the producer reaching its post-block cleanup — a tx-bearing
+   * cycle that aborts after applying state was leaving the tx stuck 'pending'
+   * (so totalTransactions never moved off 0 even though balances moved).
+   */
+  async confirmTransaction(hash: string): Promise<void> {
+    this.pendingTransactions.delete(hash);
+    this.addedAtMs.delete(hash);
+    try {
+      const r = await db.query(`UPDATE transactions SET status = 'confirmed' WHERE hash = $1`, [hash]);
+      console.log(`[POOL] confirmed tx ${hash.slice(0, 12)}... (rows=${r.rowCount})`);
+    } catch (error) {
+      console.error('[POOL] confirmTransaction failed:', error);
+    }
+  }
+
   async removeTransactions(hashes: string[]) {
     for (const hash of hashes) {
       this.pendingTransactions.delete(hash);
