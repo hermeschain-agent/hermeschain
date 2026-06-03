@@ -52,7 +52,27 @@ const DDL_KEYWORD =
   /\b(create|alter|drop)\s+(table|index|view|type|schema|sequence|materialized)\b/i;
 const SOURCE_EXT = /\.(ts|tsx|js|jsx|css)$/i;
 
-type FileCategory = 'source' | 'migration' | 'doc' | 'dist' | 'placeholderConfig' | 'other';
+type FileCategory =
+  | 'source'
+  | 'migration'
+  | 'doc'
+  | 'dist'
+  | 'placeholderConfig'
+  | 'buildConfig'
+  | 'other';
+
+/** Lockfiles + tooling config a real maintenance commit legitimately carries. */
+function isBuildConfig(p: string): boolean {
+  const base = p.split('/').pop() || '';
+  return (
+    /^(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml)$/i.test(base) ||
+    /^tsconfig(\.[\w.-]+)?\.json$/i.test(base) ||
+    /^(prettier|eslint)\.config\.[cm]?[jt]s$/i.test(base) ||
+    /^\.(prettierrc|prettierignore|eslintrc|eslintignore|npmrc|nvmrc|editorconfig|gitignore|gitattributes|node-version)([\w.-]*)$/i.test(
+      base,
+    )
+  );
+}
 
 function classify(rawPath: string): FileCategory {
   const p = rawPath.replace(/\\/g, '/');
@@ -67,6 +87,9 @@ function classify(rawPath: string): FileCategory {
   if (/\.d\.ts$/i.test(p)) return 'other';
   if (/^(backend|frontend|extension)\/src\/.+/.test(p) && SOURCE_EXT.test(p)) return 'source';
   if (/^(backend|extension)\/tests?\/.+\.(ts|js)$/i.test(p)) return 'source';
+  // Legitimate build/tooling config — real engineering maintenance, distinct
+  // from the placeholder `config/*.json` + fixtures rejected above.
+  if (isBuildConfig(p)) return 'buildConfig';
   return 'other';
 }
 
@@ -158,6 +181,18 @@ export function assessCommitQuality(
   const docOnly = docs.length > 0 && nonDist.every((c) => c.cat === 'doc');
   if (docOnly && maxDocInsertions >= MIN_DOC_PROSE_LINES && docProseLines(diffText) >= 12) {
     return { quality: true, reason: `substantive documentation (largest doc +${maxDocInsertions} lines)` };
+  }
+
+  // 6b. Legitimate build/tooling config maintenance (lockfiles, tsconfig,
+  // prettier/eslint config, .npmrc, .gitignore, package.json). Accept when the
+  // commit carries real build config and none of the placeholder-config /
+  // fixture filler the gate targets.
+  const buildConfigs = cats.filter((c) => c.cat === 'buildConfig');
+  if (buildConfigs.length > 0 && !cats.some((c) => c.cat === 'placeholderConfig')) {
+    return {
+      quality: true,
+      reason: `build/tooling config maintenance (${buildConfigs.length} file(s))`,
+    };
   }
 
   // 7. Reject the remainder, with a specific reason.

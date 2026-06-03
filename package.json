@@ -3,10 +3,6 @@
   "version": "2.0.0",
   "description": "Autonomous AI blockchain built live by Hermes. Watch an agent write code, produce blocks, and evolve a chain in real-time.",
   "private": true,
-  "workspaces": [
-    "backend",
-    "frontend"
-  ],
   "scripts": {
     "install:all": "cd backend && npm install && cd ../frontend && npm install",
     "build": "cd backend && npm run build && cd ../frontend && npm run build",
