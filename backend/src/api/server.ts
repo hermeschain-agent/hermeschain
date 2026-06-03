@@ -2505,11 +2505,19 @@ Live context:
   app.get('/api/chain/stats', async (req, res) => {
     await syncSharedReadState();
     const stats = chain.getStats();
+    // totalTransactions authoritative from the DB confirmed-count (indexed):
+    // the in-memory counter can lag on a worker that doesn't refresh chain
+    // state on reads, so it under-reports real on-chain activity.
+    let confirmedTx = stats.totalTransactions;
+    try {
+      const r = await db.query(`SELECT COUNT(*)::int AS c FROM transactions WHERE status = 'confirmed'`);
+      confirmedTx = Number(r.rows[0]?.c ?? confirmedTx);
+    } catch { /* fall back to the in-memory counter */ }
     res.json({
       height: stats.height,
-      totalTransactions: stats.totalTransactions,
-      storedTransactions: stats.storedTransactions,
-      timeBasedTransactions: stats.storedTransactions,
+      totalTransactions: confirmedTx,
+      storedTransactions: confirmedTx,
+      timeBasedTransactions: confirmedTx,
       genesisTime: stats.genesisTime,
       latestBlockTime: stats.latestBlockTime,
       avgBlockTime: stats.avgBlockTime

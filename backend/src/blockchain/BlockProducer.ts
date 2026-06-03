@@ -162,6 +162,11 @@ export class BlockProducer {
 
         if (applied) {
           validTxs.push(tx);
+          // Confirm the tx in the DB immediately, atomically with the apply.
+          // Single-validator: the block always finalizes. This decouples
+          // confirmation from later steps (commit / AI-validate / fork resolve)
+          // that were leaving applied txs stuck 'pending'.
+          await this.txPool.confirmTransaction(tx.hash);
 
           // VM dispatch — if the tx carries `data: 'vm:...'`, run the
           // interpreter and derive real gasUsed + logs. Otherwise fall
