@@ -8,7 +8,12 @@ rmSync('dist', { recursive: true, force: true });
 mkdirSync('dist', { recursive: true });
 
 await esbuild.build({
-  entryPoints: { background: 'src/background.ts', popup: 'src/popup/popup.ts' },
+  entryPoints: {
+    background: 'src/background.ts',
+    content: 'src/content.ts',
+    inpage: 'src/inpage.ts',
+    popup: 'src/popup/popup.ts',
+  },
   bundle: true,
   format: 'iife',
   target: 'es2022',
