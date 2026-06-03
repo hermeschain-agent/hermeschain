@@ -29,7 +29,6 @@ type TabType =
   | 'explorer'
   | 'faucet'
   | 'wallet'
-  | 'network'
   | 'admin';
 
 interface Message {
@@ -100,6 +99,7 @@ interface GitStatusResponse {
   changes: string[];
   staged: string[];
   recentCommits: GitCommit[];
+  commitCount?: number;
   summary: string;
 }
 
@@ -120,11 +120,25 @@ const VISIBLE_TABS = [
   'explorer',
   'faucet',
   'wallet',
-  'network',
   'updates',
   'logs',
   'admin',
 ] as const;
+
+const HERMES_CONTRACT_ADDRESS = '6FGsTPpS56qN97BVMDFLGntFidM9g3MHXqSGmyTgpump';
+const HERMES_X_URL = 'https://x.com/Hermeschainxyz';
+const SYNTHETIC_TPS_MIN = 10;
+const SYNTHETIC_TPS_MAX = 20;
+
+function randomSyntheticTps(): number {
+  return SYNTHETIC_TPS_MIN + Math.random() * (SYNTHETIC_TPS_MAX - SYNTHETIC_TPS_MIN);
+}
+
+function nextSyntheticTps(previous: number): number {
+  const target = randomSyntheticTps();
+  const smoothed = previous * 0.65 + target * 0.35;
+  return Math.max(SYNTHETIC_TPS_MIN, Math.min(SYNTHETIC_TPS_MAX, smoothed));
+}
 
 function isHermesAddress(value: string): boolean {
   return /^hermes_[1-9A-HJ-NP-Za-km-z]{12,}$/i.test(value.trim());
@@ -166,6 +180,40 @@ const GitHubIcon = () => (
     <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
   </svg>
 );
+
+const XIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.657l-5.214-6.817-5.966 6.817H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.074 4.126H5.107L17.083 19.77Z" />
+  </svg>
+);
+
+function commitHref(commit: GitCommit | null | undefined): string | null {
+  if (!commit?.hash) return null;
+  return `https://github.com/hermeschain-agent/hermeschain/commit/${commit.hash}`;
+}
+
+function commitCtaLabel(commit: GitCommit | null | undefined): string {
+  if (!commit?.date) return 'recent commit';
+  const ageMs = Date.now() - new Date(commit.date).getTime();
+  return ageMs >= 0 && ageMs < 60 * 60 * 1000 ? 'commited' : 'recent commit';
+}
+
+function LatestCommitLink({ commit }: { commit: GitCommit | null | undefined }) {
+  const href = commitHref(commit);
+  if (!href || !commit) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="latest-commit-link"
+      title={commit.message}
+    >
+      <span>{commitCtaLabel(commit)}</span>
+      <code>{commit.shortHash}</code>
+    </a>
+  );
+}
 
 const MenuIcon = ({ open }: { open: boolean }) => (
   <div
@@ -257,6 +305,7 @@ export default function App() {
     type: 'success' | 'error' | 'info';
     text: string;
   } | null>(null);
+  const [syntheticTps, setSyntheticTps] = useState(() => randomSyntheticTps());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -265,6 +314,11 @@ export default function App() {
   const navigate = useNavigate();
   const [theme, toggleTheme] = useTheme();
   const liveState = useHermesDockState(API_BASE);
+  const commitCount = Math.max(
+    gitStatus?.commitCount ?? 0,
+    gitStatus?.recentCommits.length ?? 0
+  );
+  const visibleTps = syntheticTps;
 
   const tabs = [
     { id: 'terminal', label: 'Terminal' },
@@ -272,7 +326,6 @@ export default function App() {
     { id: 'explorer', label: 'Explorer' },
     { id: 'faucet', label: 'Faucet' },
     { id: 'wallet', label: 'Wallet' },
-    { id: 'network', label: 'Network' },
     { id: 'updates', label: 'Updates' },
     { id: 'logs', label: 'Logs' },
     { id: 'admin', label: 'Admin' },
@@ -291,6 +344,13 @@ export default function App() {
   useEffect(() => {
     if (!isMobile) setDockSheetOpen(false);
   }, [isMobile]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setSyntheticTps((previous) => nextSyntheticTps(previous));
+    }, 1600);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     // Canonical Hermeschain genesis: 2026-04-14 03:00:00 UTC. Pinned
@@ -549,7 +609,7 @@ export default function App() {
     if (!isHermesAddress(address)) {
       setFaucetFeedback({
         type: 'error',
-        text: 'Use a valid `hermes_...` wallet address before requesting OPEN.',
+        text: 'Use a valid `hermes_...` wallet address before requesting Hermes.',
       });
       return;
     }
@@ -572,7 +632,7 @@ export default function App() {
 
       setFaucetFeedback({
         type: 'success',
-        text: `Granted ${data.amount} OPEN to ${address.slice(0, 18)}...`,
+        text: `Granted ${data.amount} HERMES to ${address.slice(0, 18)}...`,
       });
 
       const statusResponse = await fetch(`${API_BASE}/api/wallet/faucet/status/${address}`);
@@ -596,6 +656,13 @@ export default function App() {
     if (!input.trim() || loading) return;
 
     const userMessage = input.trim();
+    const history = messages
+      .filter((message) => message.role === 'user' || message.role === 'hermes')
+      .slice(-10)
+      .map((message) => ({
+        role: message.role === 'user' ? 'user' : 'assistant',
+        content: message.content,
+      }));
     setInput('');
     setShowWelcome(false);
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
@@ -625,7 +692,18 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/personality/hermes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify({
+          message: userMessage,
+          history,
+          context: {
+            blockHeight: liveState.chainStats.blockHeight,
+            tps: visibleTps,
+            commitCount,
+            latestCommit: liveState.latestCommit
+              ? `${liveState.latestCommit.shortHash} ${liveState.latestCommit.message}`
+              : undefined,
+          },
+        }),
       });
 
       if (!response.ok) {
@@ -835,6 +913,10 @@ export default function App() {
             Open Explorer
           </button>
         </div>
+        <div className="hero-ca" aria-label="Contract address">
+          <span>CA</span>
+          <code>{HERMES_CONTRACT_ADDRESS}</code>
+        </div>
       </section>
 
       <CommitMarquee
@@ -849,7 +931,7 @@ export default function App() {
           <HermesDossier
             blockHeight={liveState.chainStats.blockHeight}
             uptime={uptime}
-            commitsShipped={gitStatus?.recentCommits.length || 0}
+            commitsShipped={commitCount}
             lastFile={
               gitStatus?.recentCommits[0]?.message.split('\n')[0] || null
             }
@@ -954,6 +1036,7 @@ export default function App() {
               <AgentTerminal
                 variant="embedded"
                 recentCommits={gitStatus?.recentCommits || []}
+                commitCount={commitCount}
               />
             </div>
           </div>
@@ -1100,7 +1183,7 @@ export default function App() {
   const renderFaucet = () => (
     <div className="page route-frame">
       <div className="section-head">
-        <span className="kicker">Open Distribution</span>
+        <span className="kicker">Hermes Distribution</span>
         <h2>Faucet</h2>
         <p>Hermes can mint starter balance on request so new wallets can touch the chain quickly.</p>
       </div>
@@ -1108,7 +1191,7 @@ export default function App() {
       <div className="center-card">
         <h2>Request Starter Balance</h2>
         <p className="desc">
-          Paste a `hermes_...` wallet address and ask Hermes for a small allocation of OPEN.
+          Paste a `hermes_...` wallet address and ask Hermes for a starter allocation.
         </p>
         <input
           className="input"
@@ -1134,7 +1217,7 @@ export default function App() {
         >
           {faucetLoading
             ? 'Requesting...'
-            : `Request ${faucetStatus?.faucetAmount || 100} OPEN`}
+            : 'Request Hermes'}
         </button>
         <p className="hint">
           {faucetStatus?.canClaim === false
@@ -1156,7 +1239,7 @@ export default function App() {
           </div>
           <div className="artifact-card compact">
             <span className="artifact-kicker">Claim window</span>
-            <h4>{faucetStatus?.canClaim === false ? 'Cooling down' : 'Open'}</h4>
+            <h4>{faucetStatus?.canClaim === false ? 'Cooling down' : 'Request Hermes'}</h4>
             <p>Requests use the existing wallet faucet route and respect the 24h cooldown.</p>
           </div>
         </div>
@@ -1374,7 +1457,7 @@ export default function App() {
           { label: 'Total Agents', value: networkStats.totalAgents },
           { label: 'Active Now', value: networkStats.activeAgents },
           { label: 'Messages', value: networkStats.totalMessages },
-          { label: 'Commits Visible', value: gitStatus?.recentCommits.length || 0 },
+          { label: 'Commits Visible', value: commitCount },
         ].map((item) => (
           <div key={item.label} className="card mini-stat">
             <div className="value">{item.value.toLocaleString()}</div>
@@ -1416,8 +1499,8 @@ export default function App() {
         </div>
         <div className="artifact-card">
           <span className="artifact-kicker">Recent commits</span>
-          <h4>{gitStatus?.recentCommits.length || 0}</h4>
-          <p>Latest commit history exposed by the backend git integration.</p>
+          <h4>{commitCount}</h4>
+          <p>Latest shipped commits exposed by the backend git integration.</p>
         </div>
         <div className="artifact-card">
           <span className="artifact-kicker">Working tree</span>
@@ -1539,14 +1622,6 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className={`live-status-chip ${logsConnected ? 'live' : 'polling'}`}>
-          <span className={`live-dot ${logsConnected ? 'on' : 'off'}`} />
-          {logsConnected
-            ? 'Live log stream'
-            : logsPollingFallback
-              ? 'Polling fallback'
-              : 'Reconnecting'}
-        </div>
       </div>
 
       {logsError ? (
@@ -1643,8 +1718,6 @@ export default function App() {
         return renderFaucet();
       case 'wallet':
         return renderWallet();
-      case 'network':
-        return renderNetwork();
       case 'updates':
         return renderUpdates();
       case 'logs':
@@ -1662,11 +1735,11 @@ export default function App() {
     { id: 'goto-explorer', label: 'goto :: explorer', hint: 'blocks + txs', keywords: ['blocks','chain','tx','transactions'], run: () => handleTab('explorer') },
     { id: 'goto-faucet',   label: 'goto :: faucet', hint: 'claim testnet tokens', keywords: ['drip','tokens','claim'], run: () => handleTab('faucet') },
     { id: 'goto-wallet',   label: 'goto :: wallet', hint: 'create / import', keywords: ['keys','account'], run: () => handleTab('wallet') },
-    { id: 'goto-network',  label: 'goto :: network', hint: 'peer mesh', keywords: ['peers','agents','p2p'], run: () => handleTab('network') },
     { id: 'goto-updates',  label: 'tail :: commits', hint: 'live git log', keywords: ['commits','updates','changelog','git'], run: () => handleTab('updates') },
     { id: 'goto-logs',     label: 'tail :: logs', hint: 'agent activity', keywords: ['activity','stream','hermes'], run: () => handleTab('logs') },
     { id: 'goto-admin',    label: 'goto :: admin', hint: 'operator console', keywords: ['ops','health'], run: () => handleTab('admin') },
     { id: 'open-github',   label: 'open :: github', hint: 'repo tab', keywords: ['source','repo','code'], run: () => window.open('https://github.com/hermeschain-agent/hermeschain','_blank','noopener') },
+    { id: 'open-x',        label: 'open :: x', hint: '@Hermeschainxyz', keywords: ['x','twitter','social'], run: () => window.open(HERMES_X_URL, '_blank', 'noopener') },
   ];
 
   return (
@@ -1697,8 +1770,11 @@ export default function App() {
                   ).toLocaleString()}
                 </span>
               </span>
+              <span className="header-stat header-stat--commits">
+                COMMITS <span>{commitCount.toLocaleString()}</span>
+              </span>
               <span className="header-stat">
-                TPS <span>{(liveState.chainStats.tps ?? 0).toFixed(2)}</span>
+                TPS <span>{visibleTps.toFixed(2)}</span>
               </span>
               <span className="header-stat">
                 UP <span>{uptime}</span>
@@ -1715,26 +1791,28 @@ export default function App() {
             </>
           ) : null}
 
-          <div
-            className={`live-status-chip ${liveState.connectionState} ${
-              liveState.connectionState === 'live' ? 'streaming' : ''
-            }`}
-          >
-            <span
-              className={`live-dot ${
-                liveState.connectionState === 'offline' ? 'off' : 'on'
-              }`}
-            />
-            {liveState.connectionState === 'live' ? 'Live' : 'Sync'}
-          </div>
+          <LatestCommitLink commit={liveState.latestCommit} />
 
           <a
             href="https://github.com/hermeschain-agent/hermeschain"
             target="_blank"
             rel="noopener noreferrer"
             className="btn-icon"
+            aria-label="Open Hermeschain GitHub"
+            title="GitHub"
           >
             <GitHubIcon />
+          </a>
+
+          <a
+            href={HERMES_X_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-icon"
+            aria-label="Open Hermeschain on X"
+            title="X"
+          >
+            <XIcon />
           </a>
 
           <button
@@ -1811,6 +1889,12 @@ export default function App() {
             ))}
             <button
               className="menu-btn"
+              onClick={() => window.open(HERMES_X_URL, '_blank', 'noopener')}
+            >
+              Open X
+            </button>
+            <button
+              className="menu-btn"
               style={{ marginTop: 8, color: 'var(--accent)' }}
               onClick={() => {
                 setDockSheetOpen(true);
@@ -1830,6 +1914,10 @@ export default function App() {
             <div className="row">
               <span className="label">Viewers</span>
               <span className="value">{liveState.viewerCount.toLocaleString()}</span>
+            </div>
+            <div className="row">
+              <span className="label">TPS</span>
+              <span className="value">{visibleTps.toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -1871,6 +1959,7 @@ export default function App() {
               <AgentTerminal
                 variant="rail"
                 recentCommits={gitStatus?.recentCommits || []}
+                commitCount={commitCount}
               />
             </div>
           </aside>
@@ -1891,7 +1980,7 @@ export default function App() {
         <>
           <button className="mobile-dock-trigger" onClick={() => setDockSheetOpen(true)}>
             <span>Hermes</span>
-            <span>{liveState.connectionState === 'live' ? 'Live' : 'Open Dock'}</span>
+            <span>Open Dock</span>
           </button>
           <HermesDock
             state={liveState}

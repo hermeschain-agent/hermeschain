@@ -69,7 +69,7 @@ export const AGENT_TOOLS = [
   },
   {
     name: 'run_command',
-    description: 'Run a shell command in the project directory. Use for npm, git, or other CLI tools.',
+    description: 'Run a read-only or verification command in the project directory. Use for builds, tests, or safe inspection commands.',
     input_schema: {
       type: 'object',
       properties: {
@@ -135,25 +135,6 @@ export const AGENT_TOOLS = [
     }
   },
   {
-    name: 'git_commit',
-    description: 'Stage changes and create a git commit',
-    input_schema: {
-      type: 'object',
-      properties: {
-        message: {
-          type: 'string',
-          description: 'Commit message'
-        },
-        files: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Files to stage (default: all changed files)'
-        }
-      },
-      required: ['message']
-    }
-  },
-  {
     name: 'explain',
     description: 'Explain what you\'re thinking or about to do. This is streamed to the frontend terminal.',
     input_schema: {
@@ -194,7 +175,32 @@ const BLOCKED_COMMANDS = [
   '> /dev/sda',
   'mv /* ',
   'wget .* \\|.*sh',
-  'curl .* \\|.*sh'
+  'curl .* \\|.*sh',
+  'git commit',
+  'git push',
+  'git checkout',
+  'git switch',
+  'git merge',
+  'git rebase',
+  'git reset',
+  'git stash',
+  'git cherry-pick',
+  'git apply',
+  'git am'
+];
+
+const SHELL_META_PATTERN = /[;&|`$<>]/;
+const READ_ONLY_COMMAND_ALLOWLIST = [
+  /^npm\s+run\s+(build|test)(\s|$)/,
+  /^npm\s+test(\s|$)/,
+  /^node\s+--test(\s|$)/,
+  /^npx\s+tsc\s+--noEmit(\s|$)/,
+  /^tsc\s+--noEmit(\s|$)/,
+  /^rg\s+[^;&|`$<>]+$/,
+  /^git\s+(status|diff|log|show|branch\s+--show-current|rev-parse|ls-files)(\s|$)/,
+  /^pwd$/,
+  /^ls(\s+[-A-Za-z0-9_./]+)*$/,
+  /^cat\s+[-A-Za-z0-9_./]+$/,
 ];
 
 // Blocked file paths
@@ -310,7 +316,14 @@ export class AgentExecutor {
 
   // Validate command is safe
   private isCommandSafe(command: string): boolean {
-    const lowerCommand = command.toLowerCase();
+    const normalizedCommand = command.trim().replace(/\s+/g, ' ');
+    const lowerCommand = normalizedCommand.toLowerCase();
+    if (!normalizedCommand) return false;
+
+    if (SHELL_META_PATTERN.test(normalizedCommand)) {
+      console.log('[EXECUTOR] BLOCKED shell metacharacter command');
+      return false;
+    }
     
     for (const blocked of BLOCKED_COMMANDS) {
       if (lowerCommand.includes(blocked.toLowerCase())) {
@@ -328,18 +341,31 @@ export class AgentExecutor {
       console.log('[EXECUTOR] BLOCKED rm command');
       return false;
     }
+
+    // Keep shell execution inspection/verification-only. All file writes
+    // must go through write_file so path scopes are enforced consistently.
+    if (
+      />|>>/.test(command) ||
+      /\btee\b/.test(lowerCommand) ||
+      /\bsed\s+-i\b/.test(lowerCommand) ||
+      /\bperl\s+-i\b/.test(lowerCommand) ||
+      /\bpython3?\s+-c\b/.test(lowerCommand) ||
+      /\bnode\s+-e\b/.test(lowerCommand) ||
+      /\bruby\s+-e\b/.test(lowerCommand) ||
+      /\bphp\s+-r\b/.test(lowerCommand)
+    ) {
+      console.log('[EXECUTOR] BLOCKED mutating shell command');
+      return false;
+    }
     
     // Block git commands that could affect deployment files
     if (lowerCommand.includes('git rm') || lowerCommand.includes('git mv')) {
       console.log('[EXECUTOR] BLOCKED git rm/mv command');
       return false;
     }
-    
-    // Block commands that write outside hermes-generated
-    if ((lowerCommand.includes('echo ') || lowerCommand.includes('cat ')) && 
-        lowerCommand.includes('>') && 
-        !lowerCommand.includes('hermes-generated')) {
-      console.log('[EXECUTOR] BLOCKED write redirect outside hermes-generated');
+
+    if (!READ_ONLY_COMMAND_ALLOWLIST.some((pattern) => pattern.test(normalizedCommand))) {
+      console.log('[EXECUTOR] BLOCKED non-allowlisted command');
       return false;
     }
     
@@ -586,11 +612,18 @@ export class AgentExecutor {
     const results: { file: string; line: number; content: string }[] = [];
     
     try {
-      const grepCommand = filePattern 
-        ? `grep -rn "${pattern}" --include="${filePattern}" . 2>/dev/null | head -50`
-        : `grep -rn "${pattern}" --include="*.ts" --include="*.tsx" --include="*.js" . 2>/dev/null | head -50`;
-      
-      const output = execSync(grepCommand, {
+      const rgArgs = ['-n', '--max-count', '50', pattern, '.'];
+      if (filePattern) {
+        rgArgs.unshift('--glob', filePattern);
+      } else {
+        rgArgs.unshift(
+          '--glob', '*.js',
+          '--glob', '*.tsx',
+          '--glob', '*.ts'
+        );
+      }
+
+      const output = execSync(`rg ${rgArgs.map((arg) => JSON.stringify(arg)).join(' ')}`, {
         cwd: this.projectRoot,
         encoding: 'utf-8',
         timeout: 10000
@@ -653,14 +686,6 @@ export class AgentExecutor {
     }
   }
 
-  // Create git commit - DISABLED to prevent file deletions
-  async gitCommit(message: string, files?: string[]): Promise<GitResult> {
-    return gitIntegration.autoCommitAndPush(message, undefined, {
-      scopes: this.currentWriteScopes,
-      files,
-    });
-  }
-
   // Execute a tool call from Claude
   async executeTool(toolName: string, args: any): Promise<any> {
     console.log(`[EXECUTOR] Running tool: ${toolName}`, args);
@@ -692,10 +717,6 @@ export class AgentExecutor {
       
       case 'git_status':
         result = await this.gitStatus();
-        break;
-      
-      case 'git_commit':
-        result = await this.gitCommit(args.message, args.files);
         break;
       
       case 'explain':

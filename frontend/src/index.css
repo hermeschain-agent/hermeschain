@@ -66,13 +66,13 @@
   --px-glow: 0 0 12px rgba(255, 230, 203, 0.15);
 
   /* Fluid type scale */
-  --fs-xs:   clamp(10px, 0.72vw + 8px, 12px);
-  --fs-sm:   clamp(12px, 0.8vw + 10px, 14px);
-  --fs-md:   clamp(14px, 1vw + 12px, 17px);
-  --fs-lg:   clamp(18px, 1.6vw + 14px, 22px);
-  --fs-xl:   clamp(24px, 2.4vw + 16px, 34px);
-  --fs-2xl:  clamp(28px, 3vw + 16px, 48px);
-  --fs-hero: clamp(36px, 4.5vw + 16px, 72px);
+  --fs-xs:   clamp(12px, 0.75vw + 10px, 14px);
+  --fs-sm:   clamp(14px, 0.9vw + 12px, 17px);
+  --fs-md:   clamp(16px, 1.1vw + 13px, 19px);
+  --fs-lg:   clamp(20px, 1.7vw + 15px, 25px);
+  --fs-xl:   clamp(27px, 2.6vw + 18px, 38px);
+  --fs-2xl:  clamp(31px, 3.2vw + 18px, 54px);
+  --fs-hero: clamp(40px, 4.8vw + 18px, 80px);
 
   /* Layout */
   --content-max: 1600px;
@@ -134,17 +134,15 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  /* Kill antialiasing globally — let the bitmap pixels crunch. */
-  -webkit-font-smoothing: none;
-  -moz-osx-font-smoothing: unset;
-  font-smooth: never;
-  image-rendering: pixelated;
-  image-rendering: -moz-crisp-edges;
-  image-rendering: crisp-edges;
+  /* Crisp, smooth text: PP Mondwest/NeueBit are vector display fonts, so
+   * grayscale antialiasing renders them sharp instead of rough/blurry.
+   * Pixelated image-rendering stays scoped to the sprite/logo rules below. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html, body { height: 100%; }
-html { font-size: 16px; }
+html { font-size: 17px; }
 
 body {
   font-family: var(--font-bitmap);
@@ -153,7 +151,7 @@ body {
   font-size: var(--fs-md);
   line-height: 1.6;
   font-weight: 400;
-  text-rendering: optimizeSpeed;
+  text-rendering: optimizeLegibility;
 }
 
 #root { min-height: 100dvh; min-height: 100vh; }
@@ -303,6 +301,47 @@ a:hover { text-decoration-color: var(--cream); }
   letter-spacing: 0.02em;
 }
 
+.latest-commit-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--cream-dim);
+  color: var(--fg-muted);
+  background: transparent;
+  box-shadow: 2px 2px 0 0 var(--cream-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition:
+    border-color var(--px-transition),
+    background var(--px-transition),
+    box-shadow var(--px-transition),
+    transform var(--px-transition);
+}
+
+.latest-commit-link code {
+  color: var(--cream);
+  background: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.latest-commit-link:hover {
+  border-color: var(--cream);
+  background: var(--bg-hover);
+  box-shadow: 3px 3px 0 0 var(--cream);
+  transform: translate(-1px, -1px);
+}
+
+.latest-commit-link--dock {
+  min-height: 34px;
+  padding: 0 10px;
+  box-shadow: none;
+}
+
 /* ---- Navigation tabs ---- */
 
 .app-nav {
@@ -362,8 +401,6 @@ a:hover { text-decoration-color: var(--cream); }
     border-color 80ms linear,
     filter 80ms linear;
   image-rendering: pixelated;
-  -webkit-font-smoothing: none;
-  font-smooth: never;
 }
 
 .tab-btn::before {
@@ -678,36 +715,6 @@ button { font-family: inherit; cursor: pointer; }
   font-size: var(--fs-xs);
 }
 
-.live-status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--cream-dim);
-  background: rgba(var(--surface-hi-rgb), 0.9);
-  color: var(--fg-muted);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
-
-.live-status-chip.live {
-  border-color: rgba(168, 230, 163, 0.35);
-  color: var(--success);
-}
-
-.live-status-chip.polling {
-  border-color: rgba(255, 200, 114, 0.32);
-  color: var(--amber);
-}
-
-.live-status-chip.offline {
-  border-color: rgba(255, 107, 107, 0.3);
-  color: var(--red);
-}
-
 .artifact-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
@@ -976,6 +983,42 @@ button { font-family: inherit; cursor: pointer; }
   margin-top: clamp(12px, 3vh, 32px);
 }
 
+.hero-ca {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: min(100%, 720px);
+  padding: 10px 14px;
+  border: 1px solid var(--cream-dim);
+  background: rgba(var(--surface-lo-rgb), 0.72);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: clamp(14px, 1.6vw, 18px);
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  box-shadow: 3px 3px 0 0 rgba(255, 230, 203, 0.08);
+}
+
+.hero-ca span {
+  color: var(--cream);
+  flex-shrink: 0;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.hero-ca code {
+  min-width: 0;
+  padding: 0;
+  background: none;
+  color: var(--cream);
+  font: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
 /* ---- Install strip ---- */
 
 .install-strip {
@@ -1181,7 +1224,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .chat-bubble .sender {
   font-family: var(--font-display);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   text-transform: uppercase;
   letter-spacing: 0.12em;
   margin-bottom: 8px;
@@ -1190,7 +1233,7 @@ button { font-family: inherit; cursor: pointer; }
 .chat-bubble.user .sender { color: var(--fg-muted); }
 .chat-bubble .content {
   font-family: var(--font-sans);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
   line-height: 1.7;
   color: var(--fg);
   white-space: pre-wrap;
@@ -1526,19 +1569,6 @@ button { font-family: inherit; cursor: pointer; }
 }
 .log-legend-item { display: flex; align-items: center; gap: 8px; }
 .log-legend-item .dot { width: 10px; height: 10px; border-radius: 0; }
-
-.live-dot {
-  width: 8px; height: 8px; border-radius: 0;
-  animation: pulse 2s ease-in-out infinite;
-}
-.live-dot.on { background: var(--success); box-shadow: 0 0 10px rgba(168, 230, 163, 0.6); }
-.live-dot.off { background: var(--red); }
-
-/* Streaming: amplify the dot animation when SSE is actively pushing. */
-.live-status-chip.streaming .live-dot.on {
-  animation: pulse 0.9s steps(2, end) infinite;
-  box-shadow: 0 0 14px rgba(168, 230, 163, 0.9);
-}
 
 /* ---- Updates ---- */
 
@@ -2121,6 +2151,12 @@ button { font-family: inherit; cursor: pointer; }
   font-variant-numeric: tabular-nums;
 }
 
+.terminal__commit-count {
+  color: var(--term-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .terminal__stage {
   display: inline-flex;
   align-items: center;
@@ -2142,11 +2178,9 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--term-accent);
 }
 
-.terminal__stage--offline,
 .terminal__stage--halted {
   color: var(--red);
 }
-.terminal__stage--offline::before,
 .terminal__stage--halted::before {
   background: var(--red);
 }
@@ -2209,6 +2243,11 @@ button { font-family: inherit; cursor: pointer; }
   animation: cursorBlink 0.9s steps(2, end) infinite;
 }
 
+.terminal__caret--code {
+  height: 14px;
+  vertical-align: -2px;
+}
+
 .terminal__path-chip {
   display: inline;
   padding: 1px 5px;
@@ -2254,6 +2293,17 @@ button { font-family: inherit; cursor: pointer; }
   background: transparent;
 }
 
+.terminal__commit-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  color: inherit;
+}
+
+.terminal__commit-link:hover .terminal__commit-msg code {
+  color: var(--term-accent);
+}
+
 .terminal__commit-dot {
   width: 6px;
   height: 6px;
@@ -2272,6 +2322,14 @@ button { font-family: inherit; cursor: pointer; }
   font-family: inherit;
   background: none;
   padding: 0;
+}
+
+.dock-commit-card-link {
+  color: var(--cream);
+}
+
+.dock-commit-card-link:hover {
+  color: var(--fg);
 }
 
 
@@ -3184,8 +3242,7 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
 }
 .dossier__badge--real    { color: #70ffad; border-color: rgba(112, 255, 173, 0.5); }
 .dossier__badge--demo    { color: #ffc872; border-color: rgba(255, 200, 114, 0.5); }
-.dossier__badge--disabled,
-.dossier__badge--offline { color: rgba(255, 130, 130, 0.85); border-color: rgba(255, 130, 130, 0.4); }
+.dossier__badge--disabled { color: rgba(255, 130, 130, 0.85); border-color: rgba(255, 130, 130, 0.4); }
 .dossier__led {
   width: 8px;
   height: 8px;
@@ -3433,4 +3490,3 @@ a, button, [role="button"], .tab-btn, .btn-primary, .btn-ghost, .btn-icon,
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-

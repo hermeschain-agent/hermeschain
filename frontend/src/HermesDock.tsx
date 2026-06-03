@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  ConnectionState,
   HermesDockState,
   VerificationStatus,
 } from './useHermesDockState';
@@ -34,16 +33,6 @@ function formatDuration(value?: number | null): string {
   return `${hours}h ${minutes}m`;
 }
 
-function connectionCopy(connectionState: ConnectionState): string {
-  const labels: Record<ConnectionState, string> = {
-    live: 'Live',
-    polling: 'Polling fallback',
-    offline: 'Offline',
-  };
-
-  return labels[connectionState];
-}
-
 function verificationCopy(status: VerificationStatus): string {
   const labels: Record<VerificationStatus, string> = {
     pending: 'Pending',
@@ -54,6 +43,17 @@ function verificationCopy(status: VerificationStatus): string {
   };
 
   return labels[status];
+}
+
+function commitHref(commit: HermesDockState['latestCommit']): string | null {
+  if (!commit?.hash) return null;
+  return `https://github.com/hermeschain-agent/hermeschain/commit/${commit.hash}`;
+}
+
+function commitCtaLabel(commit: HermesDockState['latestCommit']): string {
+  if (!commit?.date) return 'recent commit';
+  const ageMs = Date.now() - new Date(commit.date).getTime();
+  return ageMs >= 0 && ageMs < 60 * 60 * 1000 ? 'commited' : 'recent commit';
 }
 
 function modeCopy(state: HermesDockState): string {
@@ -117,14 +117,18 @@ export default function HermesDock({
               <span className="section-label">Hermes Presence</span>
               <h3>Living Hermes Shell</h3>
             </div>
-            <div className={`live-status-chip ${state.connectionState}`}>
-              <span
-                className={`live-dot ${
-                  state.connectionState === 'offline' ? 'off' : 'on'
-                }`}
-              />
-              {connectionCopy(state.connectionState)}
-            </div>
+            {state.latestCommit && commitHref(state.latestCommit) ? (
+              <a
+                className="latest-commit-link latest-commit-link--dock"
+                href={commitHref(state.latestCommit) || undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={state.latestCommit.message}
+              >
+                <span>{commitCtaLabel(state.latestCommit)}</span>
+                <code>{state.latestCommit.shortHash}</code>
+              </a>
+            ) : null}
           </div>
 
           <div className="sigil-divider" />
@@ -184,7 +188,20 @@ export default function HermesDock({
 
             <div className="artifact-card">
               <span className="artifact-kicker">Latest commit</span>
-              <h4>{state.latestCommit?.shortHash || 'No commit yet'}</h4>
+              <h4>
+                {state.latestCommit && commitHref(state.latestCommit) ? (
+                  <a
+                    href={commitHref(state.latestCommit) || undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="dock-commit-card-link"
+                  >
+                    {state.latestCommit.shortHash}
+                  </a>
+                ) : (
+                  'No commit yet'
+                )}
+              </h4>
               <p>
                 {state.latestCommit
                   ? `${state.latestCommit.message} • ${state.latestCommit.date}`

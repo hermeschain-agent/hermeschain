@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import Redis from 'ioredis';
 import * as dotenv from 'dotenv';
 import { recordQuery, recordQueryError } from './queryMetrics';
@@ -38,6 +38,9 @@ const REDIS_URL = process.env.REDIS_URL;
 
 if (REDIS_URL) {
   redis = new Redis(REDIS_URL, {
+    // Railway private networking (*.railway.internal) is IPv6-only; ioredis
+    // defaults to family 4 (IPv4) and would ETIMEDOUT. family:0 = dual-stack.
+    family: 0,
     maxRetriesPerRequest: 3,
     retryStrategy: (times) => Math.min(times * 100, 3000),
   });
@@ -117,6 +120,43 @@ export const db = {
       throw error;
     }
   },
+
+  transaction: async <T>(
+    callback: (client: { query: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }> }) => Promise<T>
+  ): Promise<T> => {
+    if (!pool) {
+      return callback({
+        query: async () => ({ rows: [], rowCount: 0 }),
+      });
+    }
+
+    let client: PoolClient | null = null;
+    try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+
+      const result = await callback({
+        query: async (text: string, params: any[] = []) => {
+          const queryResult = await client!.query(text, params);
+          return { rows: queryResult.rows, rowCount: queryResult.rowCount || 0 };
+        },
+      });
+
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      if (client) {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          // Keep original error.
+        }
+      }
+      throw error;
+    } finally {
+      client?.release();
+    }
+  },
   
   // Pool capacity snapshot for /api/metrics + /health/ready.
   // Returns zeros when running in-memory (no pool).
@@ -153,7 +193,13 @@ export const db = {
   end: async (): Promise<void> => {
     if (pool) await pool.end();
     if (redis) redis.disconnect();
-  }
+  },
+
+  isPersistent: (): boolean => pool !== null,
+
+  redisClient: (): Redis | null => redis,
+
+  hasRedis: (): boolean => redis !== null,
 };
 
 // Redis cache helper

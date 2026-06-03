@@ -73,7 +73,7 @@ const initializeAgentsTable = async () => {
     
     await db.exec(`
       CREATE TABLE IF NOT EXISTS agent_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         agent_id TEXT NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -332,4 +332,3 @@ agentsRouter.get('/meta/specializations', (req, res) => {
 initializeAgentsTable();
 
 export { agentsRouter };
-

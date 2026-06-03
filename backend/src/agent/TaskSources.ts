@@ -76,6 +76,11 @@ export class TaskSources {
   private initialized = false;
   private backlogSynced = false;
   private listenerDisposers: Array<() => void> = [];
+  private lastScanAt = new Map<string, number>();
+  private readonly TODO_SCAN_MS = Number(process.env.TODO_SCAN_MS) || 5 * 60 * 1000;
+  private readonly DEPENDENCY_SCAN_MS = Number(process.env.DEPENDENCY_SCAN_MS) || 6 * 60 * 60 * 1000;
+  private readonly GITHUB_SCAN_MS = Number(process.env.GITHUB_SCAN_MS) || 10 * 60 * 1000;
+  private readonly CIP_SCAN_MS = Number(process.env.CIP_SCAN_MS) || 5 * 60 * 1000;
 
   configure(config: AgentConfig): void {
     this.config = config;
@@ -102,6 +107,16 @@ export class TaskSources {
   private on(event: string, listener: (...args: any[]) => void): void {
     eventBus.on(event, listener);
     this.listenerDisposers.push(() => eventBus.off(event, listener));
+  }
+
+  private shouldRunScan(scanKey: string, minIntervalMs: number): boolean {
+    const now = Date.now();
+    const last = this.lastScanAt.get(scanKey) || 0;
+    if (now - last < minIntervalMs) {
+      return false;
+    }
+    this.lastScanAt.set(scanKey, now);
+    return true;
   }
 
   // Per-event-type cooldown — avoid enqueuing 50 "investigate consensus
@@ -536,6 +551,10 @@ export class TaskSources {
   }
 
   async scanTodoComments(): Promise<void> {
+    if (!this.shouldRunScan('todo_comments', this.TODO_SCAN_MS)) {
+      return;
+    }
+
     try {
       const output = execSync(
         'rg -n "TODO|FIXME" backend/src frontend/src README.md ' +
@@ -588,6 +607,10 @@ export class TaskSources {
   }
 
   async scanDependencies(): Promise<void> {
+    if (!this.shouldRunScan('dependencies', this.DEPENDENCY_SCAN_MS)) {
+      return;
+    }
+
     const packageRoots = [
       this.config?.projectPaths.backend,
       this.config?.projectPaths.frontend,
@@ -634,6 +657,10 @@ export class TaskSources {
   }
 
   async scanGitHubIssues(): Promise<void> {
+    if (!this.shouldRunScan('github_issues', this.GITHUB_SCAN_MS)) {
+      return;
+    }
+
     try {
       const output = execSync(
         'gh issue list --state open --limit 10 --json number,title,body,labels 2>/dev/null || echo "[]"',
@@ -677,6 +704,10 @@ export class TaskSources {
   }
 
   async scanCipProposals(): Promise<void> {
+    if (!this.shouldRunScan('cip_proposals', this.CIP_SCAN_MS)) {
+      return;
+    }
+
     try {
       const result = await db.query(`
         SELECT * FROM cips

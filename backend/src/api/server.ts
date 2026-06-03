@@ -1,8 +1,9 @@
-import express from 'express';
+import express, { Response } from 'express';
 import cors from 'cors';
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
+import { execFileSync } from 'child_process';
 import { Server as SocketIOServer } from 'socket.io';
 import { Chain } from '../blockchain/Chain';
 import { TransactionPool } from '../blockchain/TransactionPool';
@@ -14,12 +15,777 @@ import { db, cache } from '../database/db';
 import { createTables } from '../database/schema';
 import { applyPendingMigrations } from '../database/migrations';
 import { getHermesConfigStatus, getPublicHermesError } from '../llm/hermesClient';
+import {
+  AgentTimelineEvent,
+  TIMELINE_LOG_TYPES,
+  normalizeAgentTimelineRow,
+} from './agentTimeline';
+import {
+  CommitPlaybackCommit,
+  CommitPlaybackCursor,
+  CommitPlaybackFile,
+  buildCommitPlaybackEvents,
+  decodeCommitPlaybackCursor,
+  encodeCommitPlaybackCursor,
+  nextCommitCursor,
+  nextPageCursor,
+  normalizeCommitPlaybackCursor,
+  restartCommitPlaybackCursor,
+} from './gitPlayback';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
 
 // Global Socket.io instance for real-time updates
 export let io: SocketIOServer | null = null;
+
+interface GitStatusCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+interface PublicGitSnapshot {
+  recentCommits: GitStatusCommit[];
+  commitCount: number;
+}
+
+interface GitCommitFeedFile {
+  path: string;
+  status: string;
+  language: string;
+  additions: number;
+  deletions: number;
+  patch: string;
+  truncated: boolean;
+}
+
+interface GitCommitFeedCommit extends GitStatusCommit {
+  href: string;
+  files: GitCommitFeedFile[];
+}
+
+interface GitCommitFeed {
+  repo: string;
+  commitCount: number;
+  commits: GitCommitFeedCommit[];
+}
+
+interface GitCommitPage {
+  repo: string;
+  page: number;
+  perPage: number;
+  lastPage: number | null;
+  commitCount: number;
+  commits: GitStatusCommit[];
+}
+
+interface GitCommitPlaybackResponse {
+  repo: string;
+  commitCount: number;
+  cursor: string;
+  nextCursor: string;
+  events: ReturnType<typeof buildCommitPlaybackEvents>;
+  stale: boolean;
+}
+
+const PUBLIC_GITHUB_REPO =
+  process.env.PUBLIC_GITHUB_REPOSITORY ||
+  process.env.GITHUB_REPOSITORY ||
+  process.env.GITHUB_REPO ||
+  'hermeschain-agent/hermeschain';
+let publicGitSnapshotCache:
+  | { fetchedAt: number; limit: number; snapshot: PublicGitSnapshot }
+  | null = null;
+let publicGitCommitFeedCache:
+  | { fetchedAt: number; limit: number; feed: GitCommitFeed }
+  | null = null;
+const publicGitCommitPageCache = new Map<
+  string,
+  { fetchedAt: number; page: GitCommitPage }
+>();
+const publicGitCommitDetailCache = new Map<
+  string,
+  { fetchedAt: number; commit: CommitPlaybackCommit }
+>();
+
+const MAX_COMMIT_FEED_FILES = 4;
+const MAX_COMMIT_PATCH_CHARS = 2600;
+const COMMIT_PLAYBACK_PER_PAGE = 10;
+const COMMIT_PLAYBACK_EVENT_LIMIT = 12;
+const COMMIT_PLAYBACK_DIFF_CHUNK_CHARS = 1800;
+
+function isCommitHash(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{7,40}$/i.test(value);
+}
+
+function shortCommitHash(value: string): string {
+  return value.slice(0, 8);
+}
+
+function slicePublicGitSnapshot(
+  cache: { snapshot: PublicGitSnapshot },
+  limit: number,
+): PublicGitSnapshot {
+  return {
+    commitCount: cache.snapshot.commitCount,
+    recentCommits: cache.snapshot.recentCommits.slice(0, limit),
+  };
+}
+
+function slicePublicGitCommitFeed(
+  cache: { feed: GitCommitFeed },
+  limit: number,
+): GitCommitFeed {
+  return {
+    ...cache.feed,
+    commits: cache.feed.commits.slice(0, limit),
+  };
+}
+
+function publicGithubRepo(): string {
+  return PUBLIC_GITHUB_REPO.replace(/^\/+|\/+$/g, '');
+}
+
+function githubCommitUrl(commitHash: string): string {
+  return `https://github.com/${publicGithubRepo()}/commit/${commitHash}`;
+}
+
+function languageForPath(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  if (/\.(ts|tsx)$/.test(lower)) return 'typescript';
+  if (/\.(js|jsx|mjs|cjs)$/.test(lower)) return 'javascript';
+  if (lower.endsWith('.css')) return 'css';
+  if (lower.endsWith('.json')) return 'json';
+  if (lower.endsWith('.md') || lower.endsWith('.mdx')) return 'markdown';
+  if (lower.endsWith('.sql')) return 'sql';
+  if (/\.(yml|yaml)$/.test(lower)) return 'yaml';
+  if (lower.endsWith('.sh')) return 'bash';
+  if (/\.(html|htm)$/.test(lower)) return 'html';
+  return 'diff';
+}
+
+function capCommitPatch(patch: string): { patch: string; truncated: boolean } {
+  const clean = patch.replace(/\r\n?/g, '\n').trim();
+  if (clean.length <= MAX_COMMIT_PATCH_CHARS) {
+    return { patch: clean, truncated: false };
+  }
+  return {
+    patch: `${clean.slice(0, MAX_COMMIT_PATCH_CHARS - 34)}\n… diff truncated for terminal replay`,
+    truncated: true,
+  };
+}
+
+function parseGithubLastPage(linkHeader: string | null): number | null {
+  if (!linkHeader) return null;
+  const lastLink = linkHeader
+    .split(',')
+    .find((part) => /rel="last"/.test(part));
+  const match = lastLink?.match(/[?&]page=(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function getGithubHeaders(): Record<string, string> {
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  return {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'hermeschain-status',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function findLocalGitRoot(): string | null {
+  let dir = process.env.REPO_ROOT || process.cwd();
+  for (let depth = 0; depth < 6; depth++) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function runLocalGit(args: string[], maxBuffer: number = 8 * 1024 * 1024): string | null {
+  const root = findLocalGitRoot();
+  if (!root) return null;
+  try {
+    return execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trimEnd();
+  } catch {
+    return null;
+  }
+}
+
+function localGitPlaybackRef(): string {
+  return runLocalGit(['rev-parse', '--verify', 'origin/main'], 1024)
+    ? 'origin/main'
+    : 'HEAD';
+}
+
+function parseLocalGitCommitLine(line: string): GitStatusCommit | null {
+  const [hash, author, date, ...subjectParts] = line.split('\x1f');
+  if (!isCommitHash(hash)) return null;
+  return {
+    hash,
+    shortHash: shortCommitHash(hash),
+    message: subjectParts.join('\x1f') || 'Git commit',
+    author: author || 'Hermes',
+    date: date || new Date().toISOString(),
+  };
+}
+
+function fetchLocalGitCommitPage(
+  page: number,
+  perPage: number = COMMIT_PLAYBACK_PER_PAGE,
+): GitCommitPage | null {
+  const boundedPage = Math.max(1, Math.floor(page) || 1);
+  const boundedPerPage = Math.max(1, Math.min(Math.floor(perPage) || COMMIT_PLAYBACK_PER_PAGE, 30));
+  const skip = (boundedPage - 1) * boundedPerPage;
+  const ref = localGitPlaybackRef();
+  const output = runLocalGit([
+    'log',
+    ref,
+    `--skip=${skip}`,
+    `--max-count=${boundedPerPage}`,
+    '--format=%H%x1f%an%x1f%aI%x1f%s',
+  ]);
+  if (!output) return null;
+
+  const commits = output
+    .split('\n')
+    .map(parseLocalGitCommitLine)
+    .filter((commit): commit is GitStatusCommit => commit !== null);
+  if (commits.length === 0) return null;
+
+  const countOutput = runLocalGit(['rev-list', '--count', ref], 1024);
+  const commitCount = Math.max(0, parseInt(countOutput || '', 10) || commits.length);
+  return {
+    repo: publicGithubRepo(),
+    page: boundedPage,
+    perPage: boundedPerPage,
+    lastPage: Math.max(1, Math.ceil(commitCount / boundedPerPage)),
+    commitCount,
+    commits,
+  };
+}
+
+function splitLocalGitPatch(patch: string): CommitPlaybackFile[] {
+  const normalized = patch.replace(/\r\n?/g, '\n').trim();
+  if (!normalized) return [];
+
+  const parts = normalized.split(/^diff --git /m).filter(Boolean);
+  return parts.map((part, index) => {
+    const filePatch = part.startsWith('diff --git ')
+      ? part
+      : `diff --git ${part}`;
+    const header = filePatch.split('\n')[0] || '';
+    const match = header.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    const pathName = match?.[2] || match?.[1] || `commit-${index + 1}.diff`;
+    const additions = filePatch
+      .split('\n')
+      .filter((line) => line.startsWith('+') && !line.startsWith('+++')).length;
+    const deletions = filePatch
+      .split('\n')
+      .filter((line) => line.startsWith('-') && !line.startsWith('---')).length;
+
+    return {
+      path: pathName,
+      status: 'modified',
+      language: 'diff',
+      additions,
+      deletions,
+      patch: filePatch,
+      truncated: false,
+    };
+  });
+}
+
+function fetchLocalGitCommitDetail(summary: GitStatusCommit): CommitPlaybackCommit | null {
+  const patch = runLocalGit(
+    ['show', '--format=', '--patch', '--find-renames', '--find-copies', summary.hash],
+    16 * 1024 * 1024,
+  );
+  if (patch === null) return null;
+  return {
+    ...summary,
+    href: githubCommitUrl(summary.hash),
+    files: splitLocalGitPatch(patch),
+  };
+}
+
+async function fetchPublicGitSnapshot(limit: number = 5): Promise<PublicGitSnapshot | null> {
+  const boundedLimit = Math.max(1, Math.min(limit, 30));
+  const now = Date.now();
+  if (
+    publicGitSnapshotCache &&
+    publicGitSnapshotCache.limit >= boundedLimit &&
+    now - publicGitSnapshotCache.fetchedAt < 60_000
+  ) {
+    return slicePublicGitSnapshot(publicGitSnapshotCache, boundedLimit);
+  }
+
+  const repo = publicGithubRepo();
+  const url = `https://api.github.com/repos/${repo}/commits?per_page=${boundedLimit}`;
+  const countUrl = `https://api.github.com/repos/${repo}/commits?per_page=1`;
+  const headers = getGithubHeaders();
+
+  try {
+    const [commitsResponse, countResponse] = await Promise.all([
+      fetch(url, { headers }),
+      fetch(countUrl, { method: 'HEAD', headers }),
+    ]);
+
+    if (!commitsResponse.ok) {
+      console.warn(
+        `[GIT] GitHub commits fallback failed: ${commitsResponse.status} ${commitsResponse.statusText}`
+      );
+      return publicGitSnapshotCache
+        ? slicePublicGitSnapshot(publicGitSnapshotCache, boundedLimit)
+        : null;
+    }
+
+    const payload = (await commitsResponse.json()) as Array<{
+      sha?: string;
+      commit?: {
+        message?: string;
+        author?: { name?: string; date?: string };
+        committer?: { name?: string; date?: string };
+      };
+      author?: { login?: string };
+    }>;
+
+    const recentCommits = payload
+      .filter((commit) => isCommitHash(commit.sha))
+      .map((commit) => ({
+        hash: commit.sha as string,
+        shortHash: shortCommitHash(commit.sha as string),
+        message: commit.commit?.message || 'GitHub commit',
+        author:
+          commit.commit?.author?.name ||
+          commit.commit?.committer?.name ||
+          commit.author?.login ||
+          'Hermes',
+        date:
+          commit.commit?.author?.date ||
+          commit.commit?.committer?.date ||
+          new Date().toISOString(),
+      }));
+
+    const linkCount =
+      countResponse.ok ? parseGithubLastPage(countResponse.headers.get('link')) : null;
+    const commitCount =
+      linkCount && Number.isFinite(linkCount)
+        ? linkCount
+        : recentCommits.length < boundedLimit
+          ? recentCommits.length
+          : recentCommits.length;
+
+    const snapshot = {
+      recentCommits,
+      commitCount,
+    };
+    publicGitSnapshotCache = { fetchedAt: now, limit: boundedLimit, snapshot };
+    return snapshot;
+  } catch (error: any) {
+    console.warn('[GIT] GitHub commits fallback unavailable:', error?.message || error);
+    return publicGitSnapshotCache
+      ? slicePublicGitSnapshot(publicGitSnapshotCache, boundedLimit)
+      : null;
+  }
+}
+
+async function fetchPublicGitCommitFeed(limit: number = 12): Promise<GitCommitFeed | null> {
+  const boundedLimit = Math.max(1, Math.min(limit, 20));
+  const now = Date.now();
+  if (
+    publicGitCommitFeedCache &&
+    publicGitCommitFeedCache.limit >= boundedLimit &&
+    now - publicGitCommitFeedCache.fetchedAt < 90_000
+  ) {
+    return slicePublicGitCommitFeed(publicGitCommitFeedCache, boundedLimit);
+  }
+
+  const snapshot = await fetchPublicGitSnapshot(boundedLimit);
+  if (!snapshot) {
+    return publicGitCommitFeedCache
+      ? slicePublicGitCommitFeed(publicGitCommitFeedCache, boundedLimit)
+      : null;
+  }
+
+  const repo = publicGithubRepo();
+  const headers = getGithubHeaders();
+  const commits = await Promise.all(
+    snapshot.recentCommits.slice(0, boundedLimit).map(async (commit) => {
+      try {
+        const response = await fetch(
+          `https://api.github.com/repos/${repo}/commits/${commit.hash}`,
+          { headers }
+        );
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+
+        const payload = (await response.json()) as {
+          html_url?: string;
+          files?: Array<{
+            filename?: string;
+            status?: string;
+            additions?: number;
+            deletions?: number;
+            patch?: string;
+          }>;
+        };
+
+        const files = (payload.files || [])
+          .filter((file) => typeof file.filename === 'string')
+          .slice(0, MAX_COMMIT_FEED_FILES)
+          .map((file) => {
+            const pathName = file.filename as string;
+            const status = file.status || 'modified';
+            const additions = Number(file.additions || 0);
+            const deletions = Number(file.deletions || 0);
+            const rawPatch =
+              typeof file.patch === 'string' && file.patch.trim()
+                ? `diff --git a/${pathName} b/${pathName}\n# ${status} +${additions} -${deletions}\n${file.patch}`
+                : `diff --git a/${pathName} b/${pathName}\n# ${status} +${additions} -${deletions}\n# patch unavailable for this file`;
+            const capped = capCommitPatch(rawPatch);
+            return {
+              path: pathName,
+              status,
+              language: 'diff',
+              additions,
+              deletions,
+              patch: capped.patch,
+              truncated: capped.truncated,
+            };
+          });
+
+        return {
+          ...commit,
+          href: payload.html_url || githubCommitUrl(commit.hash),
+          files,
+        };
+      } catch (error: any) {
+        console.warn(
+          `[GIT] Commit detail fallback failed for ${commit.shortHash}:`,
+          error?.message || error
+        );
+        return {
+          ...commit,
+          href: githubCommitUrl(commit.hash),
+          files: [],
+        };
+      }
+    })
+  );
+
+  const feed = {
+    repo,
+    commitCount: snapshot.commitCount,
+    commits,
+  };
+  publicGitCommitFeedCache = { fetchedAt: now, limit: boundedLimit, feed };
+  return feed;
+}
+
+function mapGithubCommitSummary(commit: {
+  sha?: string;
+  commit?: {
+    message?: string;
+    author?: { name?: string; date?: string };
+    committer?: { name?: string; date?: string };
+  };
+  author?: { login?: string };
+}): GitStatusCommit | null {
+  if (!isCommitHash(commit.sha)) return null;
+  return {
+    hash: commit.sha,
+    shortHash: shortCommitHash(commit.sha),
+    message: commit.commit?.message || 'GitHub commit',
+    author:
+      commit.commit?.author?.name ||
+      commit.commit?.committer?.name ||
+      commit.author?.login ||
+      'Hermes',
+    date:
+      commit.commit?.author?.date ||
+      commit.commit?.committer?.date ||
+      new Date().toISOString(),
+  };
+}
+
+async function fetchPublicGitCommitPage(
+  page: number,
+  perPage: number = COMMIT_PLAYBACK_PER_PAGE,
+): Promise<{ page: GitCommitPage; stale: boolean } | null> {
+  const boundedPage = Math.max(1, Math.floor(page) || 1);
+  const boundedPerPage = Math.max(1, Math.min(Math.floor(perPage) || COMMIT_PLAYBACK_PER_PAGE, 30));
+  const cacheKey = `${boundedPage}:${boundedPerPage}`;
+  const cached = publicGitCommitPageCache.get(cacheKey);
+  const now = Date.now();
+  const freshFor = boundedPage === 1 ? 60_000 : 10 * 60_000;
+
+  if (cached && now - cached.fetchedAt < freshFor) {
+    return { page: cached.page, stale: false };
+  }
+
+  const repo = publicGithubRepo();
+  const headers = getGithubHeaders();
+  const url = `https://api.github.com/repos/${repo}/commits?per_page=${boundedPerPage}&page=${boundedPage}`;
+
+  try {
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      console.warn(
+        `[GIT] GitHub commit page ${boundedPage} failed: ${response.status} ${response.statusText}`
+      );
+      const localPage = fetchLocalGitCommitPage(boundedPage, boundedPerPage);
+      if (localPage) {
+        publicGitCommitPageCache.set(cacheKey, { fetchedAt: now, page: localPage });
+        return { page: localPage, stale: true };
+      }
+      return cached ? { page: cached.page, stale: true } : null;
+    }
+
+    const payload = (await response.json()) as Array<{
+      sha?: string;
+      commit?: {
+        message?: string;
+        author?: { name?: string; date?: string };
+        committer?: { name?: string; date?: string };
+      };
+      author?: { login?: string };
+    }>;
+
+    const lastPage = parseGithubLastPage(response.headers.get('link'));
+    const commits = payload
+      .map(mapGithubCommitSummary)
+      .filter((commit): commit is GitStatusCommit => commit !== null);
+    const commitCount =
+      lastPage && Number.isFinite(lastPage)
+        ? (lastPage - 1) * boundedPerPage + commits.length
+        : publicGitSnapshotCache?.snapshot.commitCount || commits.length;
+    const pageData: GitCommitPage = {
+      repo,
+      page: boundedPage,
+      perPage: boundedPerPage,
+      lastPage,
+      commitCount,
+      commits,
+    };
+    publicGitCommitPageCache.set(cacheKey, { fetchedAt: now, page: pageData });
+    return { page: pageData, stale: false };
+  } catch (error: any) {
+    console.warn(
+      `[GIT] GitHub commit page ${boundedPage} unavailable:`,
+      error?.message || error
+    );
+    const localPage = fetchLocalGitCommitPage(boundedPage, boundedPerPage);
+    if (localPage) {
+      publicGitCommitPageCache.set(cacheKey, { fetchedAt: now, page: localPage });
+      return { page: localPage, stale: true };
+    }
+    return cached ? { page: cached.page, stale: true } : null;
+  }
+}
+
+function filePatchFromGithub(file: {
+  filename?: string;
+  status?: string;
+  additions?: number;
+  deletions?: number;
+  patch?: string;
+}): CommitPlaybackFile | null {
+  if (typeof file.filename !== 'string' || !file.filename.trim()) return null;
+  const pathName = file.filename;
+  const status = file.status || 'modified';
+  const additions = Number(file.additions || 0);
+  const deletions = Number(file.deletions || 0);
+  const rawPatch =
+    typeof file.patch === 'string' && file.patch.trim()
+      ? `diff --git a/${pathName} b/${pathName}\n# ${status} +${additions} -${deletions}\n${file.patch}`
+      : `diff --git a/${pathName} b/${pathName}\n# ${status} +${additions} -${deletions}\n# patch unavailable for this file`;
+
+  return {
+    path: pathName,
+    status,
+    language: 'diff',
+    additions,
+    deletions,
+    patch: rawPatch,
+    truncated: false,
+  };
+}
+
+async function fetchPublicGitCommitDetail(
+  summary: GitStatusCommit,
+): Promise<{ commit: CommitPlaybackCommit; stale: boolean }> {
+  const cached = publicGitCommitDetailCache.get(summary.hash);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt < 10 * 60_000) {
+    return { commit: cached.commit, stale: false };
+  }
+
+  const repo = publicGithubRepo();
+  const headers = getGithubHeaders();
+
+  try {
+    const response = await fetch(
+      `https://api.github.com/repos/${repo}/commits/${summary.hash}`,
+      { headers }
+    );
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    const payload = (await response.json()) as {
+      html_url?: string;
+      files?: Array<{
+        filename?: string;
+        status?: string;
+        additions?: number;
+        deletions?: number;
+        patch?: string;
+      }>;
+    };
+
+    const commit: CommitPlaybackCommit = {
+      ...summary,
+      href: payload.html_url || githubCommitUrl(summary.hash),
+      files: (payload.files || [])
+        .map(filePatchFromGithub)
+        .filter((file): file is CommitPlaybackFile => file !== null),
+    };
+    publicGitCommitDetailCache.set(summary.hash, { fetchedAt: now, commit });
+    return { commit, stale: false };
+  } catch (error: any) {
+    console.warn(
+      `[GIT] Commit playback detail failed for ${summary.shortHash}:`,
+      error?.message || error
+    );
+    if (cached) {
+      return { commit: cached.commit, stale: true };
+    }
+    const localCommit = fetchLocalGitCommitDetail(summary);
+    if (localCommit) {
+      publicGitCommitDetailCache.set(summary.hash, {
+        fetchedAt: Date.now(),
+        commit: localCommit,
+      });
+      return { commit: localCommit, stale: true };
+    }
+    return {
+      commit: {
+        ...summary,
+        href: githubCommitUrl(summary.hash),
+        files: [],
+      },
+      stale: true,
+    };
+  }
+}
+
+function cursorAfterEvent(
+  eventNextCursor: string | undefined,
+  fallback: CommitPlaybackCursor,
+): CommitPlaybackCursor {
+  return eventNextCursor
+    ? decodeCommitPlaybackCursor(eventNextCursor)
+    : normalizeCommitPlaybackCursor(fallback);
+}
+
+async function fetchPublicGitCommitPlayback(
+  cursorInput: string | undefined,
+  limit: number,
+): Promise<GitCommitPlaybackResponse | null> {
+  const boundedLimit = Math.max(1, Math.min(Math.floor(limit) || COMMIT_PLAYBACK_EVENT_LIMIT, 30));
+  let cursor = normalizeCommitPlaybackCursor({
+    ...decodeCommitPlaybackCursor(cursorInput),
+    perPage: COMMIT_PLAYBACK_PER_PAGE,
+  });
+  const startCursor = encodeCommitPlaybackCursor(cursor);
+  const events: GitCommitPlaybackResponse['events'] = [];
+  let repo = publicGithubRepo();
+  let commitCount = publicGitSnapshotCache?.snapshot.commitCount || 0;
+  let stale = false;
+  let guard = 0;
+
+  while (events.length < boundedLimit && guard < 80) {
+    guard += 1;
+    const pageResult = await fetchPublicGitCommitPage(cursor.page, cursor.perPage);
+    if (!pageResult) break;
+
+    stale = stale || pageResult.stale;
+    repo = pageResult.page.repo;
+    commitCount = Math.max(commitCount, pageResult.page.commitCount);
+
+    if (pageResult.page.commits.length === 0) {
+      cursor = restartCommitPlaybackCursor(cursor);
+      continue;
+    }
+
+    if (cursor.commitIndex >= pageResult.page.commits.length) {
+      const nextCursor = nextPageCursor(cursor);
+      cursor =
+        pageResult.page.lastPage && nextCursor.page > pageResult.page.lastPage
+          ? restartCommitPlaybackCursor(cursor)
+          : nextCursor;
+      continue;
+    }
+
+    const summary = pageResult.page.commits[cursor.commitIndex];
+    const detail = await fetchPublicGitCommitDetail(summary);
+    stale = stale || detail.stale;
+    const commitEvents = buildCommitPlaybackEvents(detail.commit, {
+      cursor,
+      diffChunkSize: COMMIT_PLAYBACK_DIFF_CHUNK_CHARS,
+    });
+
+    if (cursor.eventIndex >= commitEvents.length) {
+      cursor = nextCommitCursor(cursor);
+      continue;
+    }
+
+    while (events.length < boundedLimit && cursor.eventIndex < commitEvents.length) {
+      const event = commitEvents[cursor.eventIndex];
+      events.push(event);
+      cursor = cursorAfterEvent(event.nextCursor, {
+        ...cursor,
+        eventIndex: cursor.eventIndex + 1,
+      });
+    }
+
+    if (cursor.eventIndex >= commitEvents.length) {
+      cursor = nextCommitCursor(cursor);
+    }
+  }
+
+  if (events.length === 0) return null;
+  return {
+    repo,
+    commitCount,
+    cursor: startCursor,
+    nextCursor: encodeCommitPlaybackCursor(cursor),
+    events,
+    stale,
+  };
+}
+
+function dedupeCommits(commits: GitStatusCommit[]): GitStatusCommit[] {
+  const seen = new Set<string>();
+  const deduped: GitStatusCommit[] = [];
+  for (const commit of commits) {
+    const key = commit.hash.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(commit);
+  }
+  return deduped;
+}
 
 async function main() {
   const hermesConfig = getHermesConfigStatus();
@@ -37,7 +803,11 @@ async function main() {
     const connected = await db.connect();
     if (connected) {
       // Create tables if they don't exist (legacy schema).
-      await db.exec(createTables);
+      try {
+        await db.exec(createTables);
+      } catch (err: any) {
+        console.warn('[DB] Legacy schema bootstrap warning:', err?.message || err);
+      }
       // Apply any pending NNNN_*.sql migrations in lexicographic order.
       // Idempotent; tracked in schema_migrations. Future schema changes
       // go through this runner rather than editing schema.ts inline.
@@ -534,10 +1304,29 @@ async function main() {
   // Terminal chat handler — powered by Nous Hermes. Shared by the
   // canonical /api/personality/:validator route and the /api/hermes/chat
   // alias so SDK callers don't need to know the validator name.
+  const normalizeChatHistory = (value: any) => {
+    if (!Array.isArray(value)) return [];
+
+    return value
+      .slice(-10)
+      .map((turn) => {
+        const role = turn?.role === 'user'
+          ? 'user'
+          : turn?.role === 'assistant' || turn?.role === 'hermes'
+            ? 'assistant'
+            : null;
+        const content = typeof turn?.content === 'string' ? turn.content.trim() : '';
+        if (!role || !content) return null;
+        return { role, content: content.slice(0, 1200) };
+      })
+      .filter(Boolean);
+  };
+
   const chatHandler = async (req: any, res: any) => {
     try {
       const userMessage = req.body.message || req.body.command;
       const userContext = req.body.context || {};
+      const history = normalizeChatHistory(req.body.history || req.body.messages);
 
       if (!userMessage) {
         return res.status(400).json({ error: 'Message is required', message: 'Please provide a message.' });
@@ -550,12 +1339,20 @@ async function main() {
         return res.status(404).json({ error: 'No validators available', message: 'No Hermes validator is currently available.' });
       }
 
+      const publicSnapshot = await fetchPublicGitSnapshot(3).catch(() => null);
+      const latestCommit = publicSnapshot?.recentCommits?.[0]
+        ? `${publicSnapshot.recentCommits[0].shortHash} ${publicSnapshot.recentCommits[0].message.split('\n')[0]}`
+        : undefined;
+
       const context = {
         blockHeight: userContext.blockHeight || chain.getChainLength(),
         tps: userContext.tps || txPool.getPendingCount(),
         validators: validators.length,
         gasPrice: userContext.gasPrice || 5,
         chainId: userContext.chainId || 1337,
+        commitCount: userContext.commitCount || publicSnapshot?.commitCount,
+        latestCommit: userContext.latestCommit || latestCommit,
+        history,
       };
 
       console.log('[TERMINAL] Chat request:', userMessage.substring(0, 50) + '...');
@@ -872,11 +1669,26 @@ Live context:
   await skillManager.initialize();
   await agentTaskStore.initialize();
   await agentRuntimeStore.initialize();
+  await tokenBudget.initialize();
+
+  const { startLeaderElection } = await import('../agent/leaderElection');
+  const {
+    setAuthoringLeader,
+    setPublisherLeader,
+    getLeadershipSnapshot,
+  } = await import('../agent/PublishQueue');
+  const { PacedPusher } = await import('../agent/PacedPusher');
+  let leaderHandle: Awaited<ReturnType<typeof startLeaderElection>> | null = null;
+  let leaderActive = false;
+  let pacer: InstanceType<typeof PacedPusher> | null = null;
+  const blockProductionEnabled =
+    process.env.AGENT_BLOCK_PRODUCTION_ENABLED !== 'false' &&
+    process.env.BLOCK_PRODUCTION_ENABLED !== 'false';
 
   const { githubUpdates } = await import('../agent/GitHubUpdates');
   await githubUpdates.initialize(agentConfig.repoRoot || process.cwd());
   const shouldRunGitHubSync =
-    agentConfig.role === 'worker' || !process.env.WORKER_INTERNAL_URL;
+    agentConfig.role !== 'worker' && !process.env.WORKER_INTERNAL_URL;
   if (shouldRunGitHubSync) {
     githubUpdates.startBackgroundSync();
   }
@@ -886,11 +1698,7 @@ Live context:
     `[GITHUB] Updates center ready (${shouldRunGitHubSync ? 'active sync' : 'cache reader'})`
   );
 
-  if (agentConfig.role === 'worker') {
-    await startNetworkHeartbeat();
-  } else {
-    stopNetworkHeartbeat();
-  }
+  stopNetworkHeartbeat();
 
   // ========== ADMIN DASHBOARD ==========
   const { adminRouter } = await import('./admin');
@@ -933,17 +1741,28 @@ Live context:
   // Track connected SSE clients
   let agentViewerCount = 0;
 
-  const parseGitLogEntry = (row: any) => {
+  const parseGitLogEntry = (row: any): GitStatusCommit | null => {
     const metadata = row.metadata || {};
-    const shortHash =
+    const candidate =
+      metadata.fullHash ||
+      metadata.commitHash ||
       metadata.commit ||
-      row.content?.match(/commit\s+([a-f0-9]{7,40})/i)?.[1] ||
-      'unknown';
+      metadata.hash ||
+      row.content?.match(/\b([a-f0-9]{7,40})\b/i)?.[1];
+
+    if (!isCommitHash(candidate)) {
+      return null;
+    }
 
     return {
-      hash: metadata.fullHash || shortHash,
-      shortHash,
-      message: metadata.message || row.content || 'Recent git activity',
+      hash: candidate,
+      shortHash: shortCommitHash(candidate),
+      message:
+        metadata.message ||
+        metadata.title ||
+        row.task_title ||
+        row.content ||
+        'Recent git activity',
       author: metadata.author || 'Hermes',
       date:
         typeof row.timestamp === 'string'
@@ -954,18 +1773,34 @@ Live context:
 
   const getSharedGitSnapshot = async (limit: number = 5) => {
     const sharedRuntime = agentRuntimeStore.getLatestSnapshot();
+    const publicSnapshot = await fetchPublicGitSnapshot(limit);
+    const rowsLimit = Math.max(limit * 8, 40);
     const result = await db
       .query(
         `
-        SELECT timestamp, content, metadata
+        SELECT id, timestamp, content, metadata, type, task_title
         FROM agent_logs
-        WHERE type = 'git_commit'
-        ORDER BY timestamp DESC
+        WHERE type IN ('git_commit', 'task_complete')
+        ORDER BY timestamp DESC, id DESC
         LIMIT $1
         `,
-        [limit]
+        [rowsLimit]
       )
       .catch(() => ({ rows: [] as any[] }));
+    const logCommits = dedupeCommits(
+      (result.rows || [])
+        .map(parseGitLogEntry)
+        .filter((commit): commit is GitStatusCommit => Boolean(commit))
+    );
+    const recentCommits = dedupeCommits([
+      ...logCommits,
+      ...(publicSnapshot?.recentCommits || []),
+    ]).slice(0, limit);
+    const commitCount = Math.max(
+      publicSnapshot?.commitCount || 0,
+      logCommits.length,
+      recentCommits.length
+    );
 
     return {
       role: agentConfig.role,
@@ -977,41 +1812,17 @@ Live context:
       clean: agentConfig.gitAvailable ? gitIntegration.getStatus().clean : true,
       changes: agentConfig.gitAvailable ? gitIntegration.getStatus().changes : [],
       staged: agentConfig.gitAvailable ? gitIntegration.getStatus().staged : [],
-      recentCommits: (result.rows || []).map(parseGitLogEntry),
+      recentCommits,
+      commitCount,
       summary:
         agentConfig.gitAvailable
           ? gitIntegration.getSummary()
+          : publicSnapshot
+            ? `Git activity is synced from GitHub (${PUBLIC_GITHUB_REPO}).`
           : sharedRuntime?.capabilities?.push === 'unavailable'
             ? 'Worker runtime is active, but git push is unavailable in this environment.'
             : 'Git activity is being observed from the shared worker runtime.',
     };
-  };
-
-  const formatLogStreamText = (row: any): string => {
-    switch (row.type) {
-      case 'task_start':
-        return `$ begin_task :: ${row.content}\n`;
-      case 'analysis_start':
-        return `> [ANALYSIS] ${row.content}\n`;
-      case 'tool_use':
-        return `> [TOOL] ${row.content.replace(/^Using tool:\s*/i, '')}\n`;
-      case 'tool_result':
-        return `> [RESULT] ${row.content}\n`;
-      case 'verification_start':
-        return `> [VERIFY] ${row.content}\n`;
-      case 'verification_result':
-        return `> [PASS] ${row.content}\n`;
-      case 'task_complete':
-        return `> [DONE] ${row.content}\n`;
-      case 'task_blocked':
-        return `> [BLOCKED] ${row.content}\n`;
-      case 'git_commit':
-        return `> [RESULT] ${row.content}\n`;
-      case 'error':
-        return `> [ERROR] ${row.content}\n`;
-      default:
-        return `${row.content}\n`;
-    }
   };
 
   const buildAgentStatusPayload = async () => {
@@ -1116,6 +1927,12 @@ Live context:
       workerHeartbeatAt,
       startupIssues: observedRuntime.startupIssues,
       capabilities: observedRuntime.capabilities,
+      leadership: {
+        ...getLeadershipSnapshot(),
+        leaderActive,
+        leaderElectionEnabled: Boolean(db.redisClient()),
+        isLeader: leaderHandle?.isLeader() || leaderActive,
+      },
       genesisTimestamp: chain.getGenesisTime(),
       chainAgeMs: Date.now() - chain.getGenesisTime(),
       lastBlockTimestamp: chain.getLatestBlock()?.header.timestamp || null,
@@ -1202,6 +2019,8 @@ Live context:
     timestamp: Date;
   }
 
+  const TIMELINE_LOG_TYPE_SQL = TIMELINE_LOG_TYPES.map((type) => `'${type}'`).join(', ');
+
   const getAgentLogCursor = (row: { id: string; timestamp: string | Date }) => ({
     id: row.id,
     timestamp: new Date(row.timestamp),
@@ -1213,24 +2032,29 @@ Live context:
     return a.id.localeCompare(b.id);
   };
 
+  const fetchAgentLogCursorById = async (id?: string | null): Promise<AgentLogCursor | null> => {
+    if (!id) return null;
+
+    const result = await db.query(
+      `
+      SELECT id, timestamp
+      FROM agent_logs
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    const row = result.rows?.[0];
+    return row ? getAgentLogCursor(row) : null;
+  };
+
   const fetchRecentAgentStreamRows = async (limit: number = 30) => {
     const result = await db.query(
       `
       SELECT id, timestamp, type, content, metadata
       FROM agent_logs
-      WHERE type IN (
-        'task_start',
-        'analysis_start',
-        'tool_use',
-        'tool_result',
-        'verification_start',
-        'verification_result',
-        'task_complete',
-        'task_blocked',
-        'git_commit',
-        'error',
-        'output'
-      )
+      WHERE type IN (${TIMELINE_LOG_TYPE_SQL})
       ORDER BY timestamp DESC, id DESC
       LIMIT $1
       `,
@@ -1248,21 +2072,7 @@ Live context:
       `
       SELECT id, timestamp, type, content, metadata
       FROM agent_logs
-      WHERE (
-        type IN (
-          'task_start',
-          'analysis_start',
-          'tool_use',
-          'tool_result',
-          'verification_start',
-          'verification_result',
-          'task_complete',
-          'task_blocked',
-          'git_commit',
-          'error',
-          'output'
-        )
-      )
+      WHERE type IN (${TIMELINE_LOG_TYPE_SQL})
         AND (timestamp > $1 OR (timestamp = $1 AND id > $2))
       ORDER BY timestamp ASC, id ASC
       LIMIT $3
@@ -1272,6 +2082,51 @@ Live context:
 
     return result.rows || [];
   };
+
+  const fetchAgentTimelineEvents = async (
+    limit: number,
+    afterId?: string | null,
+  ): Promise<AgentTimelineEvent[]> => {
+    const cursor = await fetchAgentLogCursorById(afterId);
+    const rows = cursor
+      ? await fetchAgentStreamRowsAfter(cursor, limit)
+      : await fetchRecentAgentStreamRows(limit);
+
+    return rows.map((row) => normalizeAgentTimelineRow(row));
+  };
+
+  const writeTimelineSse = (
+    res: Response,
+    event: AgentTimelineEvent,
+  ): void => {
+    res.write(`id: ${event.id}\n`);
+    res.write(
+      `data: ${JSON.stringify({
+        type: 'timeline',
+        event,
+        viewerCount: agentViewerCount,
+        timestamp: Date.now(),
+      })}\n\n`
+    );
+  };
+
+  app.get('/api/agent/timeline', async (req, res) => {
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit as string) || 80, 120));
+    const after = typeof req.query.after === 'string' ? req.query.after : null;
+
+    try {
+      const events = await fetchAgentTimelineEvents(limit, after);
+      res.json({
+        events,
+        lastEventId: events.length > 0 ? events[events.length - 1].id : after,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: 'timeline-unavailable',
+        message: error?.message || 'Failed to load agent timeline.',
+      });
+    }
+  });
   
   // SSE endpoint for live agent work streaming
   app.get('/api/agent/stream', (req, res) => {
@@ -1295,10 +2150,15 @@ Live context:
     agentViewerCount++;
     console.log(`[AGENT] New viewer connected (total: ${agentViewerCount})`);
     
-    const streamStartedAt = new Date();
+    const requestedAfter =
+      typeof req.query.after === 'string'
+        ? req.query.after
+        : typeof req.headers['last-event-id'] === 'string'
+          ? req.headers['last-event-id']
+          : null;
     let lastSharedLogCursor: AgentLogCursor = {
       id: '',
-      timestamp: streamStartedAt,
+      timestamp: new Date(),
     };
 
     void buildLiveAgentStatusPayload()
@@ -1310,20 +2170,21 @@ Live context:
         })}\n\n`);
 
         try {
-          const recentRows = await fetchRecentAgentStreamRows(30);
-          if (recentRows.length > 0) {
-            lastSharedLogCursor = getAgentLogCursor(recentRows[recentRows.length - 1]);
-          }
+          const afterCursor = await fetchAgentLogCursorById(requestedAfter);
+          const rows = afterCursor
+            ? await fetchAgentStreamRowsAfter(afterCursor, 80)
+            : await fetchRecentAgentStreamRows(30);
 
-          for (const row of recentRows) {
-            res.write(
-              `data: ${JSON.stringify({
-                type: 'text',
-                data: formatLogStreamText(row),
-                viewerCount: agentViewerCount,
-                timestamp: Date.now(),
-              })}\n\n`
-            );
+          lastSharedLogCursor =
+            afterCursor ||
+            (rows.length > 0
+              ? getAgentLogCursor(rows[rows.length - 1])
+              : lastSharedLogCursor);
+
+          for (const row of rows) {
+            const event = normalizeAgentTimelineRow(row);
+            lastSharedLogCursor = getAgentLogCursor(row);
+            writeTimelineSse(res, event);
           }
         } catch {
           // Shared history is best-effort. The live stream should still
@@ -1340,10 +2201,34 @@ Live context:
       })}\n\n`);
     });
     
-    // Subscribe to agent events
+    // Subscribe to persisted timeline entries. These have stable IDs, so the
+    // frontend can resume after refresh/reconnect without duplicating blocks.
+    const onNewLog = (entry: any) => {
+      try {
+        if (!TIMELINE_LOG_TYPES.includes(entry.type)) return;
+        const event = normalizeAgentTimelineRow({
+          id: entry.id,
+          timestamp: entry.timestamp,
+          type: entry.type,
+          content: entry.content,
+          metadata: entry.metadata,
+          taskId: entry.taskId,
+        });
+        lastSharedLogCursor = getAgentLogCursor(entry);
+        writeTimelineSse(res, event);
+      } catch {
+        // Client disconnected or row malformed.
+      }
+    };
+    eventBus.on('new_log', onNewLog);
+
+    // Subscribe to volatile agent events for status/heartbeat only. Work
+    // content goes through agent_logs above so it can be replayed.
     const onChunk = (chunk: any) => {
       try {
-        res.write(`data: ${JSON.stringify({ ...chunk, viewerCount: agentViewerCount })}\n\n`);
+        if (chunk.type === 'status' || chunk.type === 'heartbeat') {
+          res.write(`data: ${JSON.stringify({ ...chunk, viewerCount: agentViewerCount })}\n\n`);
+        }
       } catch (e) {
         // Client disconnected
       }
@@ -1376,14 +2261,7 @@ Live context:
           if (compareAgentLogCursor(nextCursor, lastSharedLogCursor) > 0) {
             lastSharedLogCursor = nextCursor;
           }
-          res.write(
-            `data: ${JSON.stringify({
-              type: 'text',
-              data: formatLogStreamText(row),
-              viewerCount: agentViewerCount,
-              timestamp: Date.now(),
-            })}\n\n`
-          );
+          writeTimelineSse(res, normalizeAgentTimelineRow(row));
         }
       } catch {
         // Shared worker logs are best-effort here; status pulses still keep the rail honest.
@@ -1404,6 +2282,7 @@ Live context:
     req.on('close', () => {
       agentViewerCount--;
       console.log(`[AGENT] Viewer disconnected (total: ${agentViewerCount})`);
+      eventBus.off('new_log', onNewLog);
       agentEvents.off('chunk', onChunk);
       clearInterval(statusPulse);
       clearInterval(heartbeat);
@@ -1738,7 +2617,14 @@ Live context:
     if (agentConfig.gitAvailable) {
       const { gitIntegration } = await import('../agent/GitIntegration');
       const status = gitIntegration.getStatus();
-      const commits = gitIntegration.getRecentCommits(5);
+      const localCommits = gitIntegration.getRecentCommits(5);
+      const publicSnapshot = await fetchPublicGitSnapshot(5);
+      const commits = publicSnapshot?.recentCommits.length
+        ? publicSnapshot.recentCommits
+        : localCommits;
+      const commitCount =
+        publicSnapshot?.commitCount ||
+        Math.max(gitIntegration.getCommitCount(), commits.length);
       const summary = gitIntegration.getSummary();
 
       return res.json({
@@ -1750,11 +2636,71 @@ Live context:
         changes: status.changes,
         staged: status.staged,
         recentCommits: commits,
+        commitCount,
         summary,
       });
     }
 
     res.json(await getSharedGitSnapshot(5));
+  });
+
+  app.get('/api/git/commit-feed', async (req, res) => {
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit as string) || 12, 20));
+
+    try {
+      const feed = await fetchPublicGitCommitFeed(limit);
+      if (feed) {
+        return res.json(feed);
+      }
+
+      const snapshot = await getSharedGitSnapshot(limit);
+      return res.json({
+        repo: publicGithubRepo(),
+        commitCount: snapshot.commitCount,
+        commits: (snapshot.recentCommits || []).slice(0, limit).map((commit) => ({
+          ...commit,
+          href: githubCommitUrl(commit.hash),
+          files: [],
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: 'commit-feed-unavailable',
+        message: error?.message || 'Failed to load commit playback feed.',
+      });
+    }
+  });
+
+  app.get('/api/git/commit-playback', async (req, res) => {
+    const limit = Math.max(
+      1,
+      Math.min(parseInt(req.query.limit as string) || COMMIT_PLAYBACK_EVENT_LIMIT, 30),
+    );
+    const cursor =
+      typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+
+    try {
+      const playback = await fetchPublicGitCommitPlayback(cursor, limit);
+      if (playback) {
+        return res.json(playback);
+      }
+
+      const snapshot = await getSharedGitSnapshot(1);
+      return res.json({
+        repo: publicGithubRepo(),
+        commitCount: snapshot.commitCount,
+        cursor: encodeCommitPlaybackCursor(decodeCommitPlaybackCursor(cursor)),
+        nextCursor: encodeCommitPlaybackCursor(decodeCommitPlaybackCursor(cursor)),
+        events: [],
+        stale: true,
+        fallback: 'synthetic',
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: 'commit-playback-unavailable',
+        message: error?.message || 'Failed to load commit playback.',
+      });
+    }
   });
 
   // CI status endpoint
@@ -1836,19 +2782,45 @@ Live context:
     });
   });
   
-  // Start the autonomous agent worker by default unless explicitly disabled.
-  if (
-    agentConfig.role === 'worker' &&
-    agentConfig.autorunEnabled &&
-    agentConfig.effectiveMode !== 'disabled'
-  ) {
-    void agentWorker.start().catch((error) => {
-      console.error('[AGENT] Worker failed to start:', error);
-    });
-    console.log(
-      `[AGENT] Autonomous agent worker started in ${agentConfig.effectiveMode} mode (${agentConfig.role} role)`
-    );
-  } else {
+  const startLeaderServices = async () => {
+    if (leaderActive) return;
+    leaderActive = true;
+    setAuthoringLeader(true);
+    setPublisherLeader(true);
+    await startNetworkHeartbeat();
+    githubUpdates.startBackgroundSync();
+
+    if (agentConfig.autorunEnabled && agentConfig.effectiveMode !== 'disabled') {
+      void agentWorker.start().catch((error) => {
+        console.error('[AGENT] Worker failed to start:', error);
+      });
+    }
+
+    pacer = new PacedPusher(agentConfig.repoRoot || process.cwd());
+    pacer.start();
+    if (blockProductionEnabled) {
+      blockProducer.start();
+    } else {
+      console.log('[PRODUCER] Block production disabled for this worker.');
+    }
+    console.log('[LEADER] Worker services active');
+  };
+
+  const stopLeaderServices = async () => {
+    setAuthoringLeader(false);
+    setPublisherLeader(false);
+    if (!leaderActive) return;
+    leaderActive = false;
+    pacer?.stop();
+    pacer = null;
+    agentWorker.stop();
+    blockProducer.stop();
+    stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
+    console.log('[LEADER] Worker services stopped');
+  };
+
+  if (agentConfig.role !== 'worker') {
     console.log(
       `[AGENT] Worker not started (role=${agentConfig.role}, autorun=${agentConfig.autorunEnabled}, effectiveMode=${agentConfig.effectiveMode})`
     );
@@ -2030,10 +3002,7 @@ Live context:
   const PORT = process.env.PORT || 4000;
   server.on('error', (error) => {
     console.error('[SERVER] Failed to bind HTTP server:', error);
-    blockProducer.stop();
-    agentWorker.stop();
-    stopNetworkHeartbeat();
-    githubUpdates.stopBackgroundSync();
+    void stopLeaderServices();
     process.exitCode = 1;
     setTimeout(() => process.exit(1), 0);
   });
@@ -2041,24 +3010,44 @@ Live context:
   server.listen(PORT, () => {
     console.log(`[SERVER] Running on http://localhost:${PORT}\n`);
     if (agentConfig.role === 'worker') {
-      blockProducer.start();
-      // Paced commit pusher — drains tier-3-backlog → main.
-      // No-ops without PACED_PUSH_ENABLED=true and GITHUB_TOKEN.
-      void import('../agent/PacedPusher').then(({ PacedPusher }) => {
-        const pacer = new PacedPusher(agentConfig.repoRoot || process.cwd());
-        pacer.start();
-      }).catch((err) => console.warn('[PACER] failed to load:', err?.message || err));
+      const redis = db.redisClient();
+      if (redis) {
+        const leaseId =
+          process.env.RAILWAY_REPLICA_ID ||
+          process.env.HOSTNAME ||
+          `server-worker-${process.pid}`;
+        void startLeaderElection(
+          redis,
+          leaseId,
+          startLeaderServices,
+          stopLeaderServices,
+        ).then((handle) => {
+          leaderHandle = handle;
+        }).catch((err: any) => {
+          console.error('[LEADER] failed to start election:', err?.message || err);
+        });
+      } else if (process.env.AGENT_SINGLE_WORKER_UNSAFE === 'true') {
+        console.warn('[LEADER] Redis unavailable; running unsafe single-worker mode.');
+        void startLeaderServices();
+      } else {
+        console.warn(
+          '[LEADER] Redis unavailable; real authoring/publishing disabled. ' +
+          'Set AGENT_SINGLE_WORKER_UNSAFE=true only for single-worker dev.'
+        );
+        setAuthoringLeader(false);
+        setPublisherLeader(false);
+      }
     }
   });
 
   process.on('SIGINT', () => {
     console.log('\n[SHUTDOWN] Stopping services...');
-    blockProducer.stop();
-    agentWorker.stop();
-    stopNetworkHeartbeat();
-    githubUpdates.stopBackgroundSync();
-    db.end();
-    process.exit(0);
+    void (async () => {
+      await stopLeaderServices();
+      await leaderHandle?.release();
+      await db.end();
+      process.exit(0);
+    })();
   });
 }
 

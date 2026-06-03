@@ -42,7 +42,7 @@ const HermesDossier: React.FC<HermesDossierProps> = ({
   }, []);
 
   const modeBadge =
-    mode === 'real' ? 'ONLINE' : mode === 'demo' ? 'DEMO' : 'OFFLINE';
+    mode === 'real' ? 'ONLINE' : mode === 'demo' ? 'DEMO' : 'STANDBY';
 
   return (
     <aside className="dossier" aria-label="Hermes agent dossier">

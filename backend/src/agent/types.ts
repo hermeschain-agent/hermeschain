@@ -73,6 +73,7 @@ export interface SourceTaskRecord {
   metadata: Record<string, unknown>;
   lastError: string | null;
   blockedReason: string | null;
+  recoveryCount: number;
   runCount: number;
   createdAt: Date;
   updatedAt: Date;
@@ -90,6 +91,7 @@ export interface TaskRunRecord {
   changedFiles: string[];
   failureReason: string | null;
   blockedReason: string | null;
+  failureClass: string | null;
   output: string;
   contextSummary: string;
   startedAt: Date;
@@ -149,4 +151,8 @@ export interface AgentConfig {
   workspaceReady: boolean;
   gitAvailable: boolean;
   pushAvailable: boolean;
+  queueBranch: string;
+  publishBranch: string;
+  publishIntervalMinutes: number;
+  queueResumeThreshold: number;
 }

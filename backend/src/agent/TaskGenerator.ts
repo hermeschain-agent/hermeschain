@@ -34,7 +34,7 @@ const TASK_TEMPLATES: TaskTemplate[] = [
 
 Requirements:
 - Accept a wallet address as input
-- Query the chain for OPEN token balance
+- Query the chain for HERMES token balance
 - Format the output nicely with proper decimal handling
 - Add caching for repeated queries
 
@@ -45,7 +45,7 @@ Think through the design, then write the TypeScript code.`,
 Requirements:
 - Estimate gas for different transaction types (transfer, stake, unstake)
 - Factor in current network congestion
-- Return both gas units and OPEN cost estimate
+- Return both gas units and HERMES cost estimate
 
 Walk through your reasoning and implement it.`,
 
@@ -109,7 +109,7 @@ Requirements:
 
 Design the interface and implement.`,
     ],
-    agents: ['HERMES', 'OPEN DEVELOPER', 'OPEN BUILDER'],
+    agents: ['HERMES', 'HERMES DEVELOPER', 'HERMES BUILDER'],
   },
   {
     type: 'security_audit',
@@ -185,7 +185,7 @@ Check for:
 
 Provide security analysis and recommendations.`,
     ],
-    agents: ['HERMES', 'OPEN AUDITOR', 'OPEN SECURITY'],
+    agents: ['HERMES', 'HERMES AUDITOR', 'HERMES SECURITY'],
   },
   {
     type: 'chain_analysis',
@@ -258,7 +258,7 @@ Examine:
 
 Create a block production health report.`,
     ],
-    agents: ['HERMES', 'OPEN DATA', 'OPEN METRICS'],
+    agents: ['HERMES', 'HERMES DATA', 'HERMES METRICS'],
   },
   {
     type: 'protocol_improvement',
@@ -337,7 +337,7 @@ Include:
 
 Create a detailed technical proposal.`,
     ],
-    agents: ['HERMES', 'OPEN GOVERNANCE', 'OPEN PROTOCOL'],
+    agents: ['HERMES', 'HERMES GOVERNANCE', 'HERMES PROTOCOL'],
   },
   {
     type: 'documentation',
@@ -405,7 +405,7 @@ Cover:
 
 Create a comprehensive security guide.`,
     ],
-    agents: ['OPEN DOCS', 'OPEN WRITER', 'OPEN EDUCATOR'],
+    agents: ['HERMES DOCS', 'HERMES WRITER', 'HERMES EDUCATOR'],
   },
   {
     type: 'testing',
@@ -456,7 +456,7 @@ Test:
 
 Create thorough edge case coverage.`,
     ],
-    agents: ['OPEN QA', 'OPEN TESTER', 'HERMES VALIDATOR'],
+    agents: ['HERMES QA', 'HERMES TESTER', 'HERMES VALIDATOR'],
   },
 ];
 

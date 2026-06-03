@@ -39,8 +39,8 @@ export interface LeaderHandle {
 export async function startLeaderElection(
   redis: Redis,
   leaseId: string,
-  onAcquire: () => void,
-  onLose: () => void,
+  onAcquire: () => void | Promise<void>,
+  onLose: () => void | Promise<void>,
 ): Promise<LeaderHandle> {
   let owner = false;
   let renewTimer: NodeJS.Timeout | null = null;
@@ -62,7 +62,9 @@ export async function startLeaderElection(
       if (got) {
         owner = true;
         console.log(`[LEADER] acquired lease as ${leaseId}`);
-        onAcquire();
+        void Promise.resolve(onAcquire()).catch((err: any) => {
+          console.error(`[LEADER] onAcquire failed: ${err?.message || err}`);
+        });
         renewTimer = setInterval(async () => {
           try {
             const renewed = await renew();
@@ -71,7 +73,9 @@ export async function startLeaderElection(
               if (renewTimer) clearInterval(renewTimer);
               renewTimer = null;
               console.log(`[LEADER] lost lease ${leaseId}`);
-              onLose();
+              void Promise.resolve(onLose()).catch((err: any) => {
+                console.error(`[LEADER] onLose failed: ${err?.message || err}`);
+              });
             }
           } catch (err: any) {
             console.warn(`[LEADER] renew error: ${err?.message || err}`);

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { eventBus } from '../events/EventBus';
 import { AgentConfig } from './config';
+import { agentTaskStore } from './AgentTaskStore';
 
 export interface TestResult {
   passed: boolean;
@@ -321,11 +322,14 @@ export class CIMonitor {
 
   private async runChecksOnce(trigger: string): Promise<void> {
     if (this.isCheckInFlight) return;
+    if (trigger.startsWith('watch:') && agentTaskStore.getCurrentRun()) {
+      return;
+    }
     this.isCheckInFlight = true;
     eventBus.emit('ci_watch_triggered', { trigger, timestamp: Date.now() });
     try {
       const results = await this.runAllChecks();
-      this.handleResults(results);
+      this.handleResults(results, trigger);
     } finally {
       this.isCheckInFlight = false;
     }
@@ -352,11 +356,12 @@ export class CIMonitor {
     tests: TestResult;
     build: BuildResult;
     lint: LintResult;
-  }): void {
+  }, trigger: string): void {
     if (!results.tests.passed && results.tests.failing > 0) {
       eventBus.emit('ci_failure', {
         type: 'tests',
         failures: results.tests.failures,
+        trigger,
       });
     }
 
@@ -364,6 +369,7 @@ export class CIMonitor {
       eventBus.emit('ci_failure', {
         type: 'build',
         errors: results.build.errors,
+        trigger,
       });
     }
 
@@ -371,6 +377,7 @@ export class CIMonitor {
       eventBus.emit('ci_failure', {
         type: 'lint',
         issues: results.lint.issues,
+        trigger,
       });
     }
   }

@@ -18,7 +18,7 @@ Soon. See the [Run a validator tutorial](tutorials/run-validator.md) once tier-3
 
 ### How do I get tokens?
 
-Use the faucet: connect a wallet and click the drip button. 100 OPEN per drip, 24h cooldown, 5/IP/24h cap.
+Use the faucet: connect a wallet and click the drip button. 100 HERMES per drip, 24h cooldown, 5/IP/24h cap.
 
 ### How do I send a transaction?
 
@@ -46,4 +46,4 @@ GitHub Issues with the bug template, or for security: see [security.txt](https:/
 
 ### Is there a token?
 
-OPEN is the native gas token. There is no separate governance token (yet).
+HERMES is the native gas token. There is no separate governance token (yet).
