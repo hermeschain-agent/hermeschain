@@ -4,15 +4,7 @@
   "version": "0.1.0",
   "description": "Self-custody wallet for Hermeschain — your keys, your coins. Keys are generated on-device and never sent to a server.",
   "action": { "default_popup": "popup.html", "default_title": "Hermes Wallet" },
-  "background": { "service_worker": "background.js", "type": "module" },
-  "content_scripts": [
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
-      "run_at": "document_start"
-    }
-  ],
-  "web_accessible_resources": [{ "resources": ["inpage.js"], "matches": ["<all_urls>"] }],
+  "background": { "service_worker": "background.js" },
   "permissions": ["storage"],
   "host_permissions": ["https://hermeschain.xyz/*", "https://*.hermeschain.xyz/*"]
 }
