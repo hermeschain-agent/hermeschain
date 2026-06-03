@@ -47,6 +47,23 @@ const {
   getRuntimeCommitWindowMinutes,
 } = require('../dist/agent/TaskBacklog.js');
 const { EventBus } = require('../dist/events/EventBus.js');
+const { db } = require('../dist/database/db.js');
+const { applyPendingMigrations } = require('../dist/database/migrations.js');
+const { createTables } = require('../dist/database/schema.js');
+
+// The CI Postgres service starts empty; ensure the schema (including
+// migration-created tables like agent_publish_cursor / agent_token_budget_state)
+// exists before the DB-backed tests run. Harmless no-op when there is no real
+// database (the in-memory fallback) — mirrors the app's boot sequence.
+test.before(async () => {
+  try {
+    await db.connect();
+    await db.exec(createTables);
+    await applyPendingMigrations();
+  } catch {
+    /* no DB available, or already migrated */
+  }
+});
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
