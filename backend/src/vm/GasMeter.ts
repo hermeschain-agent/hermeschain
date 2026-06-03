@@ -14,6 +14,7 @@ export const GAS_COSTS = {
   EQ: 3n,
   LT: 3n,
   GT: 3n,
+  ISZERO: 3n,
   AND: 3n,
   OR: 3n,
   XOR: 3n,

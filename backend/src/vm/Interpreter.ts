@@ -29,6 +29,7 @@ export type VmOp =
   | { op: 'EQ' }
   | { op: 'LT' }
   | { op: 'GT' }
+  | { op: 'ISZERO' }
   | { op: 'AND' }
   | { op: 'OR' }
   | { op: 'XOR' }
@@ -142,6 +143,12 @@ export class Interpreter {
           const b = Number(stack.pop() ?? 0);
           const a = Number(stack.pop() ?? 0);
           stack.push(a > b ? 1 : 0);
+          break;
+        }
+        case 'ISZERO': {
+          if (!meter.charge(GAS_COSTS.ISZERO)) return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at ISZERO' };
+          const a = Number(stack.pop() ?? 0);
+          stack.push(a === 0 ? 1 : 0);
           break;
         }
         case 'AND': {

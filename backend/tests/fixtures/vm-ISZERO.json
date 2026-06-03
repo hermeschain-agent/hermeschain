@@ -1,0 +1,6 @@
+{
+  "label": "ISZERO of 0 = 1",
+  "ops": [{"op":"PUSH","args":[0]},{"op":"ISZERO"},{"op":"STOP"}],
+  "gasLimit": "1000",
+  "expected": {"status": "success"}
+}
