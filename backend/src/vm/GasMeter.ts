@@ -21,6 +21,8 @@ export const GAS_COSTS = {
   OR: 3n,
   XOR: 3n,
   NOT: 3n,
+  SHL: 3n,
+  SHR: 3n,
   SSTORE: 20000n,
   SLOAD: 2000n,
   STOP: 0n,
