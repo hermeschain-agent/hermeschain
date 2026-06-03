@@ -1577,7 +1577,8 @@ Live context:
   console.log('[AGENTS] User agents system ready');
 
   // ========== WALLET & FAUCET SYSTEM ==========
-  const { walletRouter } = await import('./wallet');
+  const { walletRouter, setWalletTxPool } = await import('./wallet');
+  setWalletTxPool(txPool); // so the faucet can submit real signed transactions
   app.use('/api/wallet', walletRouter);
   console.log('[WALLET] Wallet & faucet system ready');
 
