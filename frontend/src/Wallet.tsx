@@ -327,7 +327,7 @@ const Wallet: React.FC = () => {
     if (!Number.isFinite(amount) || amount <= 0) {
       setMessage({
         type: 'error',
-        text: 'Enter a positive amount of OPEN to send.',
+        text: 'Enter a positive amount of HERMES to send.',
       });
       return;
     }
@@ -335,7 +335,7 @@ const Wallet: React.FC = () => {
     if (sendForm.toAddress.trim() === wallet.address) {
       setMessage({
         type: 'error',
-        text: 'Sending OPEN to the same wallet is not supported here.',
+        text: 'Sending HERMES to the same wallet is not supported here.',
       });
       return;
     }
@@ -343,7 +343,7 @@ const Wallet: React.FC = () => {
     if (amount > wallet.balance) {
       setMessage({
         type: 'error',
-        text: 'You do not have enough OPEN in this wallet for that transfer.',
+        text: 'You do not have enough HERMES in this wallet for that transfer.',
       });
       return;
     }
@@ -369,7 +369,7 @@ const Wallet: React.FC = () => {
 
       setMessage({
         type: 'success',
-        text: `Sent ${data.amount} OPEN.`,
+        text: `Sent ${data.amount} HERMES.`,
       });
       setSendForm({ toAddress: '', amount: '' });
       await fetchWallet(wallet.address, wallet.privateKey);
@@ -445,7 +445,7 @@ const Wallet: React.FC = () => {
       <div className="wallet-grid wallet-grid--connect">
         <div className="artifact-card wallet-card">
           <span className="artifact-kicker">Create new wallet</span>
-          <h4>Fresh OPEN address</h4>
+          <h4>Fresh HERMES address</h4>
           <p>Generate a new wallet and immediately claim faucet funds once it exists.</p>
           <button className="btn-primary" onClick={() => void createWallet()} disabled={isLoading}>
             {isLoading ? 'Creating...' : 'Create wallet'}
@@ -510,7 +510,7 @@ const Wallet: React.FC = () => {
       <div className="wallet-balance-card">
         <span className="artifact-kicker">Total balance</span>
         <h3>
-          {wallet?.balance.toLocaleString()} <span>OPEN</span>
+          {wallet?.balance.toLocaleString()} <span>HERMES</span>
         </h3>
         <div className="wallet-address-row">
           <code>{wallet?.address}</code>
@@ -552,18 +552,18 @@ const Wallet: React.FC = () => {
         <div className="artifact-card compact">
           <span className="artifact-kicker">Received</span>
           <h4>{wallet?.totalReceived.toLocaleString() || 0}</h4>
-          <p>Total OPEN received by this wallet.</p>
+          <p>Total HERMES received by this wallet.</p>
         </div>
         <div className="artifact-card compact">
           <span className="artifact-kicker">Sent</span>
           <h4>{wallet?.totalSent.toLocaleString() || 0}</h4>
-          <p>Total OPEN sent from this wallet.</p>
+          <p>Total HERMES sent from this wallet.</p>
         </div>
       </div>
 
       <div className="wallet-inline-actions wallet-inline-actions--primary">
         <button className="btn-primary" onClick={() => setView('send')}>
-          Send OPEN
+          Send HERMES
         </button>
         <button
           className="btn-ghost"
@@ -656,8 +656,8 @@ const Wallet: React.FC = () => {
 
       <div className="engraved-panel wallet-send-panel">
         <div className="panel-head tight">
-          <span className="section-label">Send OPEN</span>
-          <p>Move OPEN to another Hermeschain address using the existing wallet send endpoint.</p>
+          <span className="section-label">Send HERMES</span>
+          <p>Move HERMES to another Hermeschain address using the existing wallet send endpoint.</p>
         </div>
 
         <div className="wallet-form-grid">
@@ -712,7 +712,7 @@ const Wallet: React.FC = () => {
               parseFloat(sendForm.amount) <= 0
             }
           >
-            {sendLoading ? 'Sending...' : 'Send OPEN'}
+            {sendLoading ? 'Sending...' : 'Send HERMES'}
           </button>
         </div>
       </div>
@@ -737,7 +737,7 @@ const Wallet: React.FC = () => {
 
       <div className="engraved-panel wallet-leaderboard-panel">
         <div className="panel-head tight">
-          <span className="section-label">Top OPEN holders</span>
+          <span className="section-label">Top HERMES holders</span>
           <p>Live wallet leaderboard from the backend wallet index.</p>
         </div>
 

@@ -139,7 +139,7 @@ class ChainObserverSystem {
     const value = BigInt(tx?.value || 0);
     if (value > BigInt(10000)) {
       await agentMemory.recordObservation(
-        `Large transaction detected: ${value.toString()} OPEN`,
+        `Large transaction detected: ${value.toString()} HERMES`,
         { txHash: tx?.hash, from: tx?.from, to: tx?.to }
       );
     }

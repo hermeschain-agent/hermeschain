@@ -484,7 +484,7 @@ export default function BlockExplorer({
                 <span>
                   {formatAddress(transaction.from)} → {formatAddress(transaction.to)}
                 </span>
-                <span className="mono">{transaction.value} OPEN</span>
+                <span className="mono">{transaction.value} HERMES</span>
                 <span className="mono">#{transaction.blockHeight}</span>
                 <span>{formatTimeAgo(transaction.timestamp)}</span>
               </button>
@@ -546,7 +546,7 @@ export default function BlockExplorer({
                     <article key={transaction.hash} className="dock-activity-item">
                       <div className="dock-activity-meta">
                         <span>{formatHash(transaction.hash)}</span>
-                        <span>{transaction.value} OPEN</span>
+                        <span>{transaction.value} HERMES</span>
                       </div>
                       <p className="mono">
                         {transaction.from} → {transaction.to}

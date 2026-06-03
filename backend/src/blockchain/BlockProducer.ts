@@ -20,7 +20,7 @@ import type { Log } from './TransactionReceipt';
 const MAX_BLOCK_GAS = 30000000n;
 const MAX_TRANSACTIONS_PER_BLOCK = 500;
 // Per-validator block reward (TASK-039) — env-tunable so testnet/mainnet
-// can differ without a code change. Default: 10 OPEN.
+// can differ without a code change. Default: 10 HERMES.
 const BLOCK_REWARD: bigint = (() => {
   const raw = process.env.HERMES_BLOCK_REWARD_WEI;
   if (!raw) return 10n * 10n ** 18n;
@@ -29,7 +29,7 @@ const BLOCK_REWARD: bigint = (() => {
     if (parsed < 0n) throw new Error('negative reward');
     return parsed;
   } catch (err: any) {
-    console.warn(`[PRODUCER] HERMES_BLOCK_REWARD_WEI invalid (${raw}): ${err?.message || err} — using default 10 OPEN`);
+    console.warn(`[PRODUCER] HERMES_BLOCK_REWARD_WEI invalid (${raw}): ${err?.message || err} — using default 10 HERMES`);
     return 10n * 10n ** 18n;
   }
 })();

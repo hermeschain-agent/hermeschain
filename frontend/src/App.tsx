@@ -1253,7 +1253,7 @@ export default function App() {
         <span className="kicker">Wallet Surface</span>
         <h2>Wallet</h2>
         <p>
-          Hold OPEN, request faucet funds, and let Hermes explain what the wallet
+          Hold HERMES, request faucet funds, and let Hermes explain what the wallet
           surface is doing before you create or import anything.
         </p>
       </div>
