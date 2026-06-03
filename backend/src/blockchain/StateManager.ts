@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { db, cache } from '../database/db';
 import { Transaction, generateHash } from './Block';
 import { eventBus } from '../events/EventBus';
+import { FAUCET_PUBLIC_ADDRESS } from './Faucet';
 
 // Account state structure
 export interface AccountState {
@@ -97,7 +98,7 @@ export class StateManager {
 
       console.log(`[STATE] StateManager initialized with ${this.accounts.size} accounts`);
       console.log(`[STATE] Current state root: ${this.stateRoot.substring(0, 20)}...`);
-      console.log(`[STATE] Faucet balance: ${this.formatBalance(this.getBalance(FAUCET_ADDRESS))} OPEN`);
+      console.log(`[STATE] Faucet balance: ${this.formatBalance(this.getBalance(FAUCET_PUBLIC_ADDRESS))} OPEN`);
 
     } catch (error) {
       console.error('[STATE] Initialization error:', error);
@@ -112,7 +113,9 @@ export class StateManager {
     // Genesis distribution
     const distributions: { address: string; balance: bigint }[] = [
       { address: GENESIS_ADDRESS, balance: INITIAL_SUPPLY / 10n }, // 10% to genesis
-      { address: FAUCET_ADDRESS, balance: INITIAL_SUPPLY / 2n },   // 50% to faucet
+      // 50% to the REAL faucet account (key-derived) so it can sign on-chain
+      // dispensing transactions. The old 'HERMESCHAIN_FAUCET' label couldn't.
+      { address: FAUCET_PUBLIC_ADDRESS, balance: INITIAL_SUPPLY / 2n },
       { address: TREASURY_ADDRESS, balance: INITIAL_SUPPLY * 4n / 10n } // 40% to treasury
     ];
 
@@ -546,7 +549,7 @@ export class StateManager {
   // Get circulating supply (total - treasury - faucet)
   getCirculatingSupply(): bigint {
     const treasuryBalance = this.getBalance(TREASURY_ADDRESS);
-    const faucetBalance = this.getBalance(FAUCET_ADDRESS);
+    const faucetBalance = this.getBalance(FAUCET_PUBLIC_ADDRESS);
     return INITIAL_SUPPLY - treasuryBalance - faucetBalance;
   }
 

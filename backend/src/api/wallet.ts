@@ -2,7 +2,10 @@ import { Router } from 'express';
 import { db } from '../database/db';
 import crypto from 'crypto';
 import { stateManager } from '../blockchain/StateManager';
-import { verify as verifyEd25519 } from '../blockchain/Crypto';
+import { verify as verifyEd25519, signTransaction } from '../blockchain/Crypto';
+import type { Transaction } from '../blockchain/Block';
+import type { TransactionPool } from '../blockchain/TransactionPool';
+import { FAUCET_PRIVATE_KEY, FAUCET_PUBLIC_ADDRESS } from '../blockchain/Faucet';
 
 const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 
@@ -56,6 +59,20 @@ const MIN_STAKE = 10;
 
 // Check if DB is available
 let dbAvailable = false;
+
+// The transaction pool is injected by server.ts at boot (createServer holds the
+// instance). The faucet handler uses it to submit REAL signed transactions
+// instead of mutating state directly. Mirrors Chain.setTransactionPool.
+let injectedTxPool: TransactionPool | null = null;
+export function setWalletTxPool(pool: TransactionPool): void {
+  injectedTxPool = pool;
+}
+
+// Faucet nonce tracker: advanced locally so bursts of claims between blocks get
+// sequential nonces (the on-chain nonce only catches up once they mine). It is
+// reconciled via max() with the on-chain nonce and committed only on a clean
+// submit, so a rejected tx never leaves a gap that would stall later faucet txs.
+let lastFaucetNonce = -1;
 
 // Initialize wallet tables
 const initializeWalletTables = async () => {
@@ -358,57 +375,73 @@ walletRouter.post('/faucet/claim', async (req, res) => {
       });
     }
 
-    // Generate transaction
-    const txHash = generateAddress('tx_');
     const txId = `tx_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-    // Update blockchain state (100 OPEN with 18 decimals)
-    const faucetAmountWithDecimals = BigInt(FAUCET_AMOUNT) * 10n**18n;
-    const blockHeight = 0; // Will be included in next block
-    
-    try {
-      const stateUpdated = await stateManager.processFaucetRequest(address, faucetAmountWithDecimals, blockHeight);
-      if (!stateUpdated) {
-        console.log('[FAUCET] StateManager: Faucet has insufficient funds');
-        // Continue anyway with wallet-only update for now
-      }
-    } catch (stateError) {
-      console.error('[FAUCET] StateManager error:', stateError);
-      // Continue with wallet update
+    // Build + sign a REAL on-chain faucet transaction so it flows through the
+    // mempool → a block → StateManager (totalTransactions++). The faucet is a
+    // genuine key-derived account (Faucet.ts), so its signature verifies like
+    // any wallet's; the transfer applies when the producer mines it (~10s).
+    if (!injectedTxPool) {
+      return res.status(503).json({ success: false, error: 'Faucet temporarily unavailable (tx pool not ready)' });
+    }
+    if (address === FAUCET_PUBLIC_ADDRESS) {
+      return res.status(400).json({ success: false, error: 'Cannot claim to the faucet address' });
     }
 
-    // Update wallet
+    // Faucet nonce: the on-chain nonce, advanced locally for bursts between
+    // blocks. Committed only after a clean submit (see lastFaucetNonce note).
+    await stateManager.refreshAccount(FAUCET_PUBLIC_ADDRESS).catch(() => {});
+    const faucetNonce = Math.max(stateManager.getNonce(FAUCET_PUBLIC_ADDRESS), lastFaucetNonce + 1);
+
+    // Key order MUST be from,to,value,gasPrice,gasLimit,nonce,data so the hash
+    // matches TransactionPool.calculateTxHash (and Crypto.signTransaction).
+    const txBody = {
+      from: FAUCET_PUBLIC_ADDRESS,
+      to: address,
+      value: BigInt(FAUCET_AMOUNT) * 10n ** 18n,
+      gasPrice: 1n,
+      gasLimit: 21000n,
+      nonce: faucetNonce,
+      data: 'faucet',
+    };
+    const { signature, hash } = signTransaction(txBody, FAUCET_PRIVATE_KEY);
+    const faucetTx: Transaction = { ...txBody, signature, hash };
+
+    const submitted = await injectedTxPool.addTransaction(faucetTx);
+    if (!submitted.valid) {
+      console.error(`[FAUCET] Pool rejected faucet tx: ${submitted.error}`);
+      return res.status(500).json({ success: false, error: `Faucet tx rejected: ${submitted.error}` });
+    }
+    lastFaucetNonce = faucetNonce; // advance only after a clean submit
+
+    // Custodial bookkeeping (cooldown + legacy wallet ledger). The authoritative
+    // balance now lives on-chain; this keeps the legacy website UI working.
     wallet.balance = (wallet.balance || 0) + FAUCET_AMOUNT;
     wallet.last_faucet_claim = now;
     wallet.total_received = (wallet.total_received || 0) + FAUCET_AMOUNT;
     wallet.tx_count = (wallet.tx_count || 0) + 1;
-    
     await saveWallet(wallet);
 
-    // Record transaction
     await addTransaction({
       id: txId,
       wallet_id: wallet.id,
       type: 'faucet',
       amount: FAUCET_AMOUNT,
-      from_address: 'HERMESCHAIN_FAUCET',
+      from_address: FAUCET_PUBLIC_ADDRESS,
       to_address: address,
-      hash: txHash,
+      hash,
       timestamp: now,
-      status: 'confirmed'
+      status: 'pending',
     });
 
-    // Get actual blockchain balance
-    const blockchainBalance = stateManager.getBalance(address);
-    console.log(`[FAUCET] Claimed ${FAUCET_AMOUNT} OPEN to ${address} (blockchain: ${stateManager.formatBalance(blockchainBalance)})`);
+    console.log(`[FAUCET] Submitted ${FAUCET_AMOUNT} OPEN → ${address} (tx ${hash.slice(0, 16)}..., nonce ${faucetNonce})`);
 
     res.json({
       success: true,
       amount: FAUCET_AMOUNT,
-      txHash,
-      newBalance: wallet.balance,
+      txHash: hash,
       nextClaimAt: now + FAUCET_COOLDOWN_MS,
-      message: `Successfully claimed ${FAUCET_AMOUNT} OPEN!`
+      message: `Faucet sent ${FAUCET_AMOUNT} OPEN — confirms in the next block (~10s).`,
     });
   } catch (error) {
     console.error('[FAUCET] Claim error:', error);
