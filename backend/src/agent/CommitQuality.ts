@@ -65,8 +65,8 @@ function classify(rawPath: string): FileCategory {
   // Real source — including real test code (*.test.ts, backend/tests/*.js),
   // which is quality work. Excludes type-decl files.
   if (/\.d\.ts$/i.test(p)) return 'other';
-  if (/^(backend|frontend)\/src\/.+/.test(p) && SOURCE_EXT.test(p)) return 'source';
-  if (/^backend\/tests\/.+\.(ts|js)$/i.test(p)) return 'source';
+  if (/^(backend|frontend|extension)\/src\/.+/.test(p) && SOURCE_EXT.test(p)) return 'source';
+  if (/^(backend|extension)\/tests?\/.+\.(ts|js)$/i.test(p)) return 'source';
   return 'other';
 }
 
