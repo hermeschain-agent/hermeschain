@@ -2930,6 +2930,47 @@ Live context:
       console.error('Error listing frontend files:', e);
     }
     
+    // Public privacy policy page (Chrome Web Store requirement for the Hermes
+    // Wallet extension). Registered before the SPA catch-all so /privacy is a
+    // real standalone page, not the React shell.
+    app.get('/privacy', (_req, res) => {
+      res.type('html').send(`<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hermes Wallet — Privacy Policy</title>
+<style>
+:root{--bg:#041C1C;--panel:#072727;--cream:#ffe6cb;--text:rgba(255,230,203,.82);--muted:rgba(255,230,203,.5);--line:rgba(255,230,203,.14)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Courier New',ui-monospace,monospace;line-height:1.6;padding:48px 20px}
+.wrap{max-width:680px;margin:0 auto}
+h1{color:var(--cream);text-transform:uppercase;letter-spacing:.1em;font-size:24px;border-bottom:1px solid var(--line);padding-bottom:16px}
+h2{color:var(--cream);text-transform:uppercase;letter-spacing:.08em;font-size:15px;margin-top:30px}
+a{color:var(--cream)} code{background:var(--panel);padding:2px 6px;border:1px solid var(--line)}
+.muted{color:var(--muted);font-size:14px} ul{padding-left:20px}
+</style></head><body><div class="wrap">
+<h1>Hermes Wallet — Privacy Policy</h1>
+<p class="muted">Last updated: 2026-06-04</p>
+<p>Hermes Wallet is a <strong>self-custody (non-custodial)</strong> browser extension for the Hermeschain network. The short version: <strong>we don't collect anything about you.</strong></p>
+<h2>What we collect</h2>
+<p><strong>Nothing.</strong> No servers of our own, no analytics, no telemetry, no tracking, no ads, no accounts. We never see your identity, IP, browsing, or funds.</p>
+<h2>Your keys and seed phrase</h2>
+<ul><li>Generated on your device and used only on your device.</li>
+<li>Stored <strong>encrypted at rest</strong> (PBKDF2 + AES-256-GCM) in the browser's local extension storage (<code>chrome.storage.local</code>), unlocked only by your password.</li>
+<li><strong>Never transmitted</strong> to us or anyone. Only your seed phrase can restore the wallet.</li></ul>
+<h2>What leaves your device</h2>
+<p>Like any blockchain wallet, the extension talks to <code>https://hermeschain.xyz</code>. The only things sent are your <strong>public address</strong> (to read balances) and <strong>transactions you explicitly approve</strong> — both public by the nature of a public blockchain.</p>
+<h2>Permissions</h2>
+<ul><li><code>storage</code> — keep your encrypted vault on your device.</li>
+<li>Host access to <code>hermeschain.xyz</code> — read balances and submit approved transactions.</li>
+<li>Content script (<code>window.hermes</code> provider) — lets dapps <em>request</em> a connection or signature; every request needs your explicit approval. A site can never read your keys or move funds without you approving.</li></ul>
+<h2>Data sharing &amp; sale</h2>
+<p>We don't sell, rent, or share any data, because we don't collect any.</p>
+<h2>Open source</h2>
+<p>Review exactly what it does at <a href="https://github.com/hermeschain-agent/hermeschain">github.com/hermeschain-agent/hermeschain</a> (<code>extension/</code>).</p>
+<h2>Contact</h2>
+<p>Open an issue at <a href="https://github.com/hermeschain-agent/hermeschain/issues">the repository</a>.</p>
+</div></body></html>`);
+    });
+
     // Serve versioned static assets aggressively, but keep the HTML shell
     // fresh so browsers pick up new bundles after deploys.
     app.use(express.static(frontendPath, {

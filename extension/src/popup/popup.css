@@ -1,86 +1,345 @@
-:root {
-  --bg: #0b0e14;
-  --panel: #131826;
-  --line: #222a3a;
-  --text: #e6e9ef;
-  --muted: #8b93a7;
-  --accent: #6d8bff;
-  --accent-2: #3a4d8f;
-  --danger: #ff6b6b;
-  --ok: #3ddc97;
+/* ── Hermes Wallet popup — themed to hermeschain.xyz (retro pixel terminal) ──
+   Deep teal + warm cream, sharp corners, chunky offset shadows, bundled pixel
+   fonts. Class names are unchanged from popup.ts, so re-skinning is CSS-only. */
+
+@font-face {
+  font-family: 'Pixelify Sans';
+  src: url('fonts/pixelify-sans-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
 }
-* { box-sizing: border-box; }
+@font-face {
+  font-family: 'Pixelify Sans';
+  src: url('fonts/pixelify-sans-700.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'VT323';
+  src: url('fonts/vt323-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  --bg: #041c1c; /* deep teal canvas */
+  --panel: #072727; /* raised surface */
+  --sunken: #021212; /* inset (inputs/chips) */
+  --hover: #0b3333; /* hover background */
+  --cream: #ffe6cb;
+  --cream-dim: rgba(255, 230, 203, 0.12);
+  --cream-mid: rgba(255, 230, 203, 0.22);
+  --cream-faint: rgba(255, 230, 203, 0.45);
+  --fg: #ffffff;
+  --line: rgba(255, 230, 203, 0.14);
+  --line-strong: rgba(255, 230, 203, 0.32);
+  --text: rgba(255, 230, 203, 0.82);
+  --muted: rgba(255, 230, 203, 0.45);
+  --accent: #ffe6cb;
+  --danger: #ff6b6b;
+  --ok: #a8e6a3;
+  --amber: #ffc872;
+  --px-shadow: 3px 3px 0 0 var(--cream-dim);
+  --px-shadow-hover: 4px 4px 0 0 var(--cream);
+  --px-glow: 0 0 12px rgba(255, 230, 203, 0.18);
+  --px-t: 80ms steps(2, end);
+  --font-display: 'Pixelify Sans', 'Courier New', monospace;
+  --font-mono: 'VT323', 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   width: 360px;
   min-height: 500px;
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-display);
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
 }
+/* faint scanline texture — the site's terminal mood */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 230, 203, 0.035) 0 1px,
+    transparent 1px 3px
+  );
+  opacity: 0.5;
+}
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
 header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 230, 203, 0.04), transparent);
 }
-.logo { font-weight: 700; letter-spacing: 0.3px; }
-main { padding: 16px; }
-h2 { margin: 0 0 4px; font-size: 18px; }
-.muted { color: var(--muted); }
-.row { display: flex; gap: 8px; }
-.col { display: flex; flex-direction: column; gap: 10px; }
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--cream);
+}
+.logo img {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+main {
+  padding: 16px;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cream);
+}
+strong {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  color: var(--cream-faint);
+}
+p {
+  margin: 0;
+}
+.muted {
+  color: var(--muted);
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────── */
 button {
-  font: inherit;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
   cursor: pointer;
-  border: none;
-  border-radius: 10px;
-  padding: 11px 14px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 600;
+  border-radius: 0;
+  padding: 12px 18px;
+  background: var(--cream);
+  color: var(--bg);
+  border: 1px solid var(--cream);
+  box-shadow: 3px 3px 0 0 var(--fg);
+  transition:
+    background var(--px-t),
+    color var(--px-t),
+    box-shadow var(--px-t),
+    transform var(--px-t);
 }
-button:hover { filter: brightness(1.08); }
-button:disabled { opacity: 0.5; cursor: default; }
-button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
-button.full { width: 100%; }
-input {
-  font: inherit;
+button:hover {
+  background: transparent;
+  color: var(--cream);
+  box-shadow: 4px 4px 0 0 var(--cream);
+  transform: translate(-1px, -1px);
+}
+button:active {
+  transform: translate(3px, 3px);
+  box-shadow: 0 0 0 0 var(--cream);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: 2px 2px 0 0 var(--cream-dim);
+  transform: none;
+}
+button.ghost {
+  background: transparent;
+  color: var(--cream);
+  border: 1px solid var(--cream-mid);
+  box-shadow: var(--px-shadow);
+}
+button.ghost:hover {
+  border-color: var(--cream);
+  background: var(--hover);
+  color: var(--cream);
+  box-shadow: var(--px-shadow-hover);
+}
+button.full {
   width: 100%;
-  padding: 11px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: #0e131f;
-  color: var(--text);
 }
-input:focus { outline: none; border-color: var(--accent-2); }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
-.balance { font-size: 30px; font-weight: 700; }
-.addr { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; color: var(--muted); }
+/* compact buttons inside an action row (Copy / Faucet / refresh) */
+.row button {
+  padding: 9px 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  flex: 1;
+}
+
+/* ── Inputs ──────────────────────────────────────────────── */
+input {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  width: 100%;
+  padding: 10px 13px;
+  border-radius: 0;
+  border: 1px solid var(--cream-dim);
+  background: var(--sunken);
+  color: var(--fg);
+  box-shadow: inset 2px 2px 0 0 var(--cream-dim);
+  transition:
+    border-color var(--px-t),
+    box-shadow var(--px-t);
+}
+input::placeholder {
+  color: var(--cream-faint);
+}
+input:focus {
+  outline: none;
+  border-color: var(--cream);
+  box-shadow:
+    inset 2px 2px 0 0 var(--cream-mid),
+    var(--px-glow);
+}
+
+/* ── Cards ───────────────────────────────────────────────── */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--cream-dim);
+  border-radius: 0;
+  padding: 16px;
+  box-shadow: var(--px-shadow);
+  transition:
+    border-color var(--px-t),
+    box-shadow var(--px-t),
+    transform var(--px-t);
+}
+.card:hover {
+  border-color: var(--cream-mid);
+  box-shadow: var(--px-shadow-hover);
+  transform: translate(-1px, -1px);
+}
+
+.balance {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 27px;
+  letter-spacing: 0.02em;
+  color: var(--cream);
+  line-height: 1.1;
+  word-break: break-word;
+}
+.addr {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  word-break: break-all;
+  color: var(--cream-faint);
+  letter-spacing: 0.04em;
+}
+
+/* ── Seed phrase grid ────────────────────────────────────── */
 .seed {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 16px;
 }
-.seed span { background: #0e131f; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
-.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
-.tabs button { flex: 1; background: transparent; border: 1px solid var(--line); color: var(--muted); }
-.tabs button.active { background: var(--accent-2); color: #fff; border-color: var(--accent-2); }
+.seed span {
+  background: var(--sunken);
+  border: 1px solid var(--cream-dim);
+  border-radius: 0;
+  padding: 6px 8px;
+  color: var(--cream);
+  box-shadow: inset 1px 1px 0 0 var(--cream-dim);
+}
+
+/* ── Tabs (if used) ──────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.tabs button {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--cream-mid);
+  color: var(--cream-faint);
+  box-shadow: var(--px-shadow);
+}
+.tabs button.active {
+  background: var(--cream);
+  color: var(--bg);
+  border-color: var(--cream);
+}
+
+/* ── Toast ───────────────────────────────────────────────── */
 #toast {
   position: fixed;
   bottom: 14px;
   left: 16px;
   right: 16px;
   padding: 10px 12px;
-  border-radius: 10px;
-  background: #1b2233;
-  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--px-shadow);
   text-align: center;
+  font-size: 14px;
+  z-index: 2;
 }
-#toast.err { border-color: var(--danger); color: var(--danger); }
-#toast.ok { border-color: var(--ok); color: var(--ok); }
-.warn { color: var(--danger); font-size: 12px; }
+#toast.err {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+#toast.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--amber);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* ── Decorative divider (optional, between cards) ────────── */
+.sigil-divider {
+  position: relative;
+  height: 1px;
+  margin: 2px 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--cream-dim) 20%,
+    var(--cream-mid) 50%,
+    var(--cream-dim) 80%,
+    transparent
+  );
+}
