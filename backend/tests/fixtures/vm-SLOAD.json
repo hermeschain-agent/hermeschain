@@ -1,0 +1,6 @@
+{
+  "label": "SSTORE then SLOAD roundtrip",
+  "ops": [{"op":"SSTORE","args":["k","42"]},{"op":"SLOAD","args":["k"]},{"op":"STOP"}],
+  "gasLimit": "30000",
+  "expected": {"status": "success"}
+}
