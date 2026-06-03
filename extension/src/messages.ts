@@ -27,3 +27,22 @@ export interface WalletResponse<T = unknown> {
 }
 
 export const WALLET_MESSAGE = 'hermes-wallet-rpc';
+
+// ---- Dapp provider (window.hermes) -----------------------------------------
+
+export const PROVIDER_MESSAGE = 'hermes-provider-rpc';
+export const APPROVAL_MESSAGE = 'hermes-approval-rpc';
+
+export type ProviderMethod = 'connect' | 'getAccounts' | 'signAndSend' | 'disconnect';
+
+export interface PendingApproval {
+  id: string;
+  origin: string;
+  kind: 'connect' | 'signAndSend';
+  /** for signAndSend: { to, amount } */
+  payload: { to?: string; amount?: string | number };
+}
+
+export type ApprovalRequest =
+  | { type: 'getPending'; id: string }
+  | { type: 'resolve'; id: string; approved: boolean };

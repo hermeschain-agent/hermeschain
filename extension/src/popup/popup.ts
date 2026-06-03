@@ -3,7 +3,15 @@
  * keys): it never touches private keys, it asks the background to sign and then
  * broadcasts the signed payload to the chain.
  */
-import { WALLET_MESSAGE, type WalletRequest, type WalletResponse, type WalletStatus } from '../messages.ts';
+import {
+  WALLET_MESSAGE,
+  APPROVAL_MESSAGE,
+  type WalletRequest,
+  type WalletResponse,
+  type WalletStatus,
+  type ApprovalRequest,
+  type PendingApproval,
+} from '../messages.ts';
 import { fetchSnapshot, submitSend, claimFaucet, importAddress, type WalletSnapshot } from '../wallet/api.ts';
 import type { SignedSend } from '../crypto/keyring.ts';
 
@@ -13,6 +21,12 @@ const toastEl = document.getElementById('toast') as HTMLElement;
 
 async function rpc<T = unknown>(request: WalletRequest): Promise<T> {
   const res = (await chrome.runtime.sendMessage({ channel: WALLET_MESSAGE, request })) as WalletResponse<T>;
+  if (!res?.ok) throw new Error(res?.error || 'request failed');
+  return res.data as T;
+}
+
+async function approvalRpc<T = unknown>(request: ApprovalRequest): Promise<T> {
+  const res = (await chrome.runtime.sendMessage({ channel: APPROVAL_MESSAGE, request })) as WalletResponse<T>;
   if (!res?.ok) throw new Error(res?.error || 'request failed');
   return res.data as T;
 }
@@ -113,7 +127,7 @@ function renderImport(): void {
   });
 }
 
-function renderUnlock(): void {
+function renderUnlock(onSuccess: () => void = renderMain): void {
   screen.innerHTML = `
     <div class="col">
       <h2>Unlock</h2>
@@ -124,7 +138,7 @@ function renderUnlock(): void {
     const pw = (screen.querySelector('#pw') as HTMLInputElement).value;
     try {
       await rpc({ type: 'unlock', password: pw });
-      renderMain();
+      onSuccess();
     } catch (e) {
       toast(String((e as Error).message), 'err');
     }
@@ -209,7 +223,43 @@ lockBtn.addEventListener('click', async () => {
   renderUnlock();
 });
 
+async function renderApprove(id: string): Promise<void> {
+  lockBtn.hidden = true;
+  const req = await approvalRpc<PendingApproval & { locked: boolean }>({ type: 'getPending', id }).catch(
+    (e: Error) => {
+      screen.innerHTML = `<p class="warn">${e.message}</p>`;
+      return null;
+    },
+  );
+  if (!req) return;
+  if (req.locked) {
+    renderUnlock(() => renderApprove(id)); // unlock, then come back to approve
+    return;
+  }
+  const body =
+    req.kind === 'connect'
+      ? `<p><strong>${req.origin}</strong> wants to connect to your wallet and view your address.</p>`
+      : `<div class="card col"><span class="muted">Send</span><span class="balance">${req.payload.amount}</span>
+         <span class="muted">to</span><span class="addr">${req.payload.to}</span></div>
+         <p class="muted">Requested by ${req.origin}</p>`;
+  screen.innerHTML = `
+    <div class="col">
+      <h2>${req.kind === 'connect' ? 'Connection request' : 'Confirm transaction'}</h2>
+      ${body}
+      <button class="full" id="approve">Approve</button>
+      <button class="full ghost" id="reject">Reject</button>
+    </div>`;
+  const decide = async (approved: boolean) => {
+    await approvalRpc({ type: 'resolve', id, approved }).catch(() => {});
+    window.close();
+  };
+  screen.querySelector('#approve')!.addEventListener('click', () => decide(true));
+  screen.querySelector('#reject')!.addEventListener('click', () => decide(false));
+}
+
 async function init(): Promise<void> {
+  const approve = location.hash.match(/approve=([\w-]+)/);
+  if (approve) return void renderApprove(approve[1]);
   try {
     const status = await rpc<WalletStatus>({ type: 'getStatus' });
     if (!status.initialized) renderWelcome();
