@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/crypto/*.test.ts"
+    "test": "node --import tsx --test src/crypto/*.test.ts && node --import tsx --test src/wallet/*.test.ts"
   },
   "dependencies": {
     "@noble/ed25519": "^2.1.0",
