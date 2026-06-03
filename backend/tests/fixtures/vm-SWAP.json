@@ -1,0 +1,6 @@
+{
+  "label": "SWAP exchanges the top two stack items",
+  "ops": [{"op":"PUSH","args":[1]},{"op":"PUSH","args":[2]},{"op":"SWAP"},{"op":"SUB"},{"op":"STOP"}],
+  "gasLimit": "1000",
+  "expected": {"status": "success"}
+}
