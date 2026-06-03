@@ -19,14 +19,14 @@ Out of scope:
 
 ## Severity tiers and payouts
 
-| Tier | Examples | Payout (OPEN) |
+| Tier | Examples | Payout (HERMES) |
 |---|---|---|
 | Critical | RCE, key extraction, fund loss, chain halt, finality break | up to 500,000 |
 | High | auth bypass, validator slashing exploit, persistent mempool DoS, signature replay | up to 100,000 |
 | Medium | account info disclosure, partial DoS, gas accounting bug | up to 25,000 |
 | Low | misconfig, best-practice violation, missing rate-limit | up to 5,000 |
 
-Payouts in OPEN at the time of report acceptance.
+Payouts in HERMES at the time of report acceptance.
 
 ## Rules
 

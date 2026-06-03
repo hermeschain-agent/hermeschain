@@ -8,7 +8,7 @@ A counter that increments and emits a log every time someone calls it.
 
 ## Prerequisites
 
-- A wallet with some OPEN (use the [faucet](https://hermeschain.io/faucet))
+- A wallet with some HERMES (use the [faucet](https://hermeschain.io/faucet))
 - `curl` and `jq`
 
 ## Step 1 — Write the program

@@ -224,7 +224,7 @@ export const Faucet: React.FC = () => {
     if (!wallet || !stakeAmount) return;
     const amount = parseFloat(stakeAmount);
     if (amount < 10) {
-      setMessage({ type: 'error', text: 'Minimum stake is 10 OPEN' });
+      setMessage({ type: 'error', text: 'Minimum stake is 10 HERMES' });
       return;
     }
     if (amount > wallet.balance) {
@@ -242,7 +242,7 @@ export const Faucet: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        setMessage({ type: 'success', text: `[+] Staked ${amount} OPEN` });
+        setMessage({ type: 'success', text: `[+] Staked ${amount} HERMES` });
         setStakeAmount('');
         fetchWalletBalance(wallet.address);
         fetchStakingPosition();
@@ -269,7 +269,7 @@ export const Faucet: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        setMessage({ type: 'success', text: `[+] Claimed ${data.rewards.toFixed(4)} OPEN rewards` });
+        setMessage({ type: 'success', text: `[+] Claimed ${data.rewards.toFixed(4)} HERMES rewards` });
         fetchWalletBalance(wallet.address);
         fetchStakingPosition();
         fetchRecentTransactions();
@@ -297,7 +297,7 @@ export const Faucet: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        setMessage({ type: 'success', text: `[+] Unstaked ${data.unstaked} OPEN` });
+        setMessage({ type: 'success', text: `[+] Unstaked ${data.unstaked} HERMES` });
         setUnstakeAmount('');
         fetchWalletBalance(wallet.address);
         fetchStakingPosition();
@@ -316,7 +316,7 @@ export const Faucet: React.FC = () => {
     if (!wallet || !stakingPosition) return;
     const pendingRewards = getLivePendingRewards();
     if (pendingRewards < 0.01) {
-      setMessage({ type: 'error', text: 'Minimum compound amount is 0.01 OPEN' });
+      setMessage({ type: 'error', text: 'Minimum compound amount is 0.01 HERMES' });
       return;
     }
     
@@ -339,13 +339,13 @@ export const Faucet: React.FC = () => {
         const stakeData = await stakeRes.json();
         
         if (stakeData.success) {
-          setMessage({ type: 'success', text: `[+] Compounded ${claimData.rewards.toFixed(4)} OPEN` });
+          setMessage({ type: 'success', text: `[+] Compounded ${claimData.rewards.toFixed(4)} HERMES` });
           fetchWalletBalance(wallet.address);
           fetchStakingPosition();
           fetchPoolStats();
           fetchRecentTransactions();
         } else {
-          setMessage({ type: 'success', text: `[+] Claimed ${claimData.rewards.toFixed(4)} OPEN` });
+          setMessage({ type: 'success', text: `[+] Claimed ${claimData.rewards.toFixed(4)} HERMES` });
         }
       } else {
         setMessage({ type: 'error', text: claimData.error || 'Nothing to compound' });
@@ -465,11 +465,11 @@ export const Faucet: React.FC = () => {
           marginBottom: '20px'
         }}>
           {[
-            { label: 'BALANCE', value: wallet.balance.toLocaleString(), suffix: 'OPEN' },
-            { label: 'TOTAL STAKED', value: poolStats?.totalStaked?.toLocaleString() || '0', suffix: 'OPEN' },
+            { label: 'BALANCE', value: wallet.balance.toLocaleString(), suffix: 'HERMES' },
+            { label: 'TOTAL STAKED', value: poolStats?.totalStaked?.toLocaleString() || '0', suffix: 'HERMES' },
             { label: 'APY', value: `${poolStats?.apy || 12}%`, suffix: '+ BONUS' },
             { label: 'STAKERS', value: poolStats?.totalStakers || 0, suffix: 'ACTIVE' },
-            { label: 'REWARDS PAID', value: poolStats?.totalRewardsPaid?.toFixed(2) || '0', suffix: 'OPEN' },
+            { label: 'REWARDS PAID', value: poolStats?.totalRewardsPaid?.toFixed(2) || '0', suffix: 'HERMES' },
           ].map((stat, i) => (
             <div key={i} style={{
               background: 'var(--cc-bg-secondary)',
@@ -534,7 +534,7 @@ export const Faucet: React.FC = () => {
                   CLAIM AMOUNT
                 </div>
                 <div style={{ color: 'var(--cc-text-primary)', fontSize: '32px', fontWeight: 700, marginBottom: '4px' }}>
-                  100 <span style={{ color: 'var(--cc-coral)', fontSize: '16px' }}>OPEN</span>
+                  100 <span style={{ color: 'var(--cc-coral)', fontSize: '16px' }}>HERMES</span>
                 </div>
                 <div style={{ color: 'var(--cc-text-muted)', fontSize: '10px', marginBottom: '24px' }}>
                   every 24 hours
@@ -610,7 +610,7 @@ export const Faucet: React.FC = () => {
 
                 {nextTier && (
                   <div style={{ marginBottom: '16px', fontSize: '10px', color: 'var(--cc-text-muted)', textAlign: 'center' }}>
-                    {(nextTier.min - stakingPosition.amount).toLocaleString()} OPEN to {nextTier.name} (+{nextTier.bonus}% bonus)
+                    {(nextTier.min - stakingPosition.amount).toLocaleString()} HERMES to {nextTier.name} (+{nextTier.bonus}% bonus)
                   </div>
                 )}
 
@@ -794,7 +794,7 @@ export const Faucet: React.FC = () => {
                         </button>
                       </div>
                       <div style={{ color: 'var(--cc-text-muted)', fontSize: '9px', marginTop: '6px' }}>
-                        Minimum: 10 OPEN
+                        Minimum: 10 HERMES
                       </div>
                     </div>
 
@@ -838,7 +838,7 @@ export const Faucet: React.FC = () => {
                         fontFamily: 'JetBrains Mono, monospace'
                       }}
                     >
-                      {isLoading ? 'STAKING...' : 'STAKE OPEN'}
+                      {isLoading ? 'STAKING...' : 'STAKE HERMES'}
                     </button>
                   </>
                 )}
@@ -944,7 +944,7 @@ export const Faucet: React.FC = () => {
                           <div style={{ color: 'var(--cc-coral)', fontSize: '28px', fontWeight: 700 }}>
                             +{livePendingRewards.toFixed(6)}
                           </div>
-                          <div style={{ color: 'var(--cc-text-muted)', fontSize: '10px' }}>OPEN</div>
+                          <div style={{ color: 'var(--cc-text-muted)', fontSize: '10px' }}>HERMES</div>
                         </div>
 
                         <div style={{
@@ -1026,7 +1026,7 @@ export const Faucet: React.FC = () => {
                           {tier.name}
                         </span>
                         <span style={{ color: 'var(--cc-text-muted)', fontSize: '10px' }}>
-                          {tier.min.toLocaleString()}+ OPEN
+                          {tier.min.toLocaleString()}+ HERMES
                         </span>
                       </div>
                       <span style={{ color: 'var(--cc-coral)', fontSize: '12px', fontWeight: 600 }}>

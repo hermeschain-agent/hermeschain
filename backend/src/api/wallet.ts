@@ -434,14 +434,14 @@ walletRouter.post('/faucet/claim', async (req, res) => {
       status: 'pending',
     });
 
-    console.log(`[FAUCET] Submitted ${FAUCET_AMOUNT} OPEN → ${address} (tx ${hash.slice(0, 16)}..., nonce ${faucetNonce})`);
+    console.log(`[FAUCET] Submitted ${FAUCET_AMOUNT} HERMES → ${address} (tx ${hash.slice(0, 16)}..., nonce ${faucetNonce})`);
 
     res.json({
       success: true,
       amount: FAUCET_AMOUNT,
       txHash: hash,
       nextClaimAt: now + FAUCET_COOLDOWN_MS,
-      message: `Faucet sent ${FAUCET_AMOUNT} OPEN — confirms in the next block (~10s).`,
+      message: `Faucet sent ${FAUCET_AMOUNT} HERMES — confirms in the next block (~10s).`,
     });
   } catch (error) {
     console.error('[FAUCET] Claim error:', error);
@@ -609,7 +609,7 @@ walletRouter.post('/send', async (req, res) => {
       status: 'confirmed'
     });
 
-    console.log(`[WALLET] Transfer: ${amount} OPEN from ${fromAddress.slice(0, 20)}... to ${toAddress.slice(0, 20)}...`);
+    console.log(`[WALLET] Transfer: ${amount} HERMES from ${fromAddress.slice(0, 20)}... to ${toAddress.slice(0, 20)}...`);
 
     res.json({
       success: true,
@@ -618,7 +618,7 @@ walletRouter.post('/send', async (req, res) => {
       from: fromAddress,
       to: toAddress,
       newBalance: sender.balance,
-      message: `Successfully sent ${amount} OPEN!`
+      message: `Successfully sent ${amount} HERMES!`
     });
   } catch (error) {
     console.error('[WALLET] Send error:', error);
@@ -761,7 +761,7 @@ walletRouter.post('/staking/stake', async (req, res) => {
     const { address, amount } = req.body;
 
     if (!address || !amount || amount < MIN_STAKE) {
-      return res.status(400).json({ success: false, error: `Minimum stake is ${MIN_STAKE} OPEN` });
+      return res.status(400).json({ success: false, error: `Minimum stake is ${MIN_STAKE} HERMES` });
     }
 
     // Get wallet
@@ -843,13 +843,13 @@ walletRouter.post('/staking/stake', async (req, res) => {
       status: 'confirmed'
     });
 
-    console.log(`[STAKING] ${address.slice(0, 20)}... staked ${amount} OPEN`);
+    console.log(`[STAKING] ${address.slice(0, 20)}... staked ${amount} HERMES`);
 
     res.json({
       success: true,
       amount,
       txHash,
-      message: `Successfully staked ${amount} OPEN!`
+      message: `Successfully staked ${amount} HERMES!`
     });
   } catch (error) {
     console.error('[STAKING] Stake error:', error);
@@ -889,7 +889,7 @@ walletRouter.post('/staking/claim', async (req, res) => {
     const roundedRewards = Math.floor(rewards * 100) / 100;
 
     if (roundedRewards < 0.01) {
-      return res.status(400).json({ success: false, error: 'Minimum claimable reward is 0.01 OPEN' });
+      return res.status(400).json({ success: false, error: 'Minimum claimable reward is 0.01 HERMES' });
     }
 
     // Get wallet
@@ -930,13 +930,13 @@ walletRouter.post('/staking/claim', async (req, res) => {
       status: 'confirmed'
     });
 
-    console.log(`[STAKING] ${address.slice(0, 20)}... claimed ${roundedRewards} OPEN rewards`);
+    console.log(`[STAKING] ${address.slice(0, 20)}... claimed ${roundedRewards} HERMES rewards`);
 
     res.json({
       success: true,
       rewards: roundedRewards,
       txHash,
-      message: `Claimed ${roundedRewards} OPEN in staking rewards!`
+      message: `Claimed ${roundedRewards} HERMES in staking rewards!`
     });
   } catch (error) {
     console.error('[STAKING] Claim error:', error);
@@ -1039,14 +1039,14 @@ walletRouter.post('/staking/unstake', async (req, res) => {
       });
     }
 
-    console.log(`[STAKING] ${address.slice(0, 20)}... unstaked ${unstakeAmount} OPEN (+ ${pendingRewards} rewards)`);
+    console.log(`[STAKING] ${address.slice(0, 20)}... unstaked ${unstakeAmount} HERMES (+ ${pendingRewards} rewards)`);
 
     res.json({
       success: true,
       unstaked: unstakeAmount,
       rewards: pendingRewards,
       txHash,
-      message: `Unstaked ${unstakeAmount} OPEN${pendingRewards > 0 ? ` + ${pendingRewards} rewards` : ''}!`
+      message: `Unstaked ${unstakeAmount} HERMES${pendingRewards > 0 ? ` + ${pendingRewards} rewards` : ''}!`
     });
   } catch (error) {
     console.error('[STAKING] Unstake error:', error);

@@ -33,7 +33,7 @@ interface MerkleNode {
 }
 
 // Initial token supply and distribution
-const INITIAL_SUPPLY = BigInt('1000000000000000000000000'); // 1 million OPEN (with 18 decimals)
+const INITIAL_SUPPLY = BigInt('1000000000000000000000000'); // 1 million HERMES (with 18 decimals)
 const GENESIS_ADDRESS = 'OPENGenesis1111111111111111111111111111111';
 const FAUCET_ADDRESS = 'HERMESCHAIN_FAUCET';
 const TREASURY_ADDRESS = 'OPENTreasury11111111111111111111111111111';
@@ -101,7 +101,7 @@ export class StateManager {
 
       console.log(`[STATE] StateManager initialized with ${this.accounts.size} accounts`);
       console.log(`[STATE] Current state root: ${this.stateRoot.substring(0, 20)}...`);
-      console.log(`[STATE] Faucet balance: ${this.formatBalance(this.getBalance(FAUCET_PUBLIC_ADDRESS))} OPEN`);
+      console.log(`[STATE] Faucet balance: ${this.formatBalance(this.getBalance(FAUCET_PUBLIC_ADDRESS))} HERMES`);
 
     } catch (error) {
       console.error('[STATE] Initialization error:', error);
@@ -566,8 +566,8 @@ export class StateManager {
         nonce: acc.nonce
       }))
       .sort((a, b) => {
-        const balA = BigInt(a.balance.replace(' OPEN', '').replace(/,/g, ''));
-        const balB = BigInt(b.balance.replace(' OPEN', '').replace(/,/g, ''));
+        const balA = BigInt(a.balance.replace(' HERMES', '').replace(/,/g, ''));
+        const balB = BigInt(b.balance.replace(' HERMES', '').replace(/,/g, ''));
         return balB > balA ? 1 : -1;
       });
   }
@@ -587,7 +587,7 @@ export class StateManager {
   // Format balance for display
   formatBalance(balance: bigint): string {
     const wholePart = balance / (10n ** 18n);
-    return `${wholePart.toLocaleString()} OPEN`;
+    return `${wholePart.toLocaleString()} HERMES`;
   }
 
   // Persist account state to database

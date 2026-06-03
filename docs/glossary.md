@@ -12,7 +12,7 @@
 | **Finality** | A block is finalized once it's `FORK_CHOICE_DEPTH` (12) blocks deep. Reorgs past finality are refused. |
 | **Mempool** | The set of pending, signed transactions awaiting inclusion. |
 | **Migration** | A versioned SQL file in `backend/src/database/migrations/NNNN_slug.sql`. Applied lexicographically at boot via `applyPendingMigrations`. |
-| **OPEN** | The native token. 1 OPEN = 10^18 wei. |
+| **HERMES** | The native token. 1 HERMES = 10^18 wei. |
 | **Peer** | A remote Hermeschain node. Discovered via `/api/mesh/announce`. |
 | **Producer** | The validator allowed to mint a given block. Selected by VRF-style hash on `(parentHash, height)`. |
 | **Quorum** | The 2/3 stake-weighted approval threshold for finalizing a block. |

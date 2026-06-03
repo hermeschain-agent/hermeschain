@@ -73,7 +73,7 @@ This tool is foundational—without wallets, there can be no participation in th
     category: 'defi',
     reasoning: `A decentralized exchange is essential for Hermeschain's economic layer:
 
-1. LIQUIDITY: HermesSwap enables permissionless trading of OPEN tokens, creating liquid markets that allow price discovery without centralized intermediaries.
+1. LIQUIDITY: HermesSwap enables permissionless trading of HERMES tokens, creating liquid markets that allow price discovery without centralized intermediaries.
 
 2. AI-OPTIMIZED ROUTING: Unlike traditional DEXs, HermesSwap can leverage AI analysis to suggest optimal swap routes, minimizing slippage and maximizing user value.
 
@@ -264,7 +264,7 @@ const getToolCode = (id: string): string[] => {
       `import { Pool, calculateSwapOutput } from '@open/defi';`,
       ``,
       `export const HermesSwap = () => {`,
-      `  const [tokenIn, setTokenIn] = useState('OPEN');`,
+      `  const [tokenIn, setTokenIn] = useState('HERMES');`,
       `  const [tokenOut, setTokenOut] = useState('SOL');`,
       `  const [amountIn, setAmountIn] = useState('');`,
       `  const [pool, setPool] = useState<Pool | null>(null);`,
@@ -455,7 +455,7 @@ const COMPREHENSIVE_LOGS: Record<string, BuildLogEntry[]> = {
   ],
   swap: [
     { timestamp: 0, type: 'thinking', content: 'Beginning HermesSwap DEX construction...' },
-    { timestamp: 1, type: 'thinking', content: 'A blockchain without exchange functionality is like a city without markets. HermesSwap will enable permissionless trading of OPEN tokens and future assets on the network.' },
+    { timestamp: 1, type: 'thinking', content: 'A blockchain without exchange functionality is like a city without markets. HermesSwap will enable permissionless trading of HERMES tokens and future assets on the network.' },
     { timestamp: 2, type: 'thinking', content: 'I\'m implementing an Automated Market Maker (AMM) based on the constant product formula: x * y = k. This is the same proven model used by Uniswap, but optimized for Hermeschain\'s AI-native architecture.' },
     { timestamp: 3, type: 'thinking', content: 'Price impact calculation is crucial. Large trades can move the price significantly. I\'m implementing real-time slippage estimation so users understand the cost of their trades before execution.' },
     { timestamp: 4, type: 'thinking', content: 'Unlike traditional DEXs, HermesSwap can leverage AI analysis. In the future, Hermes validators could suggest optimal trade routes across multiple pools, minimizing slippage.' },

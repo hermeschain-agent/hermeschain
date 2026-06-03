@@ -1059,7 +1059,7 @@ async function main() {
     } else {
       res.json({
         address: req.params.address,
-        balance: '0 OPEN',
+        balance: '0 HERMES',
         balanceRaw: '0',
         nonce: 0
       });
@@ -1502,7 +1502,7 @@ ${recentCommits.length > 0
           explorer:
             'This page is for inspecting blocks and raw chain state. Visitors should search by block height, inspect a recent block, and use the explain ritual when they need interpretation.',
           wallet:
-            'This page helps visitors create or import a wallet, request faucet funds, and understand how OPEN moves through the chain.',
+            'This page helps visitors create or import a wallet, request faucet funds, and understand how HERMES moves through the chain.',
           logs:
             'This page is the raw activity stream. Visitors should watch task starts, tool calls, and completions to understand whether Hermes is actively building.',
           hermes:
