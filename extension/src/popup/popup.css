@@ -1,0 +1,86 @@
+:root {
+  --bg: #0b0e14;
+  --panel: #131826;
+  --line: #222a3a;
+  --text: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #6d8bff;
+  --accent-2: #3a4d8f;
+  --danger: #ff6b6b;
+  --ok: #3ddc97;
+}
+* { box-sizing: border-box; }
+body {
+  width: 360px;
+  min-height: 500px;
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.logo { font-weight: 700; letter-spacing: 0.3px; }
+main { padding: 16px; }
+h2 { margin: 0 0 4px; font-size: 18px; }
+.muted { color: var(--muted); }
+.row { display: flex; gap: 8px; }
+.col { display: flex; flex-direction: column; gap: 10px; }
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 11px 14px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+button:hover { filter: brightness(1.08); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+button.full { width: 100%; }
+input {
+  font: inherit;
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #0e131f;
+  color: var(--text);
+}
+input:focus { outline: none; border-color: var(--accent-2); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.balance { font-size: 30px; font-weight: 700; }
+.addr { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; color: var(--muted); }
+.seed {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.seed span { background: #0e131f; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.tabs button { flex: 1; background: transparent; border: 1px solid var(--line); color: var(--muted); }
+.tabs button.active { background: var(--accent-2); color: #fff; border-color: var(--accent-2); }
+#toast {
+  position: fixed;
+  bottom: 14px;
+  left: 16px;
+  right: 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #1b2233;
+  border: 1px solid var(--line);
+  text-align: center;
+}
+#toast.err { border-color: var(--danger); color: var(--danger); }
+#toast.ok { border-color: var(--ok); color: var(--ok); }
+.warn { color: var(--danger); font-size: 12px; }
