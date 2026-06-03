@@ -6,6 +6,7 @@ export const GAS_COSTS = {
   PUSH: 3n,
   POP: 2n,
   DUP: 3n,
+  SWAP: 3n,
   ADD: 3n,
   SUB: 3n,
   // Arithmetic + comparisons + bitwise ops added across TASK-061..065.

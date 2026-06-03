@@ -22,6 +22,7 @@ export type VmOp =
   | { op: 'PUSH'; args: [number | string] }
   | { op: 'POP' }
   | { op: 'DUP' }
+  | { op: 'SWAP' }
   | { op: 'ADD' }
   | { op: 'SUB' }
   | { op: 'MUL' }
@@ -87,6 +88,14 @@ export class Interpreter {
           }
           const top = stack[stack.length - 1] ?? 0;
           stack.push(top);
+          break;
+        }
+        case 'SWAP': {
+          if (!meter.charge(GAS_COSTS.SWAP)) return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at SWAP' };
+          const a = stack.pop() ?? 0;
+          const b = stack.pop() ?? 0;
+          stack.push(a);
+          stack.push(b);
           break;
         }
         case 'ADD': {
