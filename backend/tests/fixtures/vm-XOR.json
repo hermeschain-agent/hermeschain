@@ -1,0 +1,6 @@
+{
+  "label": "0b1100 XOR 0b1010 = 0b0110 (6)",
+  "ops": [{"op":"PUSH","args":[12]},{"op":"PUSH","args":[10]},{"op":"XOR"},{"op":"STOP"}],
+  "gasLimit": "1000",
+  "expected": {"status": "success"}
+}

@@ -31,6 +31,7 @@ export type VmOp =
   | { op: 'GT' }
   | { op: 'AND' }
   | { op: 'OR' }
+  | { op: 'XOR' }
   | { op: 'NOT' }
   | { op: 'SSTORE'; args: [string, string] }
   | { op: 'LOG'; args: { topics?: string[]; data?: string } }
@@ -155,6 +156,13 @@ export class Interpreter {
           const a = BigInt(stack.pop() ?? 0);
           const b = BigInt(stack.pop() ?? 0);
           stack.push(Number(a | b));
+          break;
+        }
+        case 'XOR': {
+          if (!meter.charge(GAS_COSTS.XOR)) return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at XOR' };
+          const a = BigInt(stack.pop() ?? 0);
+          const b = BigInt(stack.pop() ?? 0);
+          stack.push(Number(a ^ b));
           break;
         }
         case 'NOT': {
