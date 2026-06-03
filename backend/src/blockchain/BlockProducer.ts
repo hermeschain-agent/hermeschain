@@ -43,6 +43,13 @@ export class BlockProducer {
   private productionInterval: NodeJS.Timeout | null = null;
   private consecutiveFailures: number = 0;
   private maxConsecutiveFailures: number = 5;
+  /** Guards against overlapping produceBlock cycles. A tx-bearing cycle does
+   *  many DB writes (apply, persist accounts/state-changes/receipts) so it is
+   *  slower than an empty cycle; without this guard the next 10s tick can start
+   *  an empty cycle that adds the next block first, leaving the slow tx block
+   *  with a stale parent — it forks, addBlock returns false, and its txs are
+   *  applied to state but never confirmed (then nonce-locked forever). */
+  private producing: boolean = false;
 
   constructor(
     chain: Chain,
@@ -81,8 +88,13 @@ export class BlockProducer {
   }
 
   private async produceBlock() {
+    if (this.producing) {
+      console.log('[PRODUCER] previous cycle still running — skipping this tick (fork-race guard)');
+      return;
+    }
+    this.producing = true;
     const startTime = Date.now();
-    
+
     try {
       // Real height from the persisted in-memory tip — NOT the wall-clock
       // synthetic height. Used for the new block, applyTransaction, receipts,
@@ -335,6 +347,8 @@ export class BlockProducer {
           this.start();
         }, 30000);
       }
+    } finally {
+      this.producing = false;
     }
   }
   

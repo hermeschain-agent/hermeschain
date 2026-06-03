@@ -92,6 +92,9 @@ export class StateManager {
         await this.initializeGenesisState();
       }
 
+      // One-time faucet reconciliation (legacy label → real key-derived faucet).
+      await this.reconcileFaucet();
+
       // Calculate initial state root
       this.stateRoot = this.calculateStateRoot();
       this.initialized = true;
@@ -139,6 +142,34 @@ export class StateManager {
     }
 
     console.log('[STATE] Genesis state initialized with initial token distribution');
+  }
+
+  /**
+   * One-time faucet reconciliation. The faucet used to be the non-signing string
+   * label FAUCET_ADDRESS ('HERMESCHAIN_FAUCET'); the real faucet is now a
+   * key-derived account (Faucet.ts) that can SIGN dispensing transactions. Move
+   * any legacy faucet balance to the real faucet address so claims work without
+   * a destructive chain reset. Idempotent: once the legacy balance is 0 it
+   * no-ops (and a fresh DB, seeded straight onto the real address, no-ops too).
+   */
+  private async reconcileFaucet(): Promise<void> {
+    const legacy = this.accounts.get(FAUCET_ADDRESS);
+    if (!legacy || legacy.balance <= 0n) return;
+    const real = this.accounts.get(FAUCET_PUBLIC_ADDRESS) || {
+      address: FAUCET_PUBLIC_ADDRESS,
+      balance: 0n,
+      nonce: 0,
+    };
+    const amount = legacy.balance;
+    legacy.balance = 0n;
+    real.balance += amount;
+    this.accounts.set(FAUCET_ADDRESS, legacy);
+    this.accounts.set(FAUCET_PUBLIC_ADDRESS, real);
+    await this.persistAccountState(legacy);
+    await this.persistAccountState(real);
+    console.log(
+      `[STATE] Faucet reconciled: moved ${this.formatBalance(amount)} from legacy label → ${FAUCET_PUBLIC_ADDRESS.slice(0, 12)}...`,
+    );
   }
 
   // Get account balance
