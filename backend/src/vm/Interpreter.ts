@@ -36,6 +36,8 @@ export type VmOp =
   | { op: 'OR' }
   | { op: 'XOR' }
   | { op: 'NOT' }
+  | { op: 'SHL' }
+  | { op: 'SHR' }
   | { op: 'SSTORE'; args: [string, string] }
   | { op: 'SLOAD'; args: [string] }
   | { op: 'LOG'; args: { topics?: string[]; data?: string } }
@@ -195,6 +197,20 @@ export class Interpreter {
           if (!meter.charge(GAS_COSTS.NOT)) return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at NOT' };
           const a = BigInt(stack.pop() ?? 0);
           stack.push(Number(~a));
+          break;
+        }
+        case 'SHL': {
+          if (!meter.charge(GAS_COSTS.SHL)) return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at SHL' };
+          const shift = BigInt(stack.pop() ?? 0);
+          const value = BigInt(stack.pop() ?? 0);
+          stack.push(Number(value << shift));
+          break;
+        }
+        case 'SHR': {
+          if (!meter.charge(GAS_COSTS.SHR)) return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at SHR' };
+          const shift = BigInt(stack.pop() ?? 0);
+          const value = BigInt(stack.pop() ?? 0);
+          stack.push(Number(value >> shift));
           break;
         }
         case 'SSTORE': {

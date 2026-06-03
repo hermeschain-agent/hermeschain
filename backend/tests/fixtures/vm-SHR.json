@@ -1,0 +1,6 @@
+{
+  "label": "16 SHR 2 = 4",
+  "ops": [{"op":"PUSH","args":[16]},{"op":"PUSH","args":[2]},{"op":"SHR"},{"op":"STOP"}],
+  "gasLimit": "1000",
+  "expected": {"status": "success"}
+}
