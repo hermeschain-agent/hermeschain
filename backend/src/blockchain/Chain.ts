@@ -275,7 +275,9 @@ export class Chain {
           hash, block_height, from_address, to_address, value, gas_price,
           gas_limit, nonce, data, signature, status
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmed')
-          ON CONFLICT (hash) DO UPDATE SET status = 'confirmed'
+          ON CONFLICT (hash) DO UPDATE SET
+            status = 'confirmed',
+            block_height = EXCLUDED.block_height
       `, [
         tx.hash, block.header.height, tx.from, tx.to,
         tx.value.toString(), tx.gasPrice.toString(), tx.gasLimit.toString(),
