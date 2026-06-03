@@ -1,0 +1,6 @@
+{
+  "label": "DUP duplicates the top of stack",
+  "ops": [{"op":"PUSH","args":[7]},{"op":"DUP"},{"op":"ADD"},{"op":"STOP"}],
+  "gasLimit": "1000",
+  "expected": {"status": "success"}
+}

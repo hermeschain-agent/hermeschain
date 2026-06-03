@@ -21,6 +21,7 @@ import { GasMeter, GAS_COSTS, logGasCost } from './GasMeter';
 export type VmOp =
   | { op: 'PUSH'; args: [number | string] }
   | { op: 'POP' }
+  | { op: 'DUP' }
   | { op: 'ADD' }
   | { op: 'SUB' }
   | { op: 'MUL' }
@@ -77,6 +78,14 @@ export class Interpreter {
             return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at POP' };
           }
           stack.pop();
+          break;
+        }
+        case 'DUP': {
+          if (!meter.charge(GAS_COSTS.DUP)) {
+            return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at DUP' };
+          }
+          const top = stack[stack.length - 1] ?? 0;
+          stack.push(top);
           break;
         }
         case 'ADD': {
