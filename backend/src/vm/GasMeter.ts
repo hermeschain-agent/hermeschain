@@ -21,6 +21,7 @@ export const GAS_COSTS = {
   XOR: 3n,
   NOT: 3n,
   SSTORE: 20000n,
+  SLOAD: 2000n,
   STOP: 0n,
   REVERT: 0n,
   // LOG has a base cost + per-byte data cost (8 per byte, EVM-style).

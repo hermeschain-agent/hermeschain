@@ -36,6 +36,7 @@ export type VmOp =
   | { op: 'XOR' }
   | { op: 'NOT' }
   | { op: 'SSTORE'; args: [string, string] }
+  | { op: 'SLOAD'; args: [string] }
   | { op: 'LOG'; args: { topics?: string[]; data?: string } }
   | { op: 'STOP' }
   | { op: 'REVERT'; args?: [string] };
@@ -193,6 +194,14 @@ export class Interpreter {
           }
           const [key, val] = instr.args;
           storage[String(key)] = String(val);
+          break;
+        }
+        case 'SLOAD': {
+          if (!meter.charge(GAS_COSTS.SLOAD)) {
+            return { status: 'revert', gasUsed: meter.getSpent(), logs, storage, error: 'out-of-gas at SLOAD' };
+          }
+          const key = String(instr.args[0]);
+          stack.push(storage[key] ?? '');
           break;
         }
         case 'LOG': {
