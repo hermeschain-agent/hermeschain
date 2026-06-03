@@ -178,6 +178,7 @@ npm run pace:push
 | `GET /api/tx/:hash` | Transaction lookup |
 | `GET /api/account/:addr` | Account lookup |
 | `POST /api/transactions` | Submit a signed transaction |
+| `POST /rpc` | Ethereum-compatible JSON-RPC (read-only) — see [docs/api/rpc.md](docs/api/rpc.md) |
 | `GET /api/validators` | Validator set |
 | `GET /api/agent/status` | Agent runtime status |
 | `GET /api/agent/timeline` | Normalized persistent agent timeline |
@@ -204,6 +205,7 @@ The agent stream intentionally separates real worker events from ambient termina
 ## Documentation
 
 - [Architecture overview](docs/architecture/services.md)
+- [Public JSON-RPC endpoint](docs/api/rpc.md)
 - [Agent loop](docs/architecture/agent-loop.md)
 - [SSE channels](docs/architecture/sse-channels.md)
 - [VM spec](docs/vm/spec.md)
