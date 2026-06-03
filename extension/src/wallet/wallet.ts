@@ -9,11 +9,12 @@
  */
 import {
   type HermesAccount,
-  type SignedSend,
+  type ChainTx,
   accountFromMnemonic,
   generateMnemonicPhrase,
   isValidMnemonic,
-  signSend,
+  signChainTx,
+  toWei,
 } from '../crypto/keyring.ts';
 import { type EncryptedVault, encryptVault, decryptVault } from '../crypto/vault.ts';
 import { getItem, setItem, removeItem } from './storage.ts';
@@ -107,13 +108,13 @@ export async function addAccount(): Promise<HermesAccount> {
   return account;
 }
 
-/** Sign a transfer from the active account (backend-verifiable). */
+/** Sign a REAL on-chain transfer from the active account (backend-verifiable). */
 export async function signTransfer(
   toAddress: string,
   amount: number | string,
   nonce: number,
-): Promise<SignedSend> {
-  return signSend(getActiveAccount(), { toAddress, amount, nonce });
+): Promise<ChainTx> {
+  return signChainTx(getActiveAccount(), { toAddress, value: toWei(amount), nonce });
 }
 
 /** Reveal the seed phrase for backup (requires the password — never cached). */

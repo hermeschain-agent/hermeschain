@@ -6,7 +6,7 @@
  * then auto-locks and the popup re-prompts for the password.
  */
 import * as wallet from './wallet/wallet.ts';
-import { fetchSnapshot, submitSend } from './wallet/api.ts';
+import { fetchSnapshot, submitTransaction } from './wallet/api.ts';
 import { getItem, setItem } from './wallet/storage.ts';
 import {
   WALLET_MESSAGE,
@@ -145,9 +145,9 @@ async function handleProvider(method: string, params: { to?: string; amount?: st
       if (!to || amount == null) throw new Error('to and amount are required');
       await requestApproval(origin, 'signAndSend', { to, amount }); // throws if rejected
       const snap = await fetchSnapshot(wallet.getActiveAccount().address);
-      const signed = await wallet.signTransfer(to, amount, snap.nonce);
-      const result = (await submitSend(signed)) as { txHash?: string };
-      return { txHash: result?.txHash, signed };
+      const tx = await wallet.signTransfer(to, amount, snap.nonce);
+      const result = await submitTransaction(tx);
+      return { txHash: result?.hash, signed: tx };
     }
     case 'disconnect': {
       await removeConnection(origin);

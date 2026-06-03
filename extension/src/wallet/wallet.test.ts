@@ -14,7 +14,6 @@ import {
   exportMnemonic,
   reset,
 } from './wallet.ts';
-import { buildSendMessage } from '../crypto/keyring.ts';
 import * as backendCrypto from '../../../backend/dist/blockchain/Crypto.js';
 
 test('create → unlock → lock lifecycle', async () => {
@@ -55,12 +54,24 @@ test('addAccount derives the next index', async () => {
   assert.notEqual(next.address, getAccounts()[0].address);
 });
 
-test('INTEROP: signTransfer is accepted by the backend verify', async () => {
+test('INTEROP: signTransfer produces a chain tx the backend accepts', async () => {
   await reset();
   await createWallet('pw');
-  const signed = await signTransfer('hermes_dest', 250, 0);
-  const message = buildSendMessage(signed);
-  assert.equal(backendCrypto.verify(message, signed.signature, signed.fromAddress), true);
+  const tx = await signTransfer('HermesRecipientAddr1111111111111111111111', 250, 0);
+  // 250 tokens → wei
+  assert.equal(tx.value, (250n * 10n ** 18n).toString());
+  const forVerify = {
+    from: tx.from,
+    to: tx.to,
+    value: BigInt(tx.value),
+    gasPrice: BigInt(tx.gasPrice),
+    gasLimit: BigInt(tx.gasLimit),
+    nonce: tx.nonce,
+    data: tx.data,
+    signature: tx.signature,
+    hash: tx.hash,
+  };
+  assert.equal(backendCrypto.verifyTransactionSignature(forVerify), true);
 });
 
 test('exportMnemonic requires the password', async () => {

@@ -12,6 +12,9 @@ import {
   buildSendMessage,
   signMessage,
   signSend,
+  signChainTx,
+  toWei,
+  fromWei,
 } from './keyring.ts';
 import * as backendCrypto from '../../../backend/dist/blockchain/Crypto.js';
 
@@ -53,4 +56,47 @@ test('INTEROP: signSend payload is accepted by the backend verify', async () => 
   const signed = await signSend(acct, { toAddress: 'hermes_bob', amount: '42', nonce: 0 });
   const message = buildSendMessage(signed);
   assert.equal(backendCrypto.verify(message, signed.signature, signed.fromAddress), true);
+});
+
+test('INTEROP: signChainTx is accepted by backend verifyTransactionSignature + matches its hash', async () => {
+  const acct = await accountFromMnemonic(generateMnemonicPhrase(12), 0);
+  const recipient = await accountFromMnemonic(generateMnemonicPhrase(12), 0);
+  const tx = await signChainTx(acct, { toAddress: recipient.address, value: 5n * 10n ** 18n, nonce: 0 });
+
+  // Backend re-derives the message + verifies the signature against from-as-pubkey.
+  const txForVerify = {
+    from: tx.from,
+    to: tx.to,
+    value: BigInt(tx.value),
+    gasPrice: BigInt(tx.gasPrice),
+    gasLimit: BigInt(tx.gasLimit),
+    nonce: tx.nonce,
+    data: tx.data,
+    signature: tx.signature,
+    hash: tx.hash,
+  };
+  assert.equal(backendCrypto.verifyTransactionSignature(txForVerify), true);
+
+  // Backend's own signTransaction must produce the identical signature + hash
+  // (Ed25519 is deterministic) — proves byte-compatibility with the pool hash.
+  const body = {
+    from: tx.from,
+    to: tx.to,
+    value: BigInt(tx.value),
+    gasPrice: BigInt(tx.gasPrice),
+    gasLimit: BigInt(tx.gasLimit),
+    nonce: tx.nonce,
+    data: tx.data,
+  };
+  const backendSigned = backendCrypto.signTransaction(body, acct.privateKey);
+  assert.equal(tx.signature, backendSigned.signature);
+  assert.equal(tx.hash, backendSigned.hash);
+});
+
+test('toWei/fromWei convert decimal token amounts', () => {
+  assert.equal(toWei('1').toString(), (10n ** 18n).toString());
+  assert.equal(toWei('1.5').toString(), (15n * 10n ** 17n).toString());
+  assert.equal(toWei(100).toString(), (100n * 10n ** 18n).toString());
+  assert.equal(fromWei(10n ** 18n), 1);
+  assert.equal(fromWei('1500000000000000000'), 1.5);
 });
