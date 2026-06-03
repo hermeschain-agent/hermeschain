@@ -26,5 +26,7 @@ await esbuild.build({
 cpSync('public/manifest.json', 'dist/manifest.json');
 cpSync('src/popup/popup.html', 'dist/popup.html');
 cpSync('src/popup/popup.css', 'dist/popup.css');
+cpSync('public/icons', 'dist/icons', { recursive: true });
+cpSync('public/fonts', 'dist/fonts', { recursive: true });
 
 console.log('Built extension → dist/  (chrome://extensions → Load unpacked → select dist/)');

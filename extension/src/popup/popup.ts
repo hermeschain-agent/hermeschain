@@ -179,7 +179,7 @@ async function renderMain(): Promise<void> {
     balEl.textContent = '…';
     try {
       snap = await fetchSnapshot(address);
-      balEl.textContent = fmt(snap.balance);
+      balEl.textContent = `${fmt(snap.balance)} HERMES`;
     } catch {
       balEl.textContent = '—';
     }

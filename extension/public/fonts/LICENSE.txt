@@ -1,0 +1,16 @@
+Bundled fonts — SIL Open Font License 1.1 (OFL)
+
+These webfonts are redistributed under the SIL Open Font License, Version 1.1,
+which permits bundling and redistribution (including in a published extension):
+
+  • Pixelify Sans  — © The Pixelify Sans Project Authors
+      pixelify-sans-400.woff2, pixelify-sans-700.woff2
+      https://github.com/eifetx/Pixelify-Sans
+  • VT323          — © The VT323 Project Authors (Peter Hull)
+      vt323-400.woff2
+      https://github.com/phoikoi/VT323
+
+Full license text: https://openfontlicense.org  (SIL OFL 1.1)
+
+The fonts are used here only to render the wallet UI; no other rights are
+claimed. The OFL reserved-font-name and redistribution terms are respected.
