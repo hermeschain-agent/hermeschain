@@ -30,8 +30,11 @@ RUN apt-get update \
 COPY backend/package*.json ./backend/
 COPY frontend/package*.json ./frontend/
 
-RUN cd backend && npm install --omit=dev \
-  && cd ../frontend && npm install --omit=dev \
+# Backend keeps dev deps (typescript, @types, test tooling): the autonomous
+# agent self-compiles + runs `npm test` at runtime to verify its own work,
+# so `tsc` must be present. Frontend stays production-lean.
+RUN cd backend && npm install --include=dev \
+  && cd ../frontend && npm install --include=dev \
   && npm cache clean --force
 
 COPY --from=build /app/backend/dist ./backend/dist

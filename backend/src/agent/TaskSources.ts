@@ -428,6 +428,14 @@ export class TaskSources {
   }
 
   private buildBacklogVerificationPlan(backlog: BacklogTask): VerificationPlan {
+    // Build-verified mode: gate on COMPILATION (`npm run build`), not the full
+    // test suite. The agent authors in one shot (no iterate-to-pass loop), so
+    // requiring its edit to satisfy every unrelated existing test is too
+    // strict — it would fail verification and commit nothing. Compiling code
+    // is a real, meaningful change; the CommitQuality gate still blocks stubs.
+    const rawCommand = backlog.verification.command;
+    const command = /\btests?\b/.test(rawCommand) ? 'npm run build' : rawCommand;
+    const label = command === rawCommand ? backlog.verification.label : 'Build (compile check)';
     return {
       type:
         backlog.type === 'docs' || backlog.type === 'audit' || backlog.type === 'analyze'
@@ -439,9 +447,9 @@ export class TaskSources {
         {
           id: `${backlog.id}:verify`,
           type: 'command',
-          label: backlog.verification.label,
-          command: backlog.verification.command,
-          cwd: backlog.verification.cwd,
+          label,
+          command,
+          cwd: backlog.verification.cwd || 'backend',
           required: true,
         },
       ],

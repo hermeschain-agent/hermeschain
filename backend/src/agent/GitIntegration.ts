@@ -734,6 +734,24 @@ export class GitIntegration {
   }
 
   // Execute git command safely
+  /**
+   * Reset the worktree to a clean state before a run. The worktree is REUSED
+   * across task runs, so a prior run that failed verification leaves its
+   * uncommitted writes behind — which then trips the "unexpected scoped
+   * changes" guard and dirties the rebase-before-push, poisoning every
+   * subsequent run. Discards uncommitted changes + untracked leftovers;
+   * committed work and gitignored paths (node_modules, dist) are preserved.
+   */
+  prepareCleanWorktree(): void {
+    if (!this.hasGitRepo()) return;
+    try {
+      this.execGit('reset --hard HEAD', true);
+      this.execGit('clean -fd', true);
+    } catch (error: any) {
+      console.warn('[GIT] prepareCleanWorktree failed:', error?.message || error);
+    }
+  }
+
   private execGit(command: string, silent: boolean = false): string {
     if (!this.hasGitRepo()) {
       throw new Error('Git repository unavailable');

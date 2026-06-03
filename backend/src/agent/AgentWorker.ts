@@ -367,6 +367,13 @@ class AgentWorker {
       throw new Error('Model is not configured for real mode.');
     }
 
+    // Start from a clean worktree. The worktree is reused across runs, so a
+    // prior run that failed verification leaves uncommitted writes behind,
+    // which trip the "unexpected scoped changes" guard and break the
+    // rebase-before-push for every subsequent run. Committed work + gitignored
+    // paths are preserved.
+    gitIntegration.prepareCleanWorktree();
+
     const messages: HermesMessage[] = [
       {
         role: 'system',
