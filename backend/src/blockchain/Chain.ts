@@ -187,6 +187,13 @@ export class Chain {
   private createGenesisBlock(): Block {
     const genesis = new Block(0, GENESIS_PARENT_HASH, 'HermesGenesisValidator', [], this.difficulty);
     genesis.header.timestamp = this.genesisTime;
+    // Deterministic genesis: an empty Block otherwise gets RANDOM transactions/
+    // state roots and a construction-time timestamp, so every boot (and every
+    // process) computes a different genesis hash. Pin the roots and recompute
+    // the hash from the fixed fields so the web and worker derive an identical
+    // genesis — critical after a reset when both may seed it concurrently.
+    genesis.header.transactionsRoot = GENESIS_PARENT_HASH;
+    genesis.setStateRoot(GENESIS_PARENT_HASH); // sets stateRoot + recomputes hash
     return genesis;
   }
 
@@ -306,17 +313,14 @@ export class Chain {
   }
 
   getChainLength(): number {
+    // Real persisted height — the count of blocks actually on the chain.
+    // (Previously returned a wall-clock-synthetic height that made the public
+    // height read ~436k while only genesis was stored. The producer now
+    // persists every block, so the true height is authoritative and grows
+    // ~every 10s. The web service refreshes its in-memory blocks from the DB,
+    // so it converges on the worker's height.)
     const latestBlock = this.getLatestBlock();
-    const actual = latestBlock
-      ? latestBlock.header.height + 1
-      : this.blocks.length;
-    // Synthetic "expected" height derived from wall-clock time since the
-    // canonical genesis. Keeps the public-facing height correlated with
-    // uptime even when the web service's local chain has been reset and
-    // the producer worker hasn't re-backfilled yet.
-    const elapsedMs = Math.max(0, Date.now() - this.genesisTime);
-    const synthetic = Math.floor(elapsedMs / DEFAULT_BLOCK_INTERVAL_MS);
-    return Math.max(actual, synthetic);
+    return latestBlock ? latestBlock.header.height + 1 : this.blocks.length;
   }
 
   // Get actual stored block count (different from time-based height)
@@ -520,13 +524,18 @@ export class Chain {
     storedTransactions: number;
   } {
     const latestBlock = this.getLatestBlock();
+    // Average the cadence of recent NON-genesis blocks. Genesis is anchored to
+    // the canonical epoch (which can be far in the past), so including the
+    // genesis→block-1 gap would skew the average to days. Use up to the last
+    // 100 intervals among real (height > 0) blocks.
+    const recent = this.blocks.slice(-101).filter((b) => b.header.height > 0);
     const avgBlockTime =
-      this.blocks.length > 1
+      recent.length > 1
         ? Math.max(
             0,
             Math.round(
-              (this.blocks[this.blocks.length - 1].header.timestamp - this.blocks[0].header.timestamp) /
-                (this.blocks.length - 1)
+              (recent[recent.length - 1].header.timestamp - recent[0].header.timestamp) /
+                (recent.length - 1)
             )
           )
         : DEFAULT_BLOCK_INTERVAL_MS;

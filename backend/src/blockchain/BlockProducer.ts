@@ -84,7 +84,13 @@ export class BlockProducer {
     const startTime = Date.now();
     
     try {
-      const blockHeight = this.chain.getChainLength();
+      // Real height from the persisted in-memory tip — NOT the wall-clock
+      // synthetic height. Used for the new block, applyTransaction, receipts,
+      // the block reward, and the state_root:<height> cache key so they all
+      // agree (previously :87 used synthetic height while the block itself used
+      // lastBlock.height + 1, writing state/receipts under a ~436k phantom).
+      const lastBlock = this.chain.getLatestBlock();
+      const blockHeight = lastBlock ? lastBlock.header.height + 1 : 0;
       const validator = await this.validatorManager.selectProducer(blockHeight);
 
       if (!validator) {
@@ -205,8 +211,7 @@ export class BlockProducer {
       // Commit state changes and get new state root
       const newStateRoot = await stateManager.commitBlock(blockHeight);
       
-      // Create block
-      const lastBlock = this.chain.getLatestBlock();
+      // Create block (lastBlock was captured above at height computation)
       const genesisParentHash = 'OPENChainGenesisBlock00000000000000000000000';
       const newBlock = new Block(
         lastBlock ? lastBlock.header.height + 1 : 0,
@@ -261,52 +266,62 @@ export class BlockProducer {
         return;
       }
       
-      // Get consensus from other validators
+      // Persist the block to the chain FIRST, so the blocks row exists before
+      // getConsensus() inserts consensus_events (FK: consensus_events.block_height
+      // → blocks.height). Doing consensus first is what silently failed every
+      // non-genesis block (the FK error was swallowed by the catch below).
+      // addBlock also handles fork resolution.
+      const added = await this.chain.addBlock(newBlock);
+
+      if (!added) {
+        console.error('[PRODUCER] Block rejected by chain (invalid / orphan / non-canonical fork)');
+        this.consecutiveFailures++;
+        return;
+      }
+
+      // Now record consensus — the block is persisted, so the FK is satisfied.
+      // For single-validator (n=1) the quorum is 1 and the producer already
+      // self-approved, so this always reaches. A multi-validator deployment
+      // would need a shared DB transaction + finalized-height gate to roll back
+      // a persisted-but-unfinalized block; left as a follow-up.
       const consensusReached = await this.validatorManager.getConsensus(newBlock);
-      
+
       if (!consensusReached) {
-        console.error('[PRODUCER] Consensus not reached - block rejected');
+        console.error('[PRODUCER] Consensus not reached after persist (multi-validator only)');
         this.eventBus.emit('consensus_failed', {
           block: newBlock.toJSON(),
           timestamp: Date.now()
         });
-        this.consecutiveFailures++;
-        return;
       }
-      
-      // Add block to chain (handles fork resolution)
-      const added = await this.chain.addBlock(newBlock);
-      
-      if (added) {
-        // Reset failure counter on success
-        this.consecutiveFailures = 0;
-        
-        const blockTime = Date.now() - startTime;
-        console.log(`[PRODUCER] Block #${newBlock.header.height} PRODUCED`);
-        console.log(`   Hash: ${newBlock.header.hash.substring(0, 24)}...`);
-        console.log(`   Time: ${blockTime}ms`);
-        console.log(`   AI Confidence: ${(aiResult.confidence * 100).toFixed(0)}%`);
-        
-        // Remove processed transactions from pool
-        await this.txPool.removeTransactions(validTxs.map(tx => tx.hash));
-        
-        // Record block production
-        await this.validatorManager.recordBlockProduced(validator.address);
-        
-        // Emit block produced event
-        this.eventBus.emit('block_produced', {
-          block: newBlock.toJSON(),
-          producer: validator.name,
-          stateRoot: newStateRoot,
-          receiptsRoot,
-          transactionCount: validTxs.length,
-          gasUsed: totalGasUsed.toString(),
-          aiConfidence: aiResult.confidence,
-          blockTime,
-          timestamp: Date.now()
-        });
-      }
-      
+
+      // Success — block is on the chain.
+      this.consecutiveFailures = 0;
+
+      const blockTime = Date.now() - startTime;
+      console.log(`[PRODUCER] Block #${newBlock.header.height} PRODUCED`);
+      console.log(`   Hash: ${newBlock.header.hash.substring(0, 24)}...`);
+      console.log(`   Time: ${blockTime}ms`);
+      console.log(`   AI Confidence: ${(aiResult.confidence * 100).toFixed(0)}%`);
+
+      // Remove processed transactions from pool
+      await this.txPool.removeTransactions(validTxs.map(tx => tx.hash));
+
+      // Record block production
+      await this.validatorManager.recordBlockProduced(validator.address);
+
+      // Emit block produced event
+      this.eventBus.emit('block_produced', {
+        block: newBlock.toJSON(),
+        producer: validator.name,
+        stateRoot: newStateRoot,
+        receiptsRoot,
+        transactionCount: validTxs.length,
+        gasUsed: totalGasUsed.toString(),
+        aiConfidence: aiResult.confidence,
+        blockTime,
+        timestamp: Date.now()
+      });
+
     } catch (error) {
       console.error('[PRODUCER] Error producing block:', error);
       this.consecutiveFailures++;
