@@ -3,15 +3,67 @@ import { tokenBudget } from '../agent/TokenBudget';
 
 dotenv.config();
 
-export type LLMProvider = 'anthropic';
-export const LLM_PROVIDER: LLMProvider = 'anthropic';
-export const HERMES_MODEL =
-  process.env.HERMES_MODEL || 'claude-haiku-4-5-20251001';
-export const HERMES_BASE_URL =
-  process.env.HERMES_BASE_URL || 'https://api.anthropic.com/v1';
+export type LLMProvider = 'anthropic' | 'openrouter';
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+export const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+
+function resolveProvider(): LLMProvider {
+  const requested = (process.env.HERMES_LLM_PROVIDER || process.env.LLM_PROVIDER || '').toLowerCase();
+  if (requested === 'openrouter' || requested === 'anthropic') {
+    return requested;
+  }
+  if ((process.env.HERMES_BASE_URL || '').includes('openrouter.ai')) {
+    return 'openrouter';
+  }
+  if (OPENROUTER_API_KEY && !ANTHROPIC_API_KEY) {
+    return 'openrouter';
+  }
+  return 'anthropic';
+}
+
+export const LLM_PROVIDER: LLMProvider = resolveProvider();
+export const HERMES_MODEL =
+  process.env.HERMES_MODEL ||
+  (LLM_PROVIDER === 'openrouter'
+    ? 'nousresearch/hermes-4-70b'
+    : 'claude-haiku-4-5-20251001');
+export const HERMES_BASE_URL =
+  process.env.HERMES_BASE_URL ||
+  (LLM_PROVIDER === 'openrouter'
+    ? 'https://openrouter.ai/api/v1'
+    : 'https://api.anthropic.com/v1');
 
 const HERMES_TIMEOUT_MS = Number(process.env.HERMES_TIMEOUT_MS || 30000);
+const HERMES_MAX_TOKENS = positiveInt(process.env.HERMES_MAX_TOKENS, 500);
+const HERMES_ENFORCE_TOKEN_BUDGET = process.env.HERMES_ENFORCE_TOKEN_BUDGET !== 'false';
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function withBudgetedMaxTokens(params: HermesChatParams): HermesChatParams {
+  const requestedMaxTokens = params.maxTokens ?? HERMES_MAX_TOKENS;
+  return {
+    ...params,
+    maxTokens: Math.min(requestedMaxTokens, HERMES_MAX_TOKENS),
+  };
+}
+
+function assertTokenBudgetAvailable(): void {
+  if (!HERMES_ENFORCE_TOKEN_BUDGET) return;
+
+  const budget = tokenBudget.shouldPause();
+  if (!budget.paused) return;
+
+  throw createError('disabled_by_config', {
+    message: budget.reason
+      ? `Hermes API budget paused: ${budget.reason}`
+      : 'Hermes API budget paused.',
+    status: 429,
+    retryable: true,
+  });
+}
 
 export type HermesErrorCode =
   | 'missing_key'
@@ -115,31 +167,31 @@ function publicError(
         'Hermes is resting. Wake him up via operator config.',
       status: 503,
       retryable: false,
-      provider: 'anthropic',
+      provider: LLM_PROVIDER,
     },
     provider_error: {
       message: 'Hermes could not answer right now. Try again in a moment.',
       status: 502,
       retryable: true,
-      provider: 'anthropic',
+      provider: LLM_PROVIDER,
     },
     timeout: {
       message: 'Hermes is still thinking. Try again in a moment.',
       status: 504,
       retryable: true,
-      provider: 'anthropic',
+      provider: LLM_PROVIDER,
     },
     bad_response: {
       message: 'Hermes returned an unexpected response. Try again.',
       status: 502,
       retryable: true,
-      provider: 'anthropic',
+      provider: LLM_PROVIDER,
     },
     disabled_by_config: {
       message: 'Hermes is disabled by configuration.',
       status: 503,
       retryable: false,
-      provider: 'anthropic',
+      provider: LLM_PROVIDER,
     },
   };
 
@@ -168,7 +220,9 @@ export function getHermesConfigStatus(): HermesConfigStatus {
 }
 
 export function isConfigured(): boolean {
-  return ANTHROPIC_API_KEY.length > 0;
+  return LLM_PROVIDER === 'openrouter'
+    ? OPENROUTER_API_KEY.length > 0
+    : ANTHROPIC_API_KEY.length > 0;
 }
 
 export function getPublicHermesError(error: unknown): HermesPublicError {
@@ -187,6 +241,19 @@ function anthropicHeaders(): Record<string, string> {
     'anthropic-version': '2023-06-01',
     'Content-Type': 'application/json',
   };
+}
+
+function openRouterHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+    'Content-Type': 'application/json',
+    'X-Title': 'Hermeschain',
+  };
+  const referer = process.env.HERMES_PUBLIC_URL || process.env.PUBLIC_URL || 'https://hermeschain.xyz';
+  if (referer) {
+    headers['HTTP-Referer'] = referer;
+  }
+  return headers;
 }
 
 function asTextBlock(content?: string | null): Array<{ type: 'text'; text: string }> {
@@ -256,6 +323,44 @@ function toAnthropicMessages(
   return converted;
 }
 
+function toOpenRouterMessages(messages: HermesMessage[]): Array<Record<string, unknown>> {
+  const converted: Array<Record<string, unknown>> = [];
+
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      converted.push({
+        role: 'tool',
+        tool_call_id: message.tool_call_id,
+        content: message.content || '(no result)',
+      });
+      continue;
+    }
+
+    if (!message.content && !message.tool_calls?.length) {
+      continue;
+    }
+
+    const role =
+      message.role === 'system'
+        ? 'system'
+        : message.role === 'assistant'
+          ? 'assistant'
+          : 'user';
+    const item: Record<string, unknown> = {
+      role,
+      content: message.content || '',
+    };
+
+    if (role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+      item.tool_calls = message.tool_calls;
+    }
+
+    converted.push(item);
+  }
+
+  return converted;
+}
+
 /**
  * Convert Hermes tool specs to Anthropic's shape. The last tool carries an
  * ephemeral `cache_control` marker so Anthropic caches the full tool block
@@ -315,12 +420,26 @@ function toAnthropicBody(params: HermesChatParams): Record<string, unknown> {
     ];
   }
   if (params.temperature !== undefined) body.temperature = params.temperature;
-  if (params.topP !== undefined) body.top_p = params.topP;
+  if (params.topP !== undefined && params.temperature === undefined) body.top_p = params.topP;
 
   const tools = toAnthropicTools(params.tools);
   if (tools.length > 0) {
     body.tools = tools;
   }
+
+  return body;
+}
+
+function toOpenRouterBody(params: HermesChatParams): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: HERMES_MODEL,
+    messages: toOpenRouterMessages(params.messages),
+    max_tokens: params.maxTokens ?? 1024,
+  };
+
+  if (params.temperature !== undefined) body.temperature = params.temperature;
+  if (params.topP !== undefined) body.top_p = params.topP;
+  if (params.tools && params.tools.length > 0) body.tools = params.tools;
 
   return body;
 }
@@ -368,6 +487,36 @@ function fromAnthropicResponse(data: any): HermesResponse {
   };
 }
 
+function fromOpenRouterResponse(data: any): HermesResponse {
+  const choices = Array.isArray(data?.choices) ? data.choices : [];
+
+  return {
+    id: String(data?.id || `openrouter-${Date.now()}`),
+    model: String(data?.model || HERMES_MODEL),
+    choices: choices.map((choice: any, index: number) => ({
+      index,
+      message: {
+        role: choice?.message?.role === 'assistant' ? 'assistant' : 'assistant',
+        content:
+          typeof choice?.message?.content === 'string'
+            ? choice.message.content
+            : null,
+        tool_calls: Array.isArray(choice?.message?.tool_calls)
+          ? choice.message.tool_calls
+          : undefined,
+      },
+      finish_reason: choice?.finish_reason || null,
+    })),
+    usage: data?.usage
+      ? {
+          prompt_tokens: Number(data.usage.prompt_tokens || 0),
+          completion_tokens: Number(data.usage.completion_tokens || 0),
+          total_tokens: Number(data.usage.total_tokens || 0),
+        }
+      : undefined,
+  };
+}
+
 // Anti-guzzler circuit breaker: when Anthropic says we're out of credits
 // (or auth-broken), pause all calls for a long cooldown instead of retrying
 // every few seconds. Avoids burning rate-limit headroom and spamming logs.
@@ -385,9 +534,92 @@ function isFatalProviderBody(text: string): boolean {
   );
 }
 
+function providerEndpoint(pathname: string): string {
+  const base = HERMES_BASE_URL.replace(/\/+$/, '');
+  return base.endsWith(pathname) ? base : `${base}${pathname}`;
+}
+
+async function fetchOpenRouter(body: Record<string, unknown>): Promise<any> {
+  if (!OPENROUTER_API_KEY) {
+    throw createError('missing_key', {
+      message: 'Hermes is missing OPENROUTER_API_KEY.',
+    });
+  }
+
+  const now = Date.now();
+  if (circuitBreakerUntil > now) {
+    const minutesLeft = Math.ceil((circuitBreakerUntil - now) / 60000);
+    throw createError('provider_error', {
+      message: `Hermes circuit breaker open for ${minutesLeft}m: ${circuitBreakerReason}`,
+      status: 503,
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), HERMES_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(providerEndpoint('/chat/completions'), {
+      method: 'POST',
+      headers: openRouterHeaders(),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      const snippet = text.slice(0, 400).replace(/\s+/g, ' ');
+      console.error(
+        `[HERMES] OpenRouter ${response.status} error body: ${text.slice(0, 800)}`
+      );
+      if (response.status === 400 || response.status === 401 || response.status === 402 || response.status === 403) {
+        if (isFatalProviderBody(text)) {
+          circuitBreakerUntil = Date.now() + CREDIT_BACKOFF_MS;
+          circuitBreakerReason = snippet;
+          console.error(
+            `[HERMES] Circuit breaker OPEN for ${CREDIT_BACKOFF_MS / 60000}min — ${snippet}`
+          );
+        }
+      }
+      throw createError('provider_error', {
+        message: `OpenRouter returned HTTP ${response.status}: ${snippet}`,
+        status: response.status,
+      }, text);
+    }
+
+    const data: any = await response.json();
+    if (!data || !Array.isArray(data.choices)) {
+      throw createError('bad_response');
+    }
+
+    if (data.usage) {
+      tokenBudget.record({
+        input_tokens: Number(data.usage.prompt_tokens || 0),
+        output_tokens: Number(data.usage.completion_tokens || 0),
+      });
+    }
+
+    return data;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw createError('timeout', undefined, error);
+    }
+
+    if (error instanceof HermesApiError) {
+      throw error;
+    }
+
+    throw createError('provider_error', undefined, error);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchAnthropic(body: Record<string, unknown>): Promise<any> {
-  if (!isConfigured()) {
-    throw createError('missing_key');
+  if (!ANTHROPIC_API_KEY) {
+    throw createError('missing_key', {
+      message: 'Hermes is missing ANTHROPIC_API_KEY.',
+    });
   }
 
   const now = Date.now();
@@ -510,7 +742,15 @@ export async function safeHermesChatCompletion(
 }
 
 export async function hermesChat(params: HermesChatParams): Promise<HermesResponse> {
-  const data = await fetchAnthropic(toAnthropicBody(params));
+  assertTokenBudgetAvailable();
+  const guardedParams = withBudgetedMaxTokens(params);
+
+  if (LLM_PROVIDER === 'openrouter') {
+    const data = await fetchOpenRouter(toOpenRouterBody(guardedParams));
+    return fromOpenRouterResponse(data);
+  }
+
+  const data = await fetchAnthropic(toAnthropicBody(guardedParams));
   return fromAnthropicResponse(data);
 }
 
@@ -538,7 +778,7 @@ export async function* hermesChatStream(
 
 if (!isConfigured()) {
   console.warn(
-    '[HERMES] ANTHROPIC_API_KEY is not set — Hermes chat, rituals, and real worker reasoning will stay unavailable.'
+    `[HERMES] ${LLM_PROVIDER === 'openrouter' ? 'OPENROUTER_API_KEY' : 'ANTHROPIC_API_KEY'} is not set — Hermes chat, rituals, and real worker reasoning will stay unavailable.`
   );
 }
 

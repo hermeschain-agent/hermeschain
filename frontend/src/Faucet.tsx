@@ -207,7 +207,7 @@ export const Faucet: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        setMessage({ type: 'success', text: `[+] Claimed ${data.amount} OPEN` });
+        setMessage({ type: 'success', text: `[+] Requested ${data.amount} HERMES` });
         fetchWalletBalance(wallet.address);
         fetchFaucetStatus();
         fetchRecentTransactions();
@@ -555,7 +555,7 @@ export const Faucet: React.FC = () => {
                     fontFamily: 'JetBrains Mono, monospace'
                   }}
                 >
-                  {isLoading ? 'CLAIMING...' : faucetStatus?.canClaim ? 'CLAIM OPEN' : `WAIT ${formatTimeUntil(faucetStatus?.nextClaimAt || 0)}`}
+                  {isLoading ? 'REQUESTING...' : faucetStatus?.canClaim ? 'REQUEST HERMES' : `WAIT ${formatTimeUntil(faucetStatus?.nextClaimAt || 0)}`}
                 </button>
               </div>
             </div>

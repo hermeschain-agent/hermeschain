@@ -11,8 +11,11 @@ import { agentTaskStore } from './AgentTaskStore';
 import { agentRuntimeStore } from './AgentRuntimeStore';
 import { ciMonitor } from './CIMonitor';
 import { skillManager } from './SkillManager';
-import { COMMIT_WINDOW_MINUTES, getRuntimeCommitWindowMinutes } from './TaskBacklog';
 import { tokenBudget } from './TokenBudget';
+import {
+  getAuthoringPauseReason,
+  refreshPublishQueueStatus,
+} from './PublishQueue';
 import {
   hermesChat,
   isConfigured,
@@ -28,7 +31,7 @@ import {
   VerificationPlan,
   VerificationStatus,
 } from './types';
-import { AgentConfig, createAgentConfig } from './config';
+import { AgentConfig, createAgentConfig, getWriteScopes } from './config';
 
 dotenv.config();
 
@@ -160,6 +163,8 @@ class AgentWorker {
     await agentGoals.initialize();
     await agentTaskStore.initialize();
     await taskSources.initialize();
+    await tokenBudget.initialize();
+    await agentTaskStore.recoverStuckTasks();
 
     if (this.config.effectiveMode === 'real') {
       await chainObserver.start();
@@ -218,26 +223,20 @@ class AgentWorker {
     void agentRuntimeStore.saveSnapshot(this.buildRuntimeSnapshot());
   }
 
-  private async waitForCommitWindow(runStartedAtMs: number): Promise<void> {
-    const runtimeCommitWindowMinutes = getRuntimeCommitWindowMinutes();
-    const targetWindowMs = runtimeCommitWindowMinutes * 60 * 1000;
-    const remainingMs = targetWindowMs - (Date.now() - runStartedAtMs);
-
-    if (remainingMs <= 0) {
-      return;
+  private async getPublishBacklogPauseReason(): Promise<string | null> {
+    if (!this.config.repoRoot) {
+      return null;
     }
 
-    this.broadcast('status', {
-      status: 'commit_window_wait',
-      mode: 'real',
-      runStatus: 'idle',
-      nextTaskInMs: remainingMs,
-      commitWindowMinutes: runtimeCommitWindowMinutes,
-      plannedCommitWindowMinutes: COMMIT_WINDOW_MINUTES,
+    const publishStatus = await refreshPublishQueueStatus(this.config.repoRoot, {
+      maxAgeMs: 60_000,
+      refreshRemote: true,
     });
-    this.persistRuntimeState();
 
-    await this.delay(remainingMs);
+    return getAuthoringPauseReason({
+      queueDepth: publishStatus.queueDepth,
+      queueResumeThreshold: this.config.queueResumeThreshold,
+    });
   }
 
   private startHeartbeat(): void {
@@ -348,6 +347,7 @@ class AgentWorker {
       '- Base every action on the provided evidence and repository context.',
       '- Stay strictly inside the allowed edit scopes.',
       '- Prefer small, self-contained edits that a single commit can cover.',
+      '- Use write_file for repository changes. Treat run_command as read-only inspection or verification only.',
       '- After editing, briefly summarize what changed and what risks remain.',
       '',
       '## Verification Contract',
@@ -367,6 +367,13 @@ class AgentWorker {
       throw new Error('Model is not configured for real mode.');
     }
 
+    // Start from a clean worktree. The worktree is reused across runs, so a
+    // prior run that failed verification leaves uncommitted writes behind,
+    // which trip the "unexpected scoped changes" guard and break the
+    // rebase-before-push for every subsequent run. Committed work + gitignored
+    // paths are preserved.
+    gitIntegration.prepareCleanWorktree();
+
     const messages: HermesMessage[] = [
       {
         role: 'system',
@@ -383,11 +390,22 @@ class AgentWorker {
     // Tightened for cost. 5 iterations is plenty for a single write_file
     // task when the system prompt + tool descriptions are cached. Envs let
     // us override if a specific task genuinely needs more headroom.
-    const maxIterations = Number(process.env.AGENT_MAX_ITERATIONS) || 5;
-    const maxTokensPerCall = Number(process.env.AGENT_MAX_TOKENS) || 1200;
+    const maxIterations = Number(process.env.AGENT_MAX_ITERATIONS) || 4;
+    const maxTokensPerCall = Number(process.env.AGENT_MAX_TOKENS) || 900;
 
     this.currentAbortController = new AbortController();
-    agentExecutor.setExecutionScopes(selection.editScopes);
+    // Execution scope = the task's focus scopes PLUS the full repo write
+    // allowlist. The allowlist (backend/src, backend/tests, backend/docs,
+    // frontend/src, ...) is already the real safety boundary, so the narrow
+    // per-task editScopes were over-constraining — the agent naturally writes
+    // tests / adjacent files, which were being rejected as "outside task scope"
+    // (every run failed "no scoped changes"). Broadening to the allowlist lets
+    // it author real, multi-file changes; the task prompt + verify gate focus it.
+    const repoScopes = getWriteScopes(this.config).map((p) => ({
+      kind: 'path_prefix' as const,
+      path: p,
+    }));
+    agentExecutor.setExecutionScopes([...selection.editScopes, ...repoScopes]);
 
     // Track whether the agent has actually called write_file yet. With a
     // 5-iter budget we want the nudge EARLY (iter 2) and a hard imperative
@@ -437,6 +455,11 @@ class AgentWorker {
           temperature: 0.2,
           maxTokens: maxTokensPerCall,
         });
+
+        const budgetDecision = tokenBudget.shouldPause();
+        if (budgetDecision.paused) {
+          throw new Error(budgetDecision.reason || 'agent budget reached');
+        }
 
         const choice = response.choices?.[0];
         if (!choice) break;
@@ -566,8 +589,7 @@ class AgentWorker {
       selection.verificationPlan
     );
 
-    const scopedGitChanges = gitIntegration.getChangedFilesWithinScopes(selection.editScopes);
-    const allChangedFiles = uniqueStrings([...changedFiles, ...scopedGitChanges]);
+    const allChangedFiles = uniqueStrings(changedFiles);
 
     if (selection.verificationPlan.requireChangedFiles && allChangedFiles.length === 0) {
       return {
@@ -657,6 +679,32 @@ class AgentWorker {
       };
     }
 
+    const unexpectedChanges = gitIntegration.getUnexpectedChangedFilesWithinScopes(
+      selection.editScopes,
+      changedFiles,
+    );
+
+    if (unexpectedChanges.length > 0) {
+      const failureReason =
+        `Unexpected scoped changes outside this run: ${unexpectedChanges.join(', ')}`;
+
+      await agentTaskStore.finishRun(currentRun.id, 'failed', verificationStatus, {
+        changedFiles,
+        failureReason,
+        output,
+        failureClass: 'commit',
+      });
+
+      this.state.lastFailure = failureReason;
+      this.state.verificationStatus = verificationStatus;
+      this.persistRuntimeState();
+
+      return {
+        success: false,
+        failureReason,
+      };
+    }
+
     const commitResult = await gitIntegration.autoCommitAndPush(
       this.commitMessageForTask(selection.task),
       selection.sourceTask.id,
@@ -673,6 +721,7 @@ class AgentWorker {
         changedFiles,
         failureReason,
         output,
+        failureClass: 'commit',
       });
 
       await agentMemory.recordTaskCompletion(selection.task.title, selection.task.type, output, false, {
@@ -705,6 +754,7 @@ class AgentWorker {
     await agentTaskStore.finishRun(currentRun.id, 'succeeded', verificationStatus, {
       changedFiles: changedFiles,
       output,
+      failureClass: null,
     });
 
     await agentMemory.saveCompletedTask(
@@ -760,6 +810,7 @@ class AgentWorker {
       failureReason: result.failureReason || null,
       blockedReason: result.blockedReason || null,
       output,
+      failureClass: terminalStatus === 'blocked' ? 'sandbox' : 'verification',
     });
 
     this.state.lastFailure = result.failureReason || result.blockedReason || result.summary;
@@ -922,6 +973,36 @@ class AgentWorker {
           continue;
         }
 
+        const publishBacklogPauseReason = await this.getPublishBacklogPauseReason();
+        if (publishBacklogPauseReason) {
+          this.state.runStatus = 'idle';
+          this.state.blockedReason = publishBacklogPauseReason;
+          this.persistRuntimeState();
+          this.broadcast('status', {
+            status: 'publish_backlog_paused',
+            mode: 'real',
+            runStatus: 'idle',
+            blockedReason: publishBacklogPauseReason,
+          });
+          await this.delay(60 * 1000);
+          continue;
+        }
+
+        const branchReady = await gitIntegration.prepareAuthoringBranch();
+        if (!branchReady.success) {
+          this.state.runStatus = 'blocked';
+          this.state.blockedReason = branchReady.error || 'Authoring branch is not ready.';
+          this.persistRuntimeState();
+          this.broadcast('status', {
+            status: 'authoring_branch_blocked',
+            mode: 'real',
+            runStatus: 'blocked',
+            blockedReason: this.state.blockedReason,
+          });
+          await this.delay(60 * 1000);
+          continue;
+        }
+
         const selection = await taskSources.getNextTask();
         if (!selection) {
           this.state.runStatus = 'idle';
@@ -945,7 +1026,6 @@ class AgentWorker {
           reason: 'picked by taskSources.getNextTask',
         });
 
-        const runStartedAtMs = Date.now();
         const contextPack = await this.buildContextPack(selection);
         const run = await agentTaskStore.startRun(selection.sourceTask, 'real', contextPack);
         await agentTaskStore.markSourceTaskInProgress(selection.sourceTask.id);
@@ -964,6 +1044,7 @@ class AgentWorker {
         this.persistRuntimeState();
 
         await agentMemory.setFocus(selection.task.title);
+        tokenBudget.startTask(selection.sourceTask.id);
 
         this.broadcast('task_start', {
           task: selection.task,
@@ -993,9 +1074,10 @@ class AgentWorker {
         this.state.runStatus = 'executing';
         this.persistRuntimeState();
         await agentTaskStore.updateRun(run.id, { status: 'analyzing' });
+        await agentTaskStore.updateRun(run.id, { status: 'executing' });
         const { output, changedFiles } = await this.streamRealTask(selection, contextPack);
 
-        await agentTaskStore.updateRun(run.id, { status: 'executing', output });
+        await agentTaskStore.updateRun(run.id, { status: 'verifying', output });
 
         const verification = await this.verifyRun(selection, changedFiles);
 
@@ -1014,16 +1096,28 @@ class AgentWorker {
         }
 
         await agentMemory.setFocus(null);
+        tokenBudget.finishTask();
         this.resetCurrentState();
-        if (verification.passed && completionResult.success) {
-          await this.waitForCommitWindow(runStartedAtMs);
-        } else {
+        if (!verification.passed || !completionResult.success) {
           // Short pause between failed tasks — Haiku is cheap and the
           // circuit breaker handles the real billing/auth failures.
           await this.delay(60 * 1000);
         }
       } catch (error: any) {
+        tokenBudget.finishTask();
+        await agentMemory.setFocus(null).catch(() => undefined);
         console.error('[AGENT] Error in worker loop:', error);
+        const currentRun = agentTaskStore.getCurrentRun();
+        if (currentRun) {
+          const failureReason = error?.message || 'Agent worker loop failed.';
+          const failureClass =
+            /budget|token cap|usd cap/i.test(failureReason) ? 'model_budget' : 'runtime';
+          await agentTaskStore.finishRun(currentRun.id, 'failed', 'failed', {
+            failureReason,
+            output: this.state.currentOutput,
+            failureClass,
+          });
+        }
         this.state.lastFailure = error.message;
         this.state.runStatus = 'failed';
         this.persistRuntimeState();

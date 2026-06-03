@@ -38,6 +38,9 @@ export async function initializeLogsTable(): Promise<void> {
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_agent_logs_timestamp ON agent_logs(timestamp DESC)
     `);
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_agent_logs_timeline ON agent_logs(timestamp ASC, id ASC)
+    `);
     
     // Load recent logs into buffer
     const result = await db.query(`
@@ -150,12 +153,31 @@ logsRouter.get('/', async (req, res) => {
   }
 });
 
-// Get recent logs from buffer (faster)
-logsRouter.get('/recent', (req, res) => {
+// Get recent logs. Prefer the shared DB so worker-written logs show up in the
+// web process; fall back to the local buffer if persistence is unavailable.
+logsRouter.get('/recent', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-  res.json({
-    logs: logBuffer.slice(-limit)
-  });
+  try {
+    const result = await db.query(
+      'SELECT * FROM agent_logs ORDER BY timestamp DESC, id DESC LIMIT $1',
+      [limit]
+    );
+    res.json({
+      logs: result.rows.map(row => ({
+        id: row.id,
+        timestamp: row.timestamp,
+        type: row.type,
+        taskId: row.task_id,
+        taskTitle: row.task_title,
+        content: row.content,
+        metadata: row.metadata
+      })).reverse()
+    });
+  } catch (error) {
+    res.json({
+      logs: logBuffer.slice(-limit)
+    });
+  }
 });
 
 // SSE endpoint for live logs

@@ -33,8 +33,9 @@ export interface BridgeHandle {
 
 export function attachRedisBridge(eventBus: EventBus, redisUrl: string): BridgeHandle {
   const originId = process.env.REPLICA_ID || `${process.pid}@${require('os').hostname()}`;
-  const publisher = new Redis(redisUrl);
-  const subscriber = new Redis(redisUrl);
+  // family:0 = dual-stack DNS so Railway's IPv6-only private network resolves.
+  const publisher = new Redis(redisUrl, { family: 0 });
+  const subscriber = new Redis(redisUrl, { family: 0 });
 
   const localHandlers = new Map<string, (...args: any[]) => void>();
 

@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS agent_memory (
   created_at TIMESTAMP DEFAULT NOW(),
   last_accessed_at TIMESTAMP DEFAULT NOW(),
   access_count INT DEFAULT 1,
-  embedding VECTOR(1536) -- For semantic search if needed later
+  embedding JSONB DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_type ON agent_memory(type);

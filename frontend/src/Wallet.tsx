@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from 'react';
-
-const API_BASE =
-  window.location.hostname === 'localhost' ? 'http://localhost:4000' : '';
+import { API_BASE } from './api';
 
 interface Transaction {
   id: string;
@@ -298,7 +296,7 @@ const Wallet: React.FC = () => {
 
       setMessage({
         type: 'success',
-        text: `Claimed ${data.amount} OPEN from the faucet.`,
+        text: `Requested ${data.amount} HERMES from the faucet.`,
       });
 
       await fetchWallet(wallet.address, wallet.privateKey);
@@ -573,9 +571,9 @@ const Wallet: React.FC = () => {
           disabled={claimingFaucet || !faucetStatus?.canClaim}
         >
           {claimingFaucet
-            ? 'Claiming...'
+            ? 'Requesting...'
             : faucetStatus?.canClaim
-              ? `Claim ${faucetStatus.faucetAmount} OPEN`
+              ? 'Request Hermes'
               : `Wait ${formatTimeUntil(faucetStatus?.nextClaimAt || 0)}`}
         </button>
       </div>
@@ -587,7 +585,7 @@ const Wallet: React.FC = () => {
             ? 'Ready'
             : `Next claim in ${formatTimeUntil(faucetStatus?.nextClaimAt || 0)}`}
         </h4>
-        <p>{faucetStatus?.faucetAmount || 100} OPEN available every 24 hours.</p>
+        <p>{faucetStatus?.faucetAmount || 100} HERMES available every 24 hours.</p>
       </div>
 
       <div className="engraved-panel wallet-activity-panel">

@@ -1,4 +1,5 @@
 export { agentWorker, agentEvents } from './AgentWorker';
+export { githubUpdates } from './GitHubUpdates';
 export { TaskGenerator } from './TaskGenerator';
 export type { Task } from './TaskGenerator';
 export { createAgentConfig, resolveRepoRoot } from './config';

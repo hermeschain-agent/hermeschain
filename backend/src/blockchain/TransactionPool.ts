@@ -55,7 +55,7 @@ export class TransactionPool {
       
       // Also load confirmed transaction hashes for replay protection
       const confirmedResult = await db.query(`
-        SELECT hash FROM transactions WHERE status = 'confirmed' ORDER BY id DESC LIMIT 10000
+        SELECT hash FROM transactions WHERE status = 'confirmed' ORDER BY created_at DESC LIMIT 10000
       `);
       for (const row of confirmedResult.rows) {
         this.knownHashes.add(row.hash);

@@ -1,9 +1,16 @@
-import { execSync, spawn } from 'child_process';
+import { execFileSync, execSync, spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import { eventBus } from '../events/EventBus';
 import { AgentConfig, getWriteScopes } from './config';
 import { ExecutionScope } from './types';
+import {
+  ensurePublishQueueBranch,
+  getPublishQueueConfig,
+  refreshPublishQueueStatus,
+  resolveAutoPushSetting,
+} from './PublishQueue';
+import { assessStagedCommitQuality } from './CommitQuality';
 
 // Auto-deploy configuration.
 // Default: enabled when a GITHUB_TOKEN is present (a deployment with creds
@@ -17,7 +24,6 @@ function resolveAutoPush(): boolean {
   // Unset → default based on whether we appear to have credentials.
   return Boolean(process.env.GITHUB_TOKEN || process.env.GH_TOKEN);
 }
-const AUTO_PUSH_ENABLED = resolveAutoPush();
 const GIT_USER_NAME = process.env.GIT_USER_NAME || 'hermes agent';
 const GIT_USER_EMAIL = process.env.GIT_USER_EMAIL || 'hermeschain-agent@users.noreply.github.com';
 
@@ -64,10 +70,15 @@ export interface GitCapabilityProbe {
   reason?: string;
 }
 
+export interface GitStatusEntry {
+  status: string;
+  filePath: string;
+}
+
 export class GitIntegration {
   private projectRoot: string;
   private mainBranch: string = 'main';
-  private branchPrefix: string = 'open/';
+  private branchPrefix: string = 'hermes/';
   private initialized: boolean = false;
   private config: AgentConfig | null = null;
 
@@ -94,6 +105,46 @@ export class GitIntegration {
 
   private getDefaultCommitScopes(): string[] {
     return getWriteScopes(this.config);
+  }
+
+  private isAutoPushEnabled(): boolean {
+    return resolveAutoPush();
+  }
+
+  private getQueueBranch(): string {
+    return getPublishQueueConfig().queueBranch;
+  }
+
+  private async ensureQueueBranchReady(): Promise<void> {
+    await ensurePublishQueueBranch(this.projectRoot, {
+      checkout: true,
+      refreshRemote: this.isAutoPushEnabled(),
+    });
+  }
+
+  async prepareAuthoringBranch(): Promise<GitOperationResult> {
+    try {
+      if (!this.hasGitRepo()) {
+        return {
+          success: false,
+          output: '',
+          error: 'Git repository unavailable',
+        };
+      }
+
+      await this.ensureQueueBranchReady();
+      return {
+        success: true,
+        output: `Authoring branch ready: ${this.getQueueBranch()}`,
+        branch: this.getQueueBranch(),
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        output: '',
+        error: error?.message || String(error),
+      };
+    }
   }
 
   private isLikelyGibberish(value: string): boolean {
@@ -153,10 +204,55 @@ export class GitIntegration {
     return { blocked: false };
   }
 
+  private validateCommitMessage(message: string): { valid: boolean; reason?: string } {
+    const trimmed = message.trim();
+    if (trimmed.length > 200) {
+      return { valid: false, reason: 'Commit message exceeds 200 characters.' };
+    }
+
+    const conventionalPattern =
+      /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9-]+\))?: .+/;
+    if (!conventionalPattern.test(trimmed)) {
+      return { valid: false, reason: 'Commit message must follow conventional-commit format.' };
+    }
+
+    return { valid: true };
+  }
+
+  private adminMutationsEnabled(): boolean {
+    return process.env.AGENT_ADMIN_GIT_MUTATIONS === 'true';
+  }
+
+  private blockedAdminMutation(operation: string): GitOperationResult {
+    return {
+      success: false,
+      output: '',
+      error:
+        `${operation} is disabled for the autonomous agent. ` +
+        'Set AGENT_ADMIN_GIT_MUTATIONS=true for manual admin use.',
+    };
+  }
+
+  private withCommitTrailers(message: string): string {
+    const trailers = [
+      `Signed-off-by: ${GIT_USER_NAME} <${GIT_USER_EMAIL}>`,
+    ];
+
+    const existing = message.toLowerCase();
+    const missingTrailers = trailers.filter((trailer) => {
+      const key = trailer.split(':')[0].toLowerCase();
+      return !existing.includes(`${key}:`);
+    });
+
+    return missingTrailers.length > 0
+      ? `${message.trim()}\n\n${missingTrailers.join('\n')}`
+      : message.trim();
+  }
+
   private getScopedStatusEntries(
     scopes?: ExecutionScope[],
     requestedFiles?: string[]
-  ): Array<{ status: string; filePath: string }> {
+  ): GitStatusEntry[] {
     const statusOutput = this.execGit('status --porcelain', true);
     const requested = new Set((requestedFiles || []).map((file) => file.replace(/\\/g, '/')));
 
@@ -181,6 +277,20 @@ export class GitIntegration {
       });
   }
 
+  getUnexpectedChangedFilesWithinScopes(
+    scopes: ExecutionScope[],
+    expectedFiles: string[],
+  ): string[] {
+    if (!this.hasGitRepo()) {
+      return [];
+    }
+
+    const expected = new Set(expectedFiles.map((file) => file.replace(/\\/g, '/')));
+    return this.getScopedStatusEntries(scopes)
+      .map((entry) => entry.filePath.replace(/\\/g, '/'))
+      .filter((filePath) => !expected.has(filePath));
+  }
+
   configure(config: AgentConfig): void {
     this.config = config;
     if (config.repoRoot) {
@@ -189,47 +299,103 @@ export class GitIntegration {
     this.setupGitConfig();
   }
 
+  private isSafeEphemeralCloneTarget(target: string): boolean {
+    const resolved = path.resolve(target);
+    return (
+      resolved.startsWith('/tmp/') ||
+      resolved.startsWith('/var/tmp/') ||
+      resolved.startsWith('/private/tmp/') ||
+      resolved.includes('/var/folders/')
+    );
+  }
+
+  private prepareCloneTarget(): void {
+    const resolved = path.resolve(this.projectRoot);
+    const parent = path.dirname(resolved);
+    fs.mkdirSync(parent, { recursive: true });
+
+    if (!fs.existsSync(resolved)) {
+      return;
+    }
+
+    const entries = fs.readdirSync(resolved).filter((entry) => entry !== '.DS_Store');
+    if (entries.length === 0) {
+      return;
+    }
+
+    if (!this.isSafeEphemeralCloneTarget(resolved)) {
+      throw new Error(
+        `Refusing to clone into non-empty non-ephemeral path ${resolved}. ` +
+        'Set AGENT_REPO_ROOT to an empty /tmp path for autonomous Git work.'
+      );
+    }
+
+    fs.rmSync(resolved, { recursive: true, force: true });
+  }
+
+  private linkRuntimeNodeModules(): void {
+    const runtimeRoot = process.env.AGENT_RUNTIME_ROOT || '/app';
+    for (const workspace of ['backend', 'frontend']) {
+      const source = path.join(runtimeRoot, workspace, 'node_modules');
+      const target = path.join(this.projectRoot, workspace, 'node_modules');
+      try {
+        if (fs.existsSync(source) && !fs.existsSync(target)) {
+          fs.symlinkSync(source, target, 'dir');
+        }
+      } catch (error: any) {
+        console.warn(`[GIT] Could not link ${workspace}/node_modules:`, error?.message || error);
+      }
+    }
+  }
+
   // Configure git user and remote for commits
   private setupGitConfig(): void {
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    const repo = process.env.GITHUB_REPO;
+    const authenticatedRemoteUrl =
+      token && repo ? `https://${token}@github.com/${repo}.git` : null;
+
     if (!this.hasGitRepo()) {
       // In production containers the source is uploaded without a .git
       // directory. If we have credentials, clone the repo metadata so the
       // agent can commit + push. This is gated on the worker role so web
       // containers never self-clone.
-      const token = process.env.GITHUB_TOKEN;
-      const repo = process.env.GITHUB_REPO;
       // Honor the same resolveAutoPush gate so the clone logic stays in
       // lockstep with the push logic (unset-env + token present → enabled).
       const shouldClone =
         process.env.AGENT_ROLE === 'worker' &&
-        AUTO_PUSH_ENABLED &&
+        this.isAutoPushEnabled() &&
         token &&
         repo;
 
       if (shouldClone) {
         try {
-          console.log(`[GIT] No .git found — cloning ${repo} to ${this.projectRoot}`);
-          const tempDir = `/tmp/hermeschain-clone-${Date.now()}`;
-          const cloneUrl = `https://${token}@github.com/${repo}.git`;
-          execSync(`git clone --depth 50 ${cloneUrl} ${tempDir}`, {
+          const queueBranch = getPublishQueueConfig().queueBranch;
+          console.log(`[GIT] No .git found — cloning ${repo} (${queueBranch}) to ${this.projectRoot}`);
+          this.prepareCloneTarget();
+          // Clone the queue branch directly so the worktree STARTS on it — the
+          // worker authors here and never switches from the default branch
+          // (which would choke on build-output diffs). --no-single-branch also
+          // fetches origin/<publishBranch> (main) so the pacer can compare trees
+          // and publish.
+          execFileSync('git', ['clone', '--branch', queueBranch, '--depth', '50', '--no-single-branch', authenticatedRemoteUrl!, this.projectRoot], {
             stdio: 'pipe',
             timeout: 60000,
           });
-          execSync(`cp -r ${tempDir}/.git ${this.projectRoot}/`, { stdio: 'pipe' });
-          execSync(`rm -rf ${tempDir}`, { stdio: 'pipe' });
-          execSync(`git config user.name "${GIT_USER_NAME}"`, {
+          this.linkRuntimeNodeModules();
+          execFileSync('git', ['config', 'user.name', GIT_USER_NAME], {
             cwd: this.projectRoot,
             stdio: 'pipe',
           });
-          execSync(`git config user.email "${GIT_USER_EMAIL}"`, {
+          execFileSync('git', ['config', 'user.email', GIT_USER_EMAIL], {
             cwd: this.projectRoot,
             stdio: 'pipe',
           });
-          execSync(`git remote set-url origin ${cloneUrl}`, {
+          execFileSync('git', ['remote', 'set-url', 'origin', authenticatedRemoteUrl!], {
             cwd: this.projectRoot,
             stdio: 'pipe',
           });
-          console.log('[GIT] Clone complete, git metadata in place.');
+          console.log('[GIT] Clone complete, clean worktree ready.');
         } catch (error: any) {
           console.error('[GIT] Clone failed:', error?.message || error);
           return;
@@ -239,6 +405,21 @@ export class GitIntegration {
           '[GIT] No git repository detected. Auto-commit will stay local-only and inactive.'
         );
         return;
+      }
+    }
+
+    if (
+      authenticatedRemoteUrl &&
+      process.env.AGENT_ROLE === 'worker' &&
+      this.isAutoPushEnabled()
+    ) {
+      try {
+        execFileSync('git', ['remote', 'set-url', 'origin', authenticatedRemoteUrl], {
+          cwd: this.projectRoot,
+          stdio: 'pipe',
+        });
+      } catch (error: any) {
+        console.warn('[GIT] Could not update authenticated origin remote:', error?.message || error);
       }
     }
 
@@ -295,7 +476,8 @@ export class GitIntegration {
     return `${type}(${scope}): ${desc}`;
   }
 
-  // Auto-commit scoped agent changes — one commit per verified run.
+  // Auto-commit scoped agent changes — one commit per verified run onto the
+  // queue branch. Publication to main is handled separately by PacedPusher.
   async autoCommitAndPush(
     message: string,
     taskId?: string,
@@ -318,6 +500,37 @@ export class GitIntegration {
         return { success: true, output: 'No scoped changes to commit', files: [] };
       }
 
+      if (this.isLikelyGibberish(message)) {
+        return {
+          success: false,
+          output: '',
+          error: 'Commit blocked by gibberish guard: suspicious commit message.',
+          files: changedFiles.map((entry) => entry.filePath),
+        };
+      }
+
+      const messageValidation = this.validateCommitMessage(message);
+      if (!messageValidation.valid) {
+        return {
+          success: false,
+          output: '',
+          error: `Commit blocked by policy: ${messageValidation.reason}`,
+          files: changedFiles.map((entry) => entry.filePath),
+        };
+      }
+
+      const fileGuard = this.inspectFilesForGibberish(changedFiles.map((entry) => entry.filePath));
+      if (fileGuard.blocked) {
+        return {
+          success: false,
+          output: '',
+          error: `Commit blocked by gibberish guard: ${fileGuard.reason}`,
+          files: changedFiles.map((entry) => entry.filePath),
+        };
+      }
+
+      await this.ensureQueueBranchReady();
+
       console.log(`[GIT] Found ${changedFiles.length} scoped files to commit`);
       const stagedFiles: string[] = [];
 
@@ -336,42 +549,78 @@ export class GitIntegration {
         return { success: true, output: 'No staged scoped changes to commit', files: [] };
       }
 
-      if (this.isLikelyGibberish(message)) {
+      // Quality backstop (authorship): the verifyRun gate already proved this
+      // change builds/tests, so here we only block the two things it can't
+      // catch — self-labeled stubs and dist-only commits. The strict substance
+      // filtering happens at the publish boundary (PacedPusher). On reject we
+      // unstage so the worktree is clean for the next task attempt.
+      const quality = assessStagedCommitQuality(this.projectRoot, message);
+      if (!quality.quality) {
+        try { this.execGit('reset', true); } catch { /* best-effort unstage */ }
         return {
           success: false,
           output: '',
-          error: 'Commit blocked by gibberish guard: suspicious commit message.',
+          error: `blocked by quality gate: ${quality.reason}`,
           files: stagedFiles,
         };
       }
 
-      const fileGuard = this.inspectFilesForGibberish(stagedFiles);
-      if (fileGuard.blocked) {
-        return {
-          success: false,
-          output: '',
-          error: `Commit blocked by gibberish guard: ${fileGuard.reason}`,
-          files: stagedFiles,
-        };
-      }
-
-      const escapedMsg = message.replace(/"/g, '\\"');
-      this.execGit(`commit -m "${escapedMsg}"`, true);
+      execFileSync('git', ['commit', '-m', this.withCommitTrailers(message)], {
+        cwd: this.projectRoot,
+        encoding: 'utf-8',
+        timeout: 30000,
+        maxBuffer: 64 * 1024 * 1024,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: GIT_USER_NAME,
+          GIT_AUTHOR_EMAIL: GIT_USER_EMAIL,
+          GIT_COMMITTER_NAME: GIT_USER_NAME,
+          GIT_COMMITTER_EMAIL: GIT_USER_EMAIL,
+        },
+        stdio: 'pipe',
+      });
       const commitHash = this.execGit('rev-parse --short HEAD', true);
 
       console.log(`[GIT] Created commit: ${commitHash}`);
 
-      // Push to remote if enabled
-      if (AUTO_PUSH_ENABLED) {
-        const branch = this.getCurrentBranch() || 'main';
-        console.log(`[GIT] Pushing to origin/${branch}...`);
+      const branch = this.getQueueBranch();
+
+      // Push the queue branch if enabled. This never deploys directly to main.
+      if (this.isAutoPushEnabled()) {
+        console.log(`[GIT] Pushing queue branch ${branch} to origin/${branch}...`);
         
         try {
-          this.execGit(`push -u origin ${branch}`, true);
-          console.log(`[GIT] Successfully pushed to origin/${branch}`);
+          // Re-sync with the remote queue branch before pushing. The pacer and
+          // other workers advance origin/${branch} while we author, so a bare
+          // push hits a non-fast-forward ("fetch first") rejection. Fetch the
+          // latest tip and replay our new commit(s) on top, then push.
+          this.execGit(`fetch origin ${branch}`, true);
+          let ahead = 0;
+          try {
+            ahead = Number(this.execGit(`rev-list --count origin/${branch}..HEAD`, true)) || 0;
+          } catch {
+            ahead = 0;
+          }
+          // Only rebase a small advance over the remote tip (a correctly-based
+          // queue branch). A large count means HEAD is forked off the wrong base
+          // (e.g. main); don't replay its whole history — let the push surface it.
+          if (ahead > 0 && ahead <= 25) {
+            try {
+              this.execGit(`rebase origin/${branch}`, true);
+            } catch (rebaseError) {
+              this.execGit('rebase --abort', true);
+              throw rebaseError;
+            }
+          }
+          this.execGit(`push origin ${branch}`, true);
+          console.log(`[GIT] Successfully pushed queue branch to origin/${branch}`);
+          await refreshPublishQueueStatus(this.projectRoot, {
+            force: true,
+            refreshRemote: true,
+          });
           
           eventBus.emit('git_action', {
-            type: 'auto_deploy',
+            type: 'queue_commit',
             message,
             commit: commitHash,
             branch,
@@ -380,7 +629,7 @@ export class GitIntegration {
 
           return {
             success: true,
-            output: `Committed and pushed: ${commitHash}`,
+            output: `Committed to queue and pushed: ${commitHash}`,
             commit: commitHash,
             branch,
             files: stagedFiles
@@ -398,7 +647,7 @@ export class GitIntegration {
 
           return {
             success: true,
-            output: `Committed (push failed): ${commitHash}`,
+            output: `Committed to queue (push failed): ${commitHash}`,
             commit: commitHash,
             error: `Push failed: ${pushError.message}`,
             files: stagedFiles
@@ -406,16 +655,22 @@ export class GitIntegration {
         }
       } else {
         eventBus.emit('git_action', {
-          type: 'commit',
+          type: 'queue_commit',
           message,
           commit: commitHash,
+          branch,
           pushed: false
+        });
+        await refreshPublishQueueStatus(this.projectRoot, {
+          force: true,
+          refreshRemote: false,
         });
 
         return {
           success: true,
-          output: `Committed: ${commitHash}`,
+          output: `Committed to queue: ${commitHash}`,
           commit: commitHash,
+          branch,
           files: stagedFiles
         };
       }
@@ -456,7 +711,7 @@ export class GitIntegration {
       };
     }
 
-    if (!AUTO_PUSH_ENABLED) {
+    if (!this.isAutoPushEnabled()) {
       return {
         git: 'ready',
         push: 'unavailable',
@@ -466,7 +721,8 @@ export class GitIntegration {
 
     try {
       this.execGit('fetch --dry-run --all', true);
-      this.execGit('push --dry-run', true);
+      const probeBranch = `agent-push-probe-${process.pid}-${Date.now()}`;
+      this.execGit(`push --dry-run origin HEAD:refs/heads/${probeBranch}`, true);
       return { git: 'ready', push: 'ready' };
     } catch (error: any) {
       return {
@@ -478,6 +734,24 @@ export class GitIntegration {
   }
 
   // Execute git command safely
+  /**
+   * Reset the worktree to a clean state before a run. The worktree is REUSED
+   * across task runs, so a prior run that failed verification leaves its
+   * uncommitted writes behind — which then trips the "unexpected scoped
+   * changes" guard and dirties the rebase-before-push, poisoning every
+   * subsequent run. Discards uncommitted changes + untracked leftovers;
+   * committed work and gitignored paths (node_modules, dist) are preserved.
+   */
+  prepareCleanWorktree(): void {
+    if (!this.hasGitRepo()) return;
+    try {
+      this.execGit('reset --hard HEAD', true);
+      this.execGit('clean -fd', true);
+    } catch (error: any) {
+      console.warn('[GIT] prepareCleanWorktree failed:', error?.message || error);
+    }
+  }
+
   private execGit(command: string, silent: boolean = false): string {
     if (!this.hasGitRepo()) {
       throw new Error('Git repository unavailable');
@@ -538,6 +812,10 @@ export class GitIntegration {
 
   // Create a new feature branch for a task
   async createTaskBranch(taskId: string, taskTitle: string): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('createTaskBranch');
+    }
+
     // Sanitize branch name
     const safeName = taskTitle
       .toLowerCase()
@@ -582,6 +860,10 @@ export class GitIntegration {
 
   // Switch to a branch
   async switchBranch(branchName: string): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('switchBranch');
+    }
+
     try {
       this.execGit(`checkout ${branchName}`, true);
       return {
@@ -658,6 +940,10 @@ export class GitIntegration {
 
   // Stage files
   async stageFiles(files?: string[]): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('stageFiles');
+    }
+
     try {
       if (files && files.length > 0) {
         for (const file of files) {
@@ -682,6 +968,10 @@ export class GitIntegration {
 
   // Create a commit
   async commit(message: string, taskId?: string): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('commit');
+    }
+
     try {
       // Use the commit message directly — conventional commit format is
       // already applied by AgentWorker before calling this method.
@@ -741,8 +1031,22 @@ export class GitIntegration {
     }
   }
 
+  getCommitCount(ref: string = 'HEAD'): number {
+    try {
+      const output = this.execGit(`rev-list --count ${ref}`, true);
+      const count = Number(output.trim());
+      return Number.isFinite(count) ? count : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   // Push branch to remote
   async push(branchName?: string): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('push');
+    }
+
     const branch = branchName || this.getCurrentBranch();
     
     try {
@@ -773,6 +1077,10 @@ export class GitIntegration {
     body: string,
     baseBranch?: string
   ): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('createPullRequest');
+    }
+
     const currentBranch = this.getCurrentBranch();
     const base = baseBranch || this.mainBranch;
 
@@ -840,6 +1148,10 @@ export class GitIntegration {
 
   // Merge current branch to main (locally)
   async mergeToMain(): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('mergeToMain');
+    }
+
     const currentBranch = this.getCurrentBranch();
     
     if (currentBranch === this.mainBranch) {
@@ -884,6 +1196,10 @@ export class GitIntegration {
 
   // Delete a branch
   async deleteBranch(branchName: string, force: boolean = false): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('deleteBranch');
+    }
+
     if (branchName === this.mainBranch) {
       return {
         success: false,
@@ -921,6 +1237,10 @@ export class GitIntegration {
 
   // Stash changes
   async stash(message?: string): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('stash');
+    }
+
     try {
       const cmd = message ? `stash push -m "${message}"` : 'stash';
       const output = this.execGit(cmd, true);
@@ -939,6 +1259,10 @@ export class GitIntegration {
 
   // Pop stash
   async stashPop(): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('stashPop');
+    }
+
     try {
       const output = this.execGit('stash pop', true);
       return {
@@ -956,6 +1280,10 @@ export class GitIntegration {
 
   // Reset changes (soft reset)
   async reset(hard: boolean = false): Promise<GitOperationResult> {
+    if (!this.adminMutationsEnabled()) {
+      return this.blockedAdminMutation('reset');
+    }
+
     try {
       const flag = hard ? '--hard' : '--soft';
       const output = this.execGit(`reset ${flag} HEAD~1`, true);

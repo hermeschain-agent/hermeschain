@@ -383,7 +383,7 @@ Be honest and thoughtful in your self-assessment.`,
       case 'build developer tools': return 'HERMES';
       case 'optimize performance': return 'HERMES';
       case 'improve governance': return 'HERMES';
-      case 'improve documentation': return 'OPEN DOCS';
+      case 'improve documentation': return 'HERMES DOCS';
       default: return 'HERMES';
     }
   }
@@ -395,8 +395,8 @@ Be honest and thoughtful in your self-assessment.`,
     switch (opp.type) {
       case 'optimization': return 'HERMES';
       case 'feature': return 'HERMES';
-      case 'improvement': return 'OPEN DEVELOPER';
-      case 'documentation': return 'OPEN DOCS';
+      case 'improvement': return 'HERMES DEVELOPER';
+      case 'documentation': return 'HERMES DOCS';
       default: return 'HERMES';
     }
   }

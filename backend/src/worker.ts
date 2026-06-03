@@ -18,6 +18,9 @@ import {
   agentWorker,
   githubUpdates,
 } from './agent';
+import { startLeaderElection, LeaderHandle } from './agent/leaderElection';
+import { setAuthoringLeader, setPublisherLeader } from './agent/PublishQueue';
+import { PacedPusher } from './agent/PacedPusher';
 import {
   initializeLogsTable,
   addLog,
@@ -69,8 +72,9 @@ async function main() {
   await skillManager.initialize();
   await agentTaskStore.initialize();
   await agentRuntimeStore.initialize();
-  await githubUpdates.initialize(agentConfig.repoRoot);
-  githubUpdates.startBackgroundSync();
+  const { tokenBudget } = await import('./agent/TokenBudget');
+  await tokenBudget.initialize();
+  await githubUpdates.initialize(agentConfig.repoRoot || process.cwd());
 
   let currentTaskId: string | undefined;
   let currentTaskTitle: string | undefined;
@@ -185,21 +189,72 @@ async function main() {
     }
   });
 
-  await startNetworkHeartbeat();
+  let leaderHandle: LeaderHandle | null = null;
+  let leaderActive = false;
+  let pacer: PacedPusher | null = null;
+  const blockProductionEnabled =
+    process.env.AGENT_BLOCK_PRODUCTION_ENABLED !== 'false' &&
+    process.env.BLOCK_PRODUCTION_ENABLED !== 'false';
 
-  if (agentConfig.autorunEnabled && agentConfig.effectiveMode !== 'disabled') {
-    void agentWorker.start().catch((error) => {
-      console.error('[WORKER] Agent worker failed to start:', error);
-    });
+  const startLeaderServices = async () => {
+    if (leaderActive) return;
+    leaderActive = true;
+    setAuthoringLeader(true);
+    setPublisherLeader(true);
+    await startNetworkHeartbeat();
+    githubUpdates.startBackgroundSync();
+
+    if (agentConfig.autorunEnabled && agentConfig.effectiveMode !== 'disabled') {
+      void agentWorker.start().catch((error) => {
+        console.error('[WORKER] Agent worker failed to start:', error);
+      });
+    }
+
+    pacer = new PacedPusher(agentConfig.repoRoot || process.cwd());
+    pacer.start();
+    if (blockProductionEnabled) {
+      blockProducer.start();
+    } else {
+      console.log('[PRODUCER] Block production disabled for this worker.');
+    }
+  };
+
+  const stopLeaderServices = async () => {
+    setAuthoringLeader(false);
+    setPublisherLeader(false);
+    if (!leaderActive) return;
+    leaderActive = false;
+    pacer?.stop();
+    pacer = null;
+    agentWorker.stop();
+    blockProducer.stop();
+    stopNetworkHeartbeat();
+    githubUpdates.stopBackgroundSync();
+  };
+
+  const redis = db.redisClient();
+  if (redis) {
+    const leaseId =
+      process.env.RAILWAY_REPLICA_ID ||
+      process.env.HOSTNAME ||
+      `worker-${process.pid}`;
+    leaderHandle = await startLeaderElection(
+      redis,
+      leaseId,
+      startLeaderServices,
+      stopLeaderServices,
+    );
+  } else if (process.env.AGENT_SINGLE_WORKER_UNSAFE === 'true') {
+    console.warn('[LEADER] Redis unavailable; running unsafe single-worker mode.');
+    await startLeaderServices();
+  } else {
+    console.warn(
+      '[LEADER] Redis unavailable; real authoring/publishing disabled. ' +
+      'Set AGENT_SINGLE_WORKER_UNSAFE=true only for single-worker dev.'
+    );
+    setAuthoringLeader(false);
+    setPublisherLeader(false);
   }
-
-  // Paced commit pusher — drains tier-3-backlog → main at controlled cadence.
-  // No-ops unless PACED_PUSH_ENABLED=true and GITHUB_TOKEN set.
-  const { PacedPusher } = await import('./agent/PacedPusher');
-  const pacer = new PacedPusher(agentConfig.repoRoot || process.cwd());
-  pacer.start();
-
-  blockProducer.start();
 
   const port = Number(process.env.PORT || 4000);
   const server = http.createServer((req, res) => {
@@ -219,7 +274,12 @@ async function main() {
         JSON.stringify({
           status: 'ok',
           serviceRole: 'worker',
-          workerActive: true,
+          workerActive: leaderActive,
+          leaderActive,
+          leaderElection: {
+            enabled: Boolean(redis),
+            isLeader: leaderHandle?.isLeader() || leaderActive,
+          },
           blockHeight: chain.getChainLength(),
           pendingTransactions: txPool.getPendingCount(),
           llmProvider: hermesConfig.provider,
@@ -253,6 +313,7 @@ async function main() {
     console.error('[WORKER] Failed to bind health server:', error);
     blockProducer.stop();
     agentWorker.stop();
+    pacer?.stop();
     stopNetworkHeartbeat();
     githubUpdates.stopBackgroundSync();
     process.exitCode = 1;
@@ -266,10 +327,8 @@ async function main() {
   const shutdown = async () => {
     console.log('[WORKER] Shutting down...');
     server.close();
-    blockProducer.stop();
-    agentWorker.stop();
-    stopNetworkHeartbeat();
-    githubUpdates.stopBackgroundSync();
+    await stopLeaderServices();
+    await leaderHandle?.release();
     await db.end();
     process.exit(0);
   };

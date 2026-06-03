@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS agent_source_tasks (
   metadata JSONB DEFAULT '{}',
   last_error TEXT,
   blocked_reason TEXT,
+  recovery_count INT DEFAULT 0,
   run_count INT DEFAULT 0,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS agent_task_runs (
   changed_files JSONB DEFAULT '[]',
   failure_reason TEXT,
   blocked_reason TEXT,
+  failure_class VARCHAR(64),
   output TEXT DEFAULT '',
   context_summary TEXT DEFAULT '',
   started_at TIMESTAMP DEFAULT NOW(),
@@ -54,10 +56,11 @@ CREATE INDEX IF NOT EXISTS idx_agent_task_runs_status ON agent_task_runs(status)
 CREATE INDEX IF NOT EXISTS idx_agent_task_runs_started_at ON agent_task_runs(started_at DESC);
 `;
 
-type SourceTaskInput = Omit<SourceTaskRecord, 'createdAt' | 'updatedAt' | 'runCount'> & {
+type SourceTaskInput = Omit<SourceTaskRecord, 'createdAt' | 'updatedAt' | 'runCount' | 'recoveryCount'> & {
   createdAt?: Date;
   updatedAt?: Date;
   runCount?: number;
+  recoveryCount?: number;
 };
 
 export class AgentTaskStore {
@@ -131,6 +134,7 @@ export class AgentTaskStore {
       metadata: row.metadata || {},
       lastError: row.last_error || null,
       blockedReason: row.blocked_reason || null,
+      recoveryCount: Number(row.recovery_count || 0),
       runCount: Number(row.run_count || 0),
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
@@ -150,6 +154,7 @@ export class AgentTaskStore {
       changedFiles: row.changed_files || [],
       failureReason: row.failure_reason || null,
       blockedReason: row.blocked_reason || null,
+      failureClass: row.failure_class || null,
       output: row.output || '',
       contextSummary: row.context_summary || '',
       startedAt: new Date(row.started_at),
@@ -167,6 +172,7 @@ export class AgentTaskStore {
       ...existing,
       ...task,
       runCount: existing?.runCount ?? task.runCount ?? 0,
+      recoveryCount: existing?.recoveryCount ?? task.recoveryCount ?? 0,
       createdAt: existing?.createdAt ?? task.createdAt ?? now,
       updatedAt: task.updatedAt ?? now,
     };
@@ -179,9 +185,9 @@ export class AgentTaskStore {
           INSERT INTO agent_source_tasks (
             id, source, title, description, priority, status, task_type,
             objective_tags, evidence, edit_scopes, verification_plan, metadata,
-            last_error, blocked_reason, run_count, created_at, updated_at
+            last_error, blocked_reason, recovery_count, run_count, created_at, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
           ON CONFLICT (id) DO UPDATE SET
             source = EXCLUDED.source,
             title = EXCLUDED.title,
@@ -196,6 +202,7 @@ export class AgentTaskStore {
             metadata = EXCLUDED.metadata,
             last_error = EXCLUDED.last_error,
             blocked_reason = EXCLUDED.blocked_reason,
+            recovery_count = EXCLUDED.recovery_count,
             run_count = EXCLUDED.run_count,
             updated_at = EXCLUDED.updated_at
         `,
@@ -214,6 +221,7 @@ export class AgentTaskStore {
           JSON.stringify(record.metadata),
           record.lastError,
           record.blockedReason,
+          record.recoveryCount,
           record.runCount,
           record.createdAt,
           record.updatedAt,
@@ -295,6 +303,7 @@ export class AgentTaskStore {
       changedFiles: [],
       failureReason: null,
       blockedReason: null,
+      failureClass: null,
       output: '',
       contextSummary,
       startedAt: new Date(),
@@ -324,16 +333,17 @@ export class AgentTaskStore {
         `
           INSERT INTO agent_task_runs (
             id, source_task_id, mode, status, verification_status, title, task_type, agent,
-            changed_files, failure_reason, blocked_reason, output, context_summary,
+            changed_files, failure_reason, blocked_reason, failure_class, output, context_summary,
             started_at, updated_at, completed_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
           ON CONFLICT (id) DO UPDATE SET
             status = EXCLUDED.status,
             verification_status = EXCLUDED.verification_status,
             changed_files = EXCLUDED.changed_files,
             failure_reason = EXCLUDED.failure_reason,
             blocked_reason = EXCLUDED.blocked_reason,
+            failure_class = EXCLUDED.failure_class,
             output = EXCLUDED.output,
             context_summary = EXCLUDED.context_summary,
             updated_at = EXCLUDED.updated_at,
@@ -351,6 +361,7 @@ export class AgentTaskStore {
           JSON.stringify(run.changedFiles),
           run.failureReason,
           run.blockedReason,
+          run.failureClass,
           run.output,
           run.contextSummary,
           run.startedAt,
@@ -373,6 +384,7 @@ export class AgentTaskStore {
         | 'changedFiles'
         | 'failureReason'
         | 'blockedReason'
+        | 'failureClass'
         | 'output'
         | 'contextSummary'
         | 'completedAt'
@@ -401,6 +413,7 @@ export class AgentTaskStore {
       changedFiles?: string[];
       failureReason?: string | null;
       blockedReason?: string | null;
+      failureClass?: string | null;
       output?: string;
     } = {}
   ): Promise<TaskRunRecord | null> {
@@ -410,6 +423,7 @@ export class AgentTaskStore {
       changedFiles: details.changedFiles,
       failureReason: details.failureReason ?? null,
       blockedReason: details.blockedReason ?? null,
+      failureClass: details.failureClass ?? null,
       output: details.output,
       completedAt: new Date(),
     });
@@ -430,7 +444,88 @@ export class AgentTaskStore {
       blockedReason: updated.blockedReason,
     });
 
+    if (status === 'failed') {
+      await this.deadLetterIfExhausted(updated.sourceTaskId);
+    }
+
     return updated;
+  }
+
+  async recoverStuckTasks(maxAgeMs: number = 60 * 60 * 1000): Promise<string[]> {
+    await this.initialize();
+
+    const cutoff = Date.now() - maxAgeMs;
+    const recovered: string[] = [];
+
+    for (const task of this.sourceTasks.values()) {
+      if (task.status !== 'selected' && task.status !== 'in_progress') continue;
+      if (task.updatedAt.getTime() > cutoff) continue;
+
+      const updated: SourceTaskRecord = {
+        ...task,
+        status: 'queued',
+        recoveryCount: task.recoveryCount + 1,
+        blockedReason: null,
+        lastError: `Recovered stale ${task.status} task after ${Math.round(maxAgeMs / 60000)}m.`,
+        updatedAt: new Date(),
+      };
+      await this.upsertSourceTask(updated);
+      recovered.push(task.id);
+    }
+
+    for (const run of this.taskRuns) {
+      if (
+        run.status !== 'selected' &&
+        run.status !== 'analyzing' &&
+        run.status !== 'executing' &&
+        run.status !== 'verifying'
+      ) {
+        continue;
+      }
+      if (run.updatedAt.getTime() > cutoff) continue;
+
+      await this.updateRun(run.id, {
+        status: 'failed',
+        verificationStatus: 'failed',
+        failureReason: `Recovered stale ${run.status} run after ${Math.round(maxAgeMs / 60000)}m.`,
+        failureClass: 'recovery',
+        completedAt: new Date(),
+      });
+    }
+
+    return recovered;
+  }
+
+  private async deadLetterIfExhausted(sourceTaskId: string): Promise<void> {
+    const maxFailures = Math.max(1, Number(process.env.AGENT_MAX_TASK_FAILURES || '3'));
+    const task = this.sourceTasks.get(sourceTaskId);
+    if (!task || task.runCount < maxFailures) return;
+
+    try {
+      await db.query(
+        `
+          INSERT INTO dead_letter_tasks (id, original_task_json, last_error, failure_count)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (id) DO NOTHING
+        `,
+        [
+          task.id,
+          JSON.stringify(task),
+          task.lastError || task.blockedReason || 'failed',
+          task.runCount,
+        ]
+      );
+    } catch {
+      // In-memory/dev mode may not have the DLQ table; still mark discarded.
+    }
+
+    const discarded: SourceTaskRecord = {
+      ...task,
+      status: 'discarded',
+      blockedReason: `Moved to dead-letter queue after ${task.runCount} failed run(s).`,
+      updatedAt: new Date(),
+    };
+    await this.upsertSourceTask(discarded);
   }
 
   async markSourceTaskInProgress(sourceTaskId: string): Promise<void> {

@@ -55,6 +55,7 @@ export type TerminalBlock =
       kind: 'paragraph';
       id: string;
       text: string;
+      eventId?: string;
       chips?: PathChip[];
       /** Heading-weight paragraphs (e.g. "My analysis of what's needed…"). */
       heading?: boolean;
@@ -67,11 +68,16 @@ export type TerminalBlock =
       path: string;
       language: string;
       code: string;
+      eventId?: string;
     }
   | {
       kind: 'commit';
       id: string;
       message: string;
+      eventId?: string;
+      href?: string;
+      label?: string;
+      commitHash?: string;
     };
 
 export interface AgentFeedCallbacks {
@@ -80,7 +86,7 @@ export interface AgentFeedCallbacks {
   patchState(updater: (prev: any) => any): void;
 }
 
-interface AgentWorkstream {
+export interface AgentWorkstream {
   id: string;
   title: string;
   type: string;
@@ -89,10 +95,37 @@ interface AgentWorkstream {
   steps: WorkstreamStep[];
 }
 
-type WorkstreamStep =
+export interface CommitPlaybackFile {
+  path: string;
+  status: string;
+  language?: string;
+  additions?: number;
+  deletions?: number;
+  patch?: string;
+  truncated?: boolean;
+}
+
+export interface CommitPlaybackCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author?: string;
+  date?: string;
+  href?: string;
+  files?: CommitPlaybackFile[];
+}
+
+export type WorkstreamStep =
   | { kind: 'paragraph'; text: string; chipPaths?: string[]; delay?: number }
   | { kind: 'code'; path: string; language: string; code: string; delay?: number }
-  | { kind: 'commit'; message: string; delay?: number }
+  | {
+      kind: 'commit';
+      message: string;
+      delay?: number;
+      href?: string;
+      commitHash?: string;
+      label?: string;
+    }
   | { kind: 'pause'; ms: number };
 
 /**
@@ -561,6 +594,19 @@ const MAX_STEP_DELAY = 1800;
 const INTER_RUN_DELAY = 4000;
 const YIELD_WINDOW_MS = 8_000;
 
+export interface AmbientCursor {
+  workstreamIndex: number;
+  stepIndex: number;
+  cycle: number;
+}
+
+export interface AmbientFeedOptions {
+  initialCursor?: Partial<AmbientCursor> | null;
+  onCursor?: (cursor: AmbientCursor) => void;
+  canRun?: () => boolean;
+  getWorkstreams?: () => AgentWorkstream[];
+}
+
 function randomDelay(min: number, max: number): number {
   return Math.floor(min + Math.random() * (max - min));
 }
@@ -571,12 +617,6 @@ function stepDelay(step: WorkstreamStep): number {
   if (step.kind === 'code') return 1600;
   if (step.kind === 'commit') return 1400;
   return randomDelay(MIN_STEP_DELAY, MAX_STEP_DELAY);
-}
-
-function pickNextWorkstream(lastId: string | null): AgentWorkstream {
-  const candidates = AGENT_WORKSTREAMS.filter((r) => r.id !== lastId);
-  const pool = candidates.length ? candidates : AGENT_WORKSTREAMS;
-  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function sleep(ms: number): Promise<void> {
@@ -601,17 +641,117 @@ function computeChips(text: string, paths?: string[]): PathChip[] | undefined {
   return chips.length ? chips : undefined;
 }
 
+function normalizeCursor(cursor?: Partial<AmbientCursor> | null): AmbientCursor {
+  return {
+    workstreamIndex: Math.max(0, Math.floor(cursor?.workstreamIndex || 0)),
+    stepIndex: Math.max(0, Math.floor(cursor?.stepIndex || 0)),
+    cycle: Math.max(0, Math.floor(cursor?.cycle || 0)),
+  };
+}
+
+function titleFromCommitMessage(message: string): string {
+  return (message || 'GitHub commit').split('\n')[0].trim() || 'GitHub commit';
+}
+
+function capCommitPlayback(value: string): string {
+  const normalized = value.replace(/\r\n?/g, '\n').trim();
+  if (normalized.length <= 2600) return normalized;
+  return `${normalized.slice(0, 2560)}\n… terminal replay truncated`;
+}
+
+export function createCommitWorkstreams(
+  commits: CommitPlaybackCommit[],
+): AgentWorkstream[] {
+  return commits
+    .filter((commit) => commit.hash && commit.shortHash)
+    .map((commit) => {
+      const title = titleFromCommitMessage(commit.message);
+      const files = (commit.files || []).slice(0, 3);
+      const steps: WorkstreamStep[] = [
+        {
+          kind: 'paragraph',
+          text: `git show --stat ${commit.shortHash}  # ${title}`,
+          chipPaths: [],
+          delay: 700,
+        },
+        {
+          kind: 'paragraph',
+          text: `Replaying real GitHub commit ${commit.shortHash}: ${title}`,
+          delay: 900,
+        },
+      ];
+
+      if (files.length === 0) {
+        steps.push({
+          kind: 'paragraph',
+          text: `Patch metadata for ${commit.shortHash} is still being pulled from GitHub, so Hermes keeps the real commit link in rotation and moves to the next diff.`,
+          delay: 900,
+        });
+      } else {
+        for (const file of files) {
+          const additions = Number(file.additions || 0);
+          const deletions = Number(file.deletions || 0);
+          const status = file.status || 'modified';
+          steps.push({
+            kind: 'paragraph',
+            text: `Writing ${file.path} from ${commit.shortHash} (${status}, +${additions}/-${deletions})`,
+            chipPaths: [file.path],
+            delay: 700,
+          });
+          steps.push({
+            kind: 'code',
+            path: file.path,
+            language: file.language || 'diff',
+            code: capCommitPlayback(file.patch || '# patch unavailable for terminal replay'),
+            delay: 1200,
+          });
+        }
+      }
+
+      steps.push({
+        kind: 'commit',
+        message: commit.shortHash,
+        commitHash: commit.hash,
+        href: commit.href,
+        label: 'commited',
+        delay: 1100,
+      });
+
+      return {
+        id: `github:${commit.hash}`,
+        title,
+        type: 'github-commit',
+        agent: 'HERMES',
+        scope: 'github.com/hermeschain-agent/hermeschain',
+        steps,
+      };
+    });
+}
+
+function advanceWorkstream(cursor: AmbientCursor, totalWorkstreams: number): AmbientCursor {
+  const nextIndex = cursor.workstreamIndex + 1;
+  return {
+    workstreamIndex: nextIndex % Math.max(1, totalWorkstreams),
+    stepIndex: 0,
+    cycle: cursor.cycle + (nextIndex >= Math.max(1, totalWorkstreams) ? 1 : 0),
+  };
+}
+
 /**
  * Start driving the hero terminal with Hermes's live workstream. Returns a
  * handle with `stop()` to tear down and `pause()` to yield the channel to
  * an incoming live SSE event for the next YIELD_WINDOW_MS.
  */
-export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
+export function startLiveAgentFeed(
+  callbacks: AgentFeedCallbacks,
+  options: AmbientFeedOptions = {},
+): {
   stop: () => void;
   pause: () => void;
 } {
   let stopped = false;
   let yieldUntil = 0;
+  let cursor = normalizeCursor(options.initialCursor);
 
   const stop = () => {
     stopped = true;
@@ -623,14 +763,25 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
 
   const shouldStop = () => stopped;
   const shouldYield = () => Date.now() < yieldUntil;
+  const canRun = () => options.canRun?.() ?? true;
+  const publishCursor = () => options.onCursor?.({ ...cursor });
+  const getWorkstreams = () => {
+    const liveWorkstreams = options.getWorkstreams?.() || [];
+    return liveWorkstreams.length > 0
+      ? [...liveWorkstreams, ...AGENT_WORKSTREAMS]
+      : AGENT_WORKSTREAMS;
+  };
 
   const waitForTurn = async () => {
-    while (!shouldStop() && shouldYield()) {
+    while (!shouldStop() && (shouldYield() || !canRun())) {
       await sleep(1000);
     }
   };
 
-  const runWorkstream = async (workstream: AgentWorkstream): Promise<void> => {
+  const runWorkstream = async (
+    workstream: AgentWorkstream,
+    workstreamIndex: number,
+  ): Promise<boolean> => {
     callbacks.resetBlocks();
 
     callbacks.patchState((prev: AgentFeedState) => ({
@@ -650,10 +801,11 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
       lastFailure: null,
     }));
 
-    for (const step of workstream.steps) {
-      if (shouldStop()) return;
+    for (let i = cursor.stepIndex; i < workstream.steps.length; i++) {
+      const step = workstream.steps[i];
+      if (shouldStop()) return false;
       await waitForTurn();
-      if (shouldStop()) return;
+      if (shouldStop()) return false;
 
       switch (step.kind) {
         case 'paragraph': {
@@ -690,32 +842,61 @@ export function startLiveAgentFeed(callbacks: AgentFeedCallbacks): {
             verificationStatus: 'passed',
             isWorking: false,
           }));
-          callbacks.appendBlock({
-            kind: 'commit',
-            id: nextId(),
-            message: step.message,
-          });
+          if (step.href && step.commitHash) {
+            callbacks.appendBlock({
+              kind: 'commit',
+              id: nextId(),
+              message: step.message,
+              commitHash: step.commitHash,
+              href: step.href,
+              label: step.label || 'commited',
+            });
+          } else {
+            callbacks.appendBlock({
+              kind: 'paragraph',
+              id: nextId(),
+              text: `ambient checkpoint: ${step.message}`,
+              instant: true,
+            });
+          }
           break;
         }
         case 'pause':
           break;
       }
 
+      cursor = {
+        workstreamIndex,
+        stepIndex: i + 1,
+        cycle: cursor.cycle,
+      };
+      publishCursor();
       await sleep(stepDelay(step));
     }
+
+    return true;
   };
 
   const loop = async () => {
-    let lastId: string | null = null;
     while (!shouldStop()) {
       await waitForTurn();
       if (shouldStop()) return;
 
-      const workstream = pickNextWorkstream(lastId);
-      lastId = workstream.id;
+      const workstreams = getWorkstreams();
+      const workstreamIndex = cursor.workstreamIndex % workstreams.length;
+      const workstream = workstreams[workstreamIndex];
+      if (cursor.stepIndex >= workstream.steps.length) {
+        cursor = advanceWorkstream(cursor, workstreams.length);
+        publishCursor();
+        continue;
+      }
 
       try {
-        await runWorkstream(workstream);
+        const completed = await runWorkstream(workstream, workstreamIndex);
+        if (completed) {
+          cursor = advanceWorkstream(cursor, workstreams.length);
+          publishCursor();
+        }
       } catch {
         // Swallow per-workstream errors so the feed keeps going.
       }

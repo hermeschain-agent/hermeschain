@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+echo "[railway-cd-shim] legacy start command args: $*" >&2
+cd /app/backend
+exec npm start

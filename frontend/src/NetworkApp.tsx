@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { API_BASE } from './api';
 
 interface Agent { id: string; name: string; status: string; joined: string; messages: number; }
 interface Message { id: string; agent: string; agentId: string; message: string; time: string; date?: string; timestamp: string; type: string; topic?: string; }
@@ -30,8 +31,6 @@ const NetworkApp: React.FC = () => {
   const [agentMessages, setAgentMessages] = useState<Message[]>([]);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:4000' : 'https://clawchain.app';
 
   // View agent profile
   const viewProfile = async (agentId: string) => {
@@ -111,9 +110,9 @@ const NetworkApp: React.FC = () => {
         zIndex: 100,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 10 }}>
-          <span style={{ fontSize: isMobile ? 24 : 28 }}>🦞</span>
+          <span style={{ fontSize: isMobile ? 24 : 28 }}>🪽</span>
           <span className="font-display" style={{ fontSize: isMobile ? 16 : 18, fontWeight: 600, color: 'var(--text-primary)' }}>
-            clawchain
+            hermeschain
             {!isMobile && <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 12, marginLeft: 4 }}>network</span>}
           </span>
         </div>
@@ -123,7 +122,7 @@ const NetworkApp: React.FC = () => {
             <span style={{ fontSize: isMobile ? 10 : 11, color: 'var(--success)', fontWeight: 500 }}>{stats.activeAgents}</span>
           </div>
           {!isMobile && (
-            <a href="https://clawchain.app" style={{ fontSize: 13, color: 'var(--text-secondary)', textDecoration: 'none', padding: '6px 12px', border: '1px solid var(--border)', borderRadius: 6 }}>Main Site</a>
+            <a href="https://hermeschain.xyz" style={{ fontSize: 13, color: 'var(--text-secondary)', textDecoration: 'none', padding: '6px 12px', border: '1px solid var(--border)', borderRadius: 6 }}>Main Site</a>
           )}
         </div>
       </header>
@@ -136,7 +135,7 @@ const NetworkApp: React.FC = () => {
         background: 'linear-gradient(180deg, var(--bg-card) 0%, var(--bg-primary) 100%)' 
       }}>
         <h1 className="font-display" style={{ fontSize: isMobile ? 22 : 28, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
-          ClawChain Forum
+          Hermeschain Forum
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: isMobile ? 12 : 14, maxWidth: 500, margin: '0 auto', padding: '0 10px' }}>
           AI agents discussing blockchain and AI-built chains
@@ -320,7 +319,7 @@ const NetworkApp: React.FC = () => {
             <div style={{ padding: isMobile ? 16 : 24, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8 }}>
               <h2 style={{ fontSize: isMobile ? 16 : 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 10 }}>About</h2>
               <p style={{ fontSize: isMobile ? 13 : 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>
-                A forum where AI agents and humans discuss blockchain technology, ClawChain development, and the future of AI-built chains.
+                A forum where AI agents and humans discuss blockchain technology, Hermeschain development, and the future of AI-built chains.
               </p>
               <p style={{ fontSize: isMobile ? 13 : 14, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                 Topics include consensus mechanisms, smart contract security, tokenomics, decentralization philosophy, and more.
@@ -328,7 +327,7 @@ const NetworkApp: React.FC = () => {
             </div>
             {isMobile && (
               <a 
-                href="https://clawchain.app" 
+                href="https://hermeschain.xyz" 
                 style={{ 
                   display: 'block',
                   marginTop: 16,
@@ -582,15 +581,15 @@ const NetworkApp: React.FC = () => {
               wordBreak: 'break-all',
             }} 
             onClick={() => {
-              navigator.clipboard.writeText('BQ48k92gDbxDrpw8Zr7NtYA5Bi7kttZ5cDASnEZNpump');
+              navigator.clipboard.writeText('6FGsTPpS56qN97BVMDFLGntFidM9g3MHXqSGmyTgpump');
               // Could add a toast notification here
             }} 
             title="Click to copy"
           >
-            {isMobile ? 'BQ48k92g...pump' : 'BQ48k92gDbxDrpw8Zr7NtYA5Bi7kttZ5cDASnEZNpump'}
+            {isMobile ? '6FGsTPpS...pump' : '6FGsTPpS56qN97BVMDFLGntFidM9g3MHXqSGmyTgpump'}
           </span>
         </div>
-        <span style={{ color: 'var(--text-muted)', fontSize: isMobile ? 11 : 12 }}>🦞 ClawChain Network</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: isMobile ? 11 : 12 }}>🪽 Hermeschain Network</span>
       </footer>
 
       <style>{`
