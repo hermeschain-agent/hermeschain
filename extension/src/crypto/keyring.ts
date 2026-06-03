@@ -13,6 +13,7 @@
  */
 import * as ed from '@noble/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
+import { sha256 } from '@noble/hashes/sha256';
 import { hmac } from '@noble/hashes/hmac';
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
@@ -153,4 +154,95 @@ export async function signSend(
     timestampMs,
     signature: await signMessage(message, account.privateKey),
   };
+}
+
+// ---- REAL on-chain transactions (matches backend Crypto + TransactionPool) ---
+
+/** A signed blockchain transaction POST /api/transactions accepts. */
+export interface ChainTx {
+  from: string;
+  to: string;
+  value: string; // wei (decimal string)
+  gasPrice: string;
+  gasLimit: string;
+  nonce: number;
+  data?: string;
+  signature: string;
+  hash: string;
+}
+
+const TOKEN_DECIMALS = 18n;
+
+/** Convert a decimal token amount (e.g. "1.5") to wei (bigint). Exact. */
+export function toWei(amount: number | string): bigint {
+  const s = String(amount).trim();
+  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error(`invalid amount: ${amount}`);
+  const [whole, frac = ''] = s.split('.');
+  const fracPadded = (frac + '0'.repeat(18)).slice(0, 18);
+  return BigInt(whole || '0') * 10n ** TOKEN_DECIMALS + BigInt(fracPadded || '0');
+}
+
+/** Convert wei to a token number for display. */
+export function fromWei(wei: string | bigint): number {
+  const w = BigInt(wei);
+  const whole = w / 10n ** TOKEN_DECIMALS;
+  const frac = w % 10n ** TOKEN_DECIMALS;
+  return Number(whole) + Number(frac) / 1e18;
+}
+
+/** Canonical signing message — must equal backend Crypto.createTransactionMessage. */
+function chainTxMessage(b: {
+  from: string;
+  to: string;
+  value: string;
+  gasPrice: string;
+  gasLimit: string;
+  nonce: number;
+  data?: string;
+}): string {
+  return JSON.stringify({
+    from: b.from,
+    to: b.to,
+    value: b.value,
+    gasPrice: b.gasPrice,
+    gasLimit: b.gasLimit,
+    nonce: b.nonce,
+    data: b.data || '',
+  });
+}
+
+/**
+ * Build + sign a REAL on-chain transaction the backend POST /api/transactions
+ * accepts. Byte-compatible with backend Crypto.signTransaction +
+ * TransactionPool.calculateTxHash (proven in keyring.test.ts):
+ *   message   = createTransactionMessage(body)            // data || ''
+ *   signature = base58(Ed25519(message))
+ *   hash      = base58(sha256(JSON.stringify({ ...body, signature })))  // data as-is
+ * Key order is from,to,value,gasPrice,gasLimit,nonce,data[,signature].
+ */
+export async function signChainTx(
+  account: HermesAccount,
+  input: {
+    toAddress: string;
+    value: bigint | string;
+    nonce: number;
+    gasPrice?: bigint;
+    gasLimit?: bigint;
+    data?: string;
+  },
+): Promise<ChainTx> {
+  const body = {
+    from: account.address,
+    to: input.toAddress,
+    value: String(input.value),
+    gasPrice: String(input.gasPrice ?? 1n),
+    gasLimit: String(input.gasLimit ?? 21000n),
+    nonce: input.nonce,
+    data: input.data,
+  };
+  const signature = bs58.encode(
+    await ed.signAsync(enc.encode(chainTxMessage(body)), bs58.decode(account.privateKey)),
+  );
+  const hash = bs58.encode(sha256(enc.encode(JSON.stringify({ ...body, signature }))));
+  return { ...body, signature, hash };
 }

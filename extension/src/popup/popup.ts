@@ -12,8 +12,8 @@ import {
   type ApprovalRequest,
   type PendingApproval,
 } from '../messages.ts';
-import { fetchSnapshot, submitSend, claimFaucet, importAddress, type WalletSnapshot } from '../wallet/api.ts';
-import type { SignedSend } from '../crypto/keyring.ts';
+import { fetchSnapshot, submitTransaction, claimFaucet, type WalletSnapshot } from '../wallet/api.ts';
+import type { ChainTx } from '../crypto/keyring.ts';
 
 const screen = document.getElementById('screen') as HTMLElement;
 const lockBtn = document.getElementById('lockBtn') as HTMLButtonElement;
@@ -78,7 +78,6 @@ function renderCreate(): void {
         type: 'createWallet',
         password: pw,
       });
-      importAddress(account.address).catch(() => {});
       renderSeed(mnemonic);
     } catch (e) {
       toast(String((e as Error).message), 'err');
@@ -118,7 +117,6 @@ function renderImport(): void {
     if (pw.length < 8) return toast('Password must be at least 8 characters', 'err');
     try {
       const { account } = await rpc<{ account: { address: string } }>({ type: 'importWallet', password: pw, mnemonic });
-      importAddress(account.address).catch(() => {});
       toast('Wallet imported', 'ok');
       renderMain();
     } catch (e) {
@@ -195,8 +193,8 @@ async function renderMain(): Promise<void> {
   screen.querySelector('#faucet')!.addEventListener('click', async () => {
     try {
       await claimFaucet(address);
-      toast('Faucet claimed', 'ok');
-      setTimeout(refresh, 800);
+      toast('Faucet sent — confirms in ~10s', 'ok');
+      setTimeout(refresh, 12000);
     } catch (e) {
       toast(String((e as Error).message), 'err');
     }
@@ -207,10 +205,10 @@ async function renderMain(): Promise<void> {
     if (!to || !amt || Number(amt) <= 0) return toast('Enter a recipient and amount', 'err');
     try {
       if (!snap) snap = await fetchSnapshot(address);
-      const signed = await rpc<SignedSend>({ type: 'signTransfer', toAddress: to, amount: amt, nonce: snap.nonce });
-      await submitSend(signed);
-      toast('Sent', 'ok');
-      setTimeout(refresh, 800);
+      const tx = await rpc<ChainTx>({ type: 'signTransfer', toAddress: to, amount: amt, nonce: snap.nonce });
+      await submitTransaction(tx);
+      toast('Sent — confirms in ~10s', 'ok');
+      setTimeout(refresh, 12000);
     } catch (e) {
       toast(String((e as Error).message), 'err');
     }
