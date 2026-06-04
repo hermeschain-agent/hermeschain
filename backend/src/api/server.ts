@@ -1582,6 +1582,11 @@ Live context:
   app.use('/api/wallet', walletRouter);
   console.log('[WALLET] Wallet & faucet system ready');
 
+  // ========== CROSS-CHAIN BRIDGE ==========
+  const { bridgeRouter } = await import('./bridge');
+  app.use('/api/bridge', bridgeRouter);
+  console.log('[BRIDGE] Cross-chain bridge routes mounted at /api/bridge/*');
+
   // ========== PEER MESH ==========
   const { createMeshRouter } = await import('../network/api');
   const { startBootstrapHeartbeat } = await import('../network/announce');
