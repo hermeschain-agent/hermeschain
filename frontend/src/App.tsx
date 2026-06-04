@@ -7,6 +7,7 @@ import BlockExplorer from './BlockExplorer';
 import HermesDock from './HermesDock';
 import RitualActions from './RitualActions';
 import Wallet from './Wallet';
+import Bridge from './Bridge';
 import BootSequence from './BootSequence';
 import GreekChorus from './GreekChorus';
 import AmbientBackground from './AmbientBackground';
@@ -29,6 +30,7 @@ type TabType =
   | 'explorer'
   | 'faucet'
   | 'wallet'
+  | 'bridge'
   | 'admin';
 
 interface Message {
@@ -120,6 +122,7 @@ const VISIBLE_TABS = [
   'explorer',
   'faucet',
   'wallet',
+  'bridge',
   'updates',
   'logs',
   'admin',
@@ -326,6 +329,7 @@ export default function App() {
     { id: 'explorer', label: 'Explorer' },
     { id: 'faucet', label: 'Faucet' },
     { id: 'wallet', label: 'Wallet' },
+    { id: 'bridge', label: 'Bridge' },
     { id: 'updates', label: 'Updates' },
     { id: 'logs', label: 'Logs' },
     { id: 'admin', label: 'Admin' },
@@ -1718,6 +1722,8 @@ export default function App() {
         return renderFaucet();
       case 'wallet':
         return renderWallet();
+      case 'bridge':
+        return <Bridge />;
       case 'updates':
         return renderUpdates();
       case 'logs':
@@ -1735,6 +1741,7 @@ export default function App() {
     { id: 'goto-explorer', label: 'goto :: explorer', hint: 'blocks + txs', keywords: ['blocks','chain','tx','transactions'], run: () => handleTab('explorer') },
     { id: 'goto-faucet',   label: 'goto :: faucet', hint: 'claim testnet tokens', keywords: ['drip','tokens','claim'], run: () => handleTab('faucet') },
     { id: 'goto-wallet',   label: 'goto :: wallet', hint: 'create / import', keywords: ['keys','account'], run: () => handleTab('wallet') },
+    { id: 'goto-bridge',   label: 'goto :: bridge', hint: 'lock + mint cross-chain', keywords: ['bridge','cross-chain','lock','mint','wrap'], run: () => handleTab('bridge') },
     { id: 'goto-updates',  label: 'tail :: commits', hint: 'live git log', keywords: ['commits','updates','changelog','git'], run: () => handleTab('updates') },
     { id: 'goto-logs',     label: 'tail :: logs', hint: 'agent activity', keywords: ['activity','stream','hermes'], run: () => handleTab('logs') },
     { id: 'goto-admin',    label: 'goto :: admin', hint: 'operator console', keywords: ['ops','health'], run: () => handleTab('admin') },
