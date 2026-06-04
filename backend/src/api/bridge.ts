@@ -138,6 +138,39 @@ function rowToTransfer(row: any, nowMs: number) {
   };
 }
 
+// The migration runner can halt on an earlier failing migration before it
+// reaches 0057, so — exactly as StateManager and the wallet module do for their
+// own tables — ensure the table exists at runtime. Idempotent; the real work
+// runs at most once per process.
+let bridgeTableReady = false;
+async function ensureBridgeTable(): Promise<void> {
+  if (bridgeTableReady) return;
+  try {
+    await db.exec(
+      `CREATE TABLE IF NOT EXISTS bridge_transfers (
+        id BIGSERIAL PRIMARY KEY,
+        source_chain TEXT NOT NULL,
+        destination_chain TEXT NOT NULL,
+        asset TEXT NOT NULL DEFAULT 'HERMES',
+        amount TEXT NOT NULL,
+        amount_base TEXT NOT NULL,
+        sender TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        nonce BIGINT NOT NULL,
+        lock_height INTEGER NOT NULL,
+        lock_tx_hash TEXT NOT NULL,
+        destination_tx_hash TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_bridge_transfers_created ON bridge_transfers(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_bridge_transfers_sender ON bridge_transfers(sender);`,
+    );
+    bridgeTableReady = true;
+  } catch {
+    /* best-effort; migration 0057 defines the same table */
+  }
+}
+
 bridgeRouter.get('/config', (_req, res) => {
   res.json({
     sourceChain: SOURCE_CHAIN,
@@ -153,6 +186,7 @@ bridgeRouter.get('/config', (_req, res) => {
 
 bridgeRouter.get('/transfers', async (req, res) => {
   try {
+    await ensureBridgeTable();
     const limit = Math.min(
       50,
       Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20),
@@ -170,6 +204,7 @@ bridgeRouter.get('/transfers', async (req, res) => {
 
 bridgeRouter.post('/lock', async (req, res) => {
   try {
+    await ensureBridgeTable();
     const { toChain, amount, sender, recipient, asset, fromChain } =
       req.body ?? {};
     if (fromChain && fromChain !== SOURCE_CHAIN.id) {
