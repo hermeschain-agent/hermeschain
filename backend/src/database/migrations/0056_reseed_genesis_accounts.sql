@@ -1,22 +1,13 @@
 -- up:
--- Fix for 0055: it guarded each clear with to_regclass('public.<table>'), but
--- the app's tables resolve via the connection search_path (not necessarily the
--- 'public' schema), so the guards returned NULL and the account_state DELETE
--- never ran. Stale accounts (the legacy 'HERMESCHAIN_FAUCET' label etc.) then
--- survived the reset, so StateManager found accounts > 0 and skipped genesis
--- re-seeding — leaving the REAL key-derived faucet account (Faucet.ts) unfunded.
+-- SUPERSEDED — intentionally a no-op.
 --
--- Clear the account ledger so the next boot re-seeds genesis onto the real
--- faucet/genesis/treasury addresses. Uses UNQUALIFIED names (search_path-
--- resolved, same as StateManager) wrapped in undefined_table guards so a fresh
--- DB — where StateManager creates these tables only AFTER migrations run —
--- doesn't fail and halt boot. Blocks are intentionally left intact so the chain
--- keeps its height (the state root simply re-bases at the next block).
-DO $$
-BEGIN
-  BEGIN TRUNCATE TABLE state_changes RESTART IDENTITY; EXCEPTION WHEN undefined_table THEN NULL; END;
-  BEGIN DELETE FROM account_state; EXCEPTION WHEN undefined_table THEN NULL; END;
-END $$;
+-- Companion to 0055: this cleared account_state to force a genesis re-seed. Like
+-- 0055 it is a dollar-quoted DO block that the old db.exec() shredded on ';', so
+-- it never applied. Genesis/faucet funding is now handled idempotently by
+-- StateManager (reconcileFaucet) at boot, and DELETE-ing account_state on the
+-- live chain would wipe balances. Left as a no-op; prod is marked applied and a
+-- fresh DB seeds genesis cleanly on first boot.
+SELECT 1;
 
 -- down:
--- Irreversible data reset; no rollback.
+-- No-op.

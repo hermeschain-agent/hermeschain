@@ -96,6 +96,30 @@ export const db = {
     }
   },
 
+  // Like exec() but runs the ENTIRE sql string as ONE simple-protocol query
+  // instead of splitting on ';'. Required for SQL containing dollar-quoted blocks
+  // (DO $$ ... $$, functions, triggers) whose bodies have internal semicolons —
+  // naive ';' splitting shreds them into invalid fragments and throws. Postgres
+  // runs the statements as a single implicit transaction.
+  execRaw: async (sql: string): Promise<void> => {
+    if (!pool) {
+      return;
+    }
+    const startedAt = Date.now();
+    try {
+      await pool.query(sql);
+      const duration = Date.now() - startedAt;
+      recordQuery(duration);
+      if (duration > PG_SLOW_QUERY_MS) {
+        console.warn(`[PG SLOW] execRaw ${duration}ms (${sql.length} chars)`);
+      }
+    } catch (error) {
+      recordQueryError();
+      console.error('Database execRaw error:', error);
+      throw error;
+    }
+  },
+
   // Execute single query with parameters
   query: async (text: string, params: any[] = []): Promise<{ rows: any[]; rowCount?: number }> => {
     if (!pool) {
