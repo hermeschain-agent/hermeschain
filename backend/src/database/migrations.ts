@@ -142,7 +142,10 @@ export async function applyPendingMigrations(opts: ApplyOptions = {}): Promise<M
       }
 
       try {
-        await db.exec(migration.up);
+        // execRaw (not exec): migrations may contain dollar-quoted DO/function
+        // blocks whose bodies have internal semicolons; exec()'s ';' split would
+        // shred them. This was the root cause of the runner halting on 0055.
+        await db.execRaw(migration.up);
         await db.query(
           `INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`,
           [migration.name]
